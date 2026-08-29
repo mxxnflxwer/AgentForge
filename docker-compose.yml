@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: agentforge-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agentforge
+      POSTGRES_USER: agentforge
+      POSTGRES_PASSWORD: agentforge_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - agentforge_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  agentforge_postgres_data:

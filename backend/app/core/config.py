@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     COOKIE_SECURE: bool = False
     COOKIE_SAMESITE: str = "lax"
     DEVELOPER_SECRET_KEY: str = "agentforge_dev_secret_key"
+    MAX_UPLOAD_SIZE_BYTES: int = 20 * 1024 * 1024  # 20 MB default
+    STORAGE_DIR: str = "storage/documents"
+    ALLOWED_EXTENSIONS: list[str] = ["pdf", "docx", "txt"]
 
     @property
     def cors_origins(self) -> list[str]:
@@ -30,3 +33,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+

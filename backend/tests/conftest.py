@@ -20,11 +20,17 @@ engine = create_engine(
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+import app.core.database
+import app.services.document_service
+
+
 @pytest.fixture(scope="function")
-def db_session():
-    """Create a fresh database for each test."""
+def db_session(monkeypatch):
+    """Create a fresh database for each test and override SessionLocal."""
     Base.metadata.create_all(bind=engine)
     db = TestingSessionLocal()
+    monkeypatch.setattr(app.core.database, "SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr(app.services.document_service, "SessionLocal", TestingSessionLocal)
     try:
         yield db
     finally:
@@ -45,3 +51,4 @@ def client(db_session):
     with TestClient(fastapi_app, base_url="http://localhost:8000") as test_client:
         yield test_client
     fastapi_app.dependency_overrides.clear()
+

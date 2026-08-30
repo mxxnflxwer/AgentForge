@@ -1,15 +1,25 @@
 from app.schemas.user import (
-    UserRegisterRequest,
-    UserLoginRequest,
-    UserResponse,
-    UserMeResponse,
     MessageResponse,
+    UserLoginRequest,
+    UserMeResponse,
+    UserRegisterRequest,
+    UserResponse,
+)
+from app.schemas.document import (
+    DocumentChunkResponse,
+    DocumentDetailResponse,
+    DocumentListItem,
+    DocumentUploadResponse,
 )
 
 __all__ = [
-    "UserRegisterRequest",
-    "UserLoginRequest",
-    "UserResponse",
-    "UserMeResponse",
     "MessageResponse",
+    "UserLoginRequest",
+    "UserMeResponse",
+    "UserRegisterRequest",
+    "UserResponse",
+    "DocumentChunkResponse",
+    "DocumentDetailResponse",
+    "DocumentListItem",
+    "DocumentUploadResponse",
 ]

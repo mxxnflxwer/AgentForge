@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from app.api import auth_router, users_router
+from app.api import auth_router, documents_router, users_router
 from app.core.config import settings
 from app.core.database import engine
 
@@ -11,7 +11,7 @@ logger = logging.getLogger("agentforge")
 
 app = FastAPI(
     title="AgentForge API",
-    description="AI Workflow Optimization Platform - Authentication & User Management",
+    description="AI Workflow Optimization Platform - Document Processing & Authentication",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -69,3 +69,4 @@ def database_health():
 # Include API Routers
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(documents_router)

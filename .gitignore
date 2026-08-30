@@ -24,5 +24,7 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 
-# Logs
+# Logs and uploads
 *.log
+backend/storage/
+storage/

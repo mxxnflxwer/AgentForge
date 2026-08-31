@@ -10,6 +10,7 @@ from app.models.document import Document, DocumentProcessingStatus
 from app.models.user import User
 from app.services.document.pipeline import get_document_pipeline
 from app.services.storage import get_storage_backend
+from app.services.vector_store import get_vector_store
 
 
 VALID_MAGIC_HEADERS = {
@@ -149,7 +150,7 @@ def get_user_document_by_id(db: Session, document_id: str, user: User) -> Docume
 
 def delete_user_document(db: Session, document_id: str, user: User) -> bool:
     """
-    Delete a document, its database chunks, and its underlying file in storage.
+    Delete a document, its database chunks, its vectors in ChromaDB, and its underlying file in storage.
     Enforces strict ownership.
     """
     document = get_user_document_by_id(db, document_id, user)
@@ -159,7 +160,15 @@ def delete_user_document(db: Session, document_id: str, user: User) -> bool:
     db.delete(document)
     db.commit()
 
+    # Delete from vector store
+    try:
+        vector_store = get_vector_store()
+        vector_store.delete_document_vectors(user_id=user.id, document_id=document_id)
+    except Exception:
+        pass
+
     # Delete from storage backend (graceful handling of missing files)
     storage = get_storage_backend()
     storage.delete(stored_filename)
     return True
+

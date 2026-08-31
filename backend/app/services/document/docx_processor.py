@@ -1,6 +1,7 @@
 import io
 import logging
 from typing import Union
+# pyrefly: ignore [missing-import]
 from docx import Document as DocxDocument
 
 from app.services.document.base import BaseDocumentProcessor, ExtractedDocument

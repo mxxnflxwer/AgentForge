@@ -19,10 +19,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Create enum for document processing status
-    doc_status_enum = sa.Enum('UPLOADED', 'PROCESSING', 'COMPLETED', 'FAILED', name='document_processing_status')
-    doc_status_enum.create(op.get_bind(), checkfirst=True)
-
     op.create_table('documents',
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('owner_id', sa.String(length=36), nullable=False),

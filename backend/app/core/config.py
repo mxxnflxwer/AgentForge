@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_BYTES: int = 20 * 1024 * 1024  # 20 MB default
     STORAGE_DIR: str = "storage/documents"
     ALLOWED_EXTENSIONS: list[str] = ["pdf", "docx", "txt"]
+    CHROMA_PERSIST_DIRECTORY: str = "storage/chromadb"
+    CHROMA_COLLECTION_NAME: str = "agentforge_documents"
+    EMBEDDING_MODEL_NAME: str = "all-MiniLM-L6-v2"
 
     @property
     def cors_origins(self) -> list[str]:

@@ -13,6 +13,7 @@ from app.services.document.pdf_processor import PDFProcessor
 from app.services.document.section_detector import SectionDetector
 from app.services.document.txt_processor import TxtProcessor
 from app.services.storage import get_storage_backend
+from app.services.vector_store import get_vector_store
 
 logger = logging.getLogger("agentforge.document.pipeline")
 
@@ -30,6 +31,7 @@ class DocumentPipeline:
         self.section_detector = SectionDetector()
         self.chunker = DocumentChunker()
         self.storage = get_storage_backend()
+        self.vector_store = get_vector_store()
 
     def get_processor_for_type(self, file_type: str) -> BaseDocumentProcessor:
         normalized_type = file_type.lower().lstrip(".")
@@ -81,6 +83,7 @@ class DocumentPipeline:
             db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).delete()
 
             # 7. Create DocumentChunk records
+            created_chunks = []
             for c_data in chunks_data:
                 chunk = DocumentChunk(
                     document_id=doc.id,
@@ -91,8 +94,18 @@ class DocumentPipeline:
                     character_count=c_data.character_count,
                 )
                 db.add(chunk)
+                created_chunks.append(chunk)
 
-            # 8. Update Document metadata & status
+            db.flush()
+
+            # 8. Index vectors in ChromaDB
+            self.vector_store.upsert_document_chunks(
+                user_id=doc.owner_id,
+                document_id=doc.id,
+                chunks=created_chunks,
+            )
+
+            # 9. Update Document metadata & status
             doc.page_count = extracted.page_count
             doc.extracted_character_count = len(cleaned_text)
             doc.chunk_count = len(chunks_data)
@@ -102,8 +115,9 @@ class DocumentPipeline:
 
             db.commit()
             db.refresh(doc)
-            logger.info(f"Successfully processed document {doc.id}: {doc.chunk_count} chunks created.")
+            logger.info(f"Successfully processed document {doc.id}: {doc.chunk_count} chunks created and indexed.")
             return doc
+
 
         except Exception as e:
             logger.exception(f"Document processing failed for {doc.id}: {e}")

@@ -43,6 +43,27 @@ class VectorStore:
             f"Initialized VectorStore with collection '{self.collection_name}' at '{self.persist_directory}'"
         )
 
+    def reset_collection(self) -> None:
+        """
+        Delete and recreate the ChromaDB collection.
+        Ensures clean separation when upgrading embedding models.
+        """
+        try:
+            self._client.delete_collection(name=self.collection_name)
+            logger.info(f"Deleted existing ChromaDB collection '{self.collection_name}'")
+        except Exception as e:
+            logger.debug(f"Collection deletion notice: {e}")
+
+        self._collection = self._client.get_or_create_collection(
+            name=self.collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
+        logger.info(f"Recreated fresh ChromaDB collection '{self.collection_name}'")
+
+    def count(self) -> int:
+        """Return total vector count in the collection."""
+        return self._collection.count()
+
     def upsert_document_chunks(
         self,
         user_id: str,
@@ -82,12 +103,26 @@ class VectorStore:
             logger.info(f"Generating embeddings for {len(chunks)} chunks of document {document_id}")
             embeddings = self.embedding_service.embed_batch(documents)
 
-        self._collection.upsert(
-            ids=ids,
-            embeddings=embeddings,
-            documents=documents,
-            metadatas=metadatas,
-        )
+        try:
+            self._collection.upsert(
+                ids=ids,
+                embeddings=embeddings,
+                documents=documents,
+                metadatas=metadatas,
+            )
+        except Exception as e:
+            if "dimension" in str(e).lower():
+                logger.warning(f"ChromaDB dimension mismatch detected ({e}). Resetting collection for new embedding model...")
+                self.reset_collection()
+                self._collection.upsert(
+                    ids=ids,
+                    embeddings=embeddings,
+                    documents=documents,
+                    metadatas=metadatas,
+                )
+            else:
+                raise e
+
         logger.info(f"Upserted {len(ids)} vectors into ChromaDB for document {document_id}")
         return len(ids)
 
@@ -146,6 +181,9 @@ class VectorStore:
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as e:
+            if "dimension" in str(e).lower():
+                logger.warning(f"ChromaDB dimension mismatch during query ({e}).")
+                return []
             logger.error(f"Error querying ChromaDB vector store: {e}")
             return []
 

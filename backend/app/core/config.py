@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     ALLOWED_EXTENSIONS: list[str] = ["pdf", "docx", "txt"]
     CHROMA_PERSIST_DIRECTORY: str = "storage/chromadb"
     CHROMA_COLLECTION_NAME: str = "agentforge_documents"
-    EMBEDDING_MODEL_NAME: str = "all-MiniLM-L6-v2"
+    EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
 
     @property
     def cors_origins(self) -> list[str]:

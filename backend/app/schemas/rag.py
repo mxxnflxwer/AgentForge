@@ -32,6 +32,7 @@ class RetrievedChunk(BaseModel):
     section_title: Optional[str] = None
     distance: float
     similarity_score: float
+    relevance_score: Optional[float] = None
 
 
 class RAGSearchResponse(BaseModel):

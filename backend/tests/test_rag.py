@@ -690,3 +690,146 @@ def test_symptoms_query_ranking(temp_vector_store, db_session):
     assert "shortness of breath" in results[0].content.lower()
 
 
+# 14. Full Clinical Retrieval Suite (10 Required Benchmark Queries)
+def test_clinical_retrieval_suite_all_queries(temp_vector_store, db_session):
+    user_id = str(uuid.uuid4())
+    doc = Document(
+        id=str(uuid.uuid4()),
+        owner_id=user_id,
+        original_filename="Cardiology_Consultation.txt",
+        stored_filename="cardio_consult_stored.txt",
+        file_type="txt",
+        file_size=1200,
+        mime_type="text/plain",
+        processing_status=DocumentProcessingStatus.COMPLETED,
+    )
+    db_session.add(doc)
+    db_session.commit()
+
+    chunks = [
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=0,
+            content="Specialty: Cardiology\nReport Type: Consultation History and Physical",
+            section_title="Document Overview",
+            token_count=10,
+            character_count=70,
+        ),
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=1,
+            content="Chief Complaint\nPatient presents with intermittent chest discomfort and shortness of breath on exertion.",
+            section_title="Chief Complaint",
+            token_count=15,
+            character_count=110,
+        ),
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=2,
+            content="History of Present Illness\nA 58-year-old presents with substernal chest tightness occurring with moderate exertion.",
+            section_title="History of Present Illness",
+            token_count=15,
+            character_count=115,
+        ),
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=3,
+            content="Physical Examination\nBlood pressure 138/86, heart rate 78 bpm regular, respiratory rate 16. Lungs clear. No peripheral edema.",
+            section_title="Physical Examination",
+            token_count=20,
+            character_count=130,
+        ),
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=4,
+            content="Diagnostic Findings\nECG shows normal sinus rhythm with no acute ST-T wave changes. Troponin I negative.",
+            section_title="Diagnostic Findings",
+            token_count=18,
+            character_count=115,
+        ),
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=5,
+            content="Assessment\nFindings are consistent with stable angina, likely related to underlying coronary artery disease.",
+            section_title="Assessment",
+            token_count=16,
+            character_count=115,
+        ),
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=6,
+            content="Plan\nRecommend coronary CT angiography for further risk stratification. Start atorvastatin 40mg daily and low-dose aspirin.",
+            section_title="Plan",
+            token_count=20,
+            character_count=135,
+        ),
+    ]
+    db_session.add_all(chunks)
+    db_session.commit()
+
+    temp_vector_store.upsert_document_chunks(user_id=user_id, document_id=doc.id, chunks=chunks)
+
+    # 1. "what is the clinical diagnosis?" -> Assessment #1
+    res1 = search_similar_chunks(user_id=user_id, query="what is the clinical diagnosis?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert len(res1) >= 1
+    assert res1[0].section_title == "Assessment"
+
+    # 2. "what medications were prescribed?" -> Plan #1
+    res2 = search_similar_chunks(user_id=user_id, query="what medications were prescribed?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert len(res2) >= 1
+    assert res2[0].section_title == "Plan"
+
+    # 3. "did they have edema?" -> Physical Examination #1
+    res3 = search_similar_chunks(user_id=user_id, query="did they have edema?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert len(res3) >= 1
+    assert res3[0].section_title == "Physical Examination"
+    assert "no peripheral edema" in res3[0].content.lower()
+
+    # 4. "what is the age of the patient?" -> History of Present Illness #1
+    res4 = search_similar_chunks(user_id=user_id, query="what is the age of the patient?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert len(res4) >= 1
+    assert res4[0].section_title == "History of Present Illness"
+    assert "58-year-old" in res4[0].content.lower()
+
+    # 5. "what is the speciality?" -> Document Overview #1
+    res5 = search_similar_chunks(user_id=user_id, query="what is the speciality?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert len(res5) >= 1
+    assert res5[0].section_title == "Document Overview"
+
+    # 6. "what are the symptoms?" -> Chief Complaint #1
+    res6 = search_similar_chunks(user_id=user_id, query="what are the symptoms?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert len(res6) >= 1
+    assert res6[0].section_title == "Chief Complaint"
+
+    # 7. "what did the ECG show?" -> Diagnostic Findings #1
+    res7 = search_similar_chunks(user_id=user_id, query="what did the ECG show?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert len(res7) >= 1
+    assert res7[0].section_title == "Diagnostic Findings"
+    assert "ecg" in res7[0].content.lower()
+
+    # 8. "what is google?" -> 0 results
+    res8 = search_similar_chunks(user_id=user_id, query="what is google?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert len(res8) == 0
+
+    # 9. "hi" -> 0 results
+    res9 = search_similar_chunks(user_id=user_id, query="hi", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert len(res9) == 0
+
+    # 10. "what is the treatment plan?" -> Plan #1
+    res10 = search_similar_chunks(user_id=user_id, query="what is the treatment plan?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert len(res10) >= 1
+    assert res10[0].section_title == "Plan"
+
+    # 11. Short valid queries
+    assert search_similar_chunks(user_id=user_id, query="age?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)[0].section_title == "History of Present Illness"
+    assert search_similar_chunks(user_id=user_id, query="specialty?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)[0].section_title == "Document Overview"
+    assert search_similar_chunks(user_id=user_id, query="edema?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)[0].section_title == "Physical Examination"
+
+

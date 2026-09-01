@@ -38,7 +38,10 @@ class SentenceTransformerEmbeddingService(BaseEmbeddingService):
         from sentence_transformers import SentenceTransformer
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._model = SentenceTransformer(self.model_name, device=device)
+        try:
+            self._model = SentenceTransformer(self.model_name, device=device, local_files_only=True)
+        except Exception:
+            self._model = SentenceTransformer(self.model_name, device=device)
         logger.info(f"Initialized SentenceTransformerEmbeddingService with {self.model_name} on {device}")
 
     def embed_text(self, text: str) -> List[float]:

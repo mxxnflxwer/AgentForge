@@ -89,7 +89,7 @@ FastAPI Interactive API Documentation:
 
 ## Authentication & User Management
 
-AgentForge uses **secure server-side sessions** stored in PostgreSQL and delivered to the browser via an `HttpOnly`, `SameSite` cookie (`session_id`).
+AgentForge usess **secure server-side sessions** stored in PostgreSQL and delivered to the browser via an `HttpOnly`, `SameSite` cookie (`session_id`).
 
 ### Roles & Security
 - **USER:** Default role upon registration.

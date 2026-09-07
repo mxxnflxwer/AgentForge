@@ -9,7 +9,8 @@ from app.models.document import Document, DocumentChunk, DocumentProcessingStatu
 from app.models.user import User
 from app.services.embedding_service import BaseEmbeddingService, LocalChromaEmbeddingService, SentenceTransformerEmbeddingService, get_embedding_service
 from app.services.vector_store import VectorStore, get_vector_store
-from app.services.retrieval_service import search_similar_chunks
+from app.services.retrieval_service import execute_rag_retrieval, search_similar_chunks
+from app.services.reranker import classify_query_intent
 from app.services.document.pipeline import get_document_pipeline
 
 
@@ -831,5 +832,260 @@ def test_clinical_retrieval_suite_all_queries(temp_vector_store, db_session):
     assert search_similar_chunks(user_id=user_id, query="age?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)[0].section_title == "History of Present Illness"
     assert search_similar_chunks(user_id=user_id, query="specialty?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)[0].section_title == "Document Overview"
     assert search_similar_chunks(user_id=user_id, query="edema?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)[0].section_title == "Physical Examination"
+
+
+# 15. Query Intent Classifier Unit Tests
+def test_query_intent_classifier():
+    assert classify_query_intent("What is the patient's age?") == "specific_fact"
+    assert classify_query_intent("What is the patient's blood pressure?") == "specific_fact"
+    assert classify_query_intent("What is the LDL level?") == "specific_fact"
+    assert classify_query_intent("What is the diagnosis?") == "diagnosis"
+    assert classify_query_intent("What disease does the patient have?") == "diagnosis"
+    assert classify_query_intent("Summarize the medical report") == "summary"
+    assert classify_query_intent("Give me a summary of the complete report") == "summary"
+    assert classify_query_intent("What are the important findings?") == "findings"
+    assert classify_query_intent("What did the ECG show?") == "findings"
+    assert classify_query_intent("Explain the diagnosis simply") == "explanation"
+    assert classify_query_intent("Why was atorvastatin prescribed?") == "explanation"
+    assert classify_query_intent("What is Google?") == "unsupported_query"
+    assert classify_query_intent("hi") == "unsupported_query"
+
+
+# 16. Full 12 Clinical Benchmark Queries Suite via execute_rag_retrieval
+def test_execute_rag_retrieval_all_twelve_benchmarks(temp_vector_store, db_session):
+    user_id = str(uuid.uuid4())
+    doc = Document(
+        id=str(uuid.uuid4()),
+        owner_id=user_id,
+        original_filename="Cardiology_Full_Report.txt",
+        stored_filename="cardio_full_stored.txt",
+        file_type="txt",
+        file_size=1500,
+        mime_type="text/plain",
+        processing_status=DocumentProcessingStatus.COMPLETED,
+    )
+    db_session.add(doc)
+    db_session.commit()
+
+    chunks = [
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=0,
+            content="Specialty: Cardiology\nReport Type: Consultation History and Physical",
+            section_title="Document Overview",
+            token_count=10,
+            character_count=70,
+        ),
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=1,
+            content="Chief Complaint\nPatient presents with intermittent chest discomfort and shortness of breath on exertion.",
+            section_title="Chief Complaint",
+            token_count=15,
+            character_count=110,
+        ),
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=2,
+            content="History of Present Illness\nA 58-year-old presents with substernal chest tightness occurring with moderate exertion.",
+            section_title="History of Present Illness",
+            token_count=15,
+            character_count=115,
+        ),
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=3,
+            content="Physical Examination\nBlood pressure 138/86, heart rate 78 bpm regular, respiratory rate 16. Lungs clear. No peripheral edema.",
+            section_title="Physical Examination",
+            token_count=20,
+            character_count=130,
+        ),
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=4,
+            content="Diagnostic Findings\nECG shows normal sinus rhythm with no acute ST-T wave changes. Troponin I negative. Lipid panel shows LDL 162 mg/dL, HDL 38 mg/dL.",
+            section_title="Diagnostic Findings",
+            token_count=25,
+            character_count=160,
+        ),
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=5,
+            content="Assessment\nFindings are consistent with stable angina, likely related to underlying coronary artery disease.",
+            section_title="Assessment",
+            token_count=16,
+            character_count=115,
+        ),
+        DocumentChunk(
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            chunk_index=6,
+            content="Plan\nRecommend coronary CT angiography for further risk stratification. Start atorvastatin 40mg daily and low-dose aspirin.",
+            section_title="Plan",
+            token_count=20,
+            character_count=135,
+        ),
+    ]
+    db_session.add_all(chunks)
+    db_session.commit()
+
+    temp_vector_store.upsert_document_chunks(user_id=user_id, document_id=doc.id, chunks=chunks)
+
+    # 1. Age -> 58-year-old
+    q1 = execute_rag_retrieval(user_id=user_id, query="What is the patient's age?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert q1.status == "success"
+    assert q1.intent == "specific_fact"
+    assert q1.total_results >= 1
+    assert "58-year-old" in q1.results[0].content.lower()
+
+    # 2. Diagnosis -> Stable angina
+    q2 = execute_rag_retrieval(user_id=user_id, query="What is the patient's diagnosis?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert q2.status == "success"
+    assert q2.intent == "diagnosis"
+    assert q2.total_results >= 1
+    assert "stable angina" in q2.results[0].content.lower()
+    assert q2.results[0].section_title == "Assessment"
+
+    # 3. Blood pressure -> 138/86
+    q3 = execute_rag_retrieval(user_id=user_id, query="What is the patient's blood pressure?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert q3.status == "success"
+    assert q3.total_results >= 1
+    assert "138/86" in q3.results[0].content
+    assert q3.results[0].section_title == "Physical Examination"
+
+    # 4. Heart rate -> 78 bpm
+    q4 = execute_rag_retrieval(user_id=user_id, query="What is the patient's heart rate?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert q4.status == "success"
+    assert q4.total_results >= 1
+    assert "78 bpm" in q4.results[0].content
+    assert q4.results[0].section_title == "Physical Examination"
+
+    # 5. LDL level -> 162 mg/dL
+    q5 = execute_rag_retrieval(user_id=user_id, query="What is the LDL level?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert q5.status == "success"
+    assert q5.total_results >= 1
+    assert "162 mg/dl" in q5.results[0].content.lower()
+    assert q5.results[0].section_title == "Diagnostic Findings"
+
+    # 6. HDL level -> 38 mg/dL
+    q6 = execute_rag_retrieval(user_id=user_id, query="What is the HDL level?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert q6.status == "success"
+    assert q6.total_results >= 1
+    assert "38 mg/dl" in q6.results[0].content.lower()
+    assert q6.results[0].section_title == "Diagnostic Findings"
+
+    # 7. ECG -> Normal sinus rhythm
+    q7 = execute_rag_retrieval(user_id=user_id, query="What did the ECG show?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert q7.status == "success"
+    assert q7.intent == "findings"
+    assert q7.total_results >= 1
+    assert "normal sinus rhythm" in q7.results[0].content.lower()
+    assert q7.results[0].section_title == "Diagnostic Findings"
+
+    # 8. Important findings
+    q8 = execute_rag_retrieval(user_id=user_id, query="What were the important findings?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert q8.status == "success"
+    assert q8.intent == "findings"
+    assert q8.total_results >= 1
+
+    # 9. Blood glucose -> NOT FOUND (Anti-hallucination)
+    q9 = execute_rag_retrieval(user_id=user_id, query="What is the patient's blood glucose level?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert q9.status == "not_found"
+    assert q9.total_results == 0
+    assert len(q9.results) == 0
+    assert q9.message == "The requested information was not found in the uploaded document."
+
+    # 10. Phone number -> NOT FOUND
+    q10 = execute_rag_retrieval(user_id=user_id, query="What is the patient's phone number?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert q10.status == "not_found"
+    assert q10.total_results == 0
+    assert len(q10.results) == 0
+    assert q10.message == "The requested information was not found in the uploaded document."
+
+    # 11. Address -> NOT FOUND
+    q11 = execute_rag_retrieval(user_id=user_id, query="What is the patient's address?", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert q11.status == "not_found"
+    assert q11.total_results == 0
+    assert len(q11.results) == 0
+    assert q11.message == "The requested information was not found in the uploaded document."
+
+    # 12. Summary query -> Multi-section aggregation
+    q12 = execute_rag_retrieval(user_id=user_id, query="Summarize the medical report", document_id=doc.id, db=db_session, vector_store=temp_vector_store)
+    assert q12.status == "success"
+    assert q12.intent == "summary"
+    assert q12.sections is not None
+    assert len(q12.sections) >= 5
+    assert q12.summary_context is not None
+    assert "Chief Complaint" in q12.summary_context
+    assert "Assessment" in q12.summary_context
+    assert "Diagnostic Findings" in q12.summary_context
+    assert q12.total_results == len(chunks)
+
+
+# 17. HTTP RAG Search API Endpoint Testing
+def test_rag_api_endpoint_standardized_responses(client: TestClient, db_session):
+    email = f"rag_api_test_{uuid.uuid4().hex[:6]}@example.com"
+    session_id = register_and_login(client, email, name="RAG Tester")
+
+    # Get user
+    user = db_session.query(User).filter(User.email == email).first()
+    doc = Document(
+        id=str(uuid.uuid4()),
+        owner_id=user.id,
+        original_filename="Endpoint_Cardio.txt",
+        stored_filename="endpoint_cardio.txt",
+        file_type="txt",
+        file_size=600,
+        mime_type="text/plain",
+        processing_status=DocumentProcessingStatus.COMPLETED,
+    )
+    db_session.add(doc)
+    db_session.commit()
+
+    chunk1 = DocumentChunk(
+        id=str(uuid.uuid4()),
+        document_id=doc.id,
+        chunk_index=0,
+        content="Assessment: Exertional stable angina secondary to CAD.",
+        section_title="Assessment",
+        token_count=8,
+        character_count=55,
+    )
+    db_session.add(chunk1)
+    db_session.commit()
+
+    vstore = get_vector_store()
+    vstore.upsert_document_chunks(user_id=user.id, document_id=doc.id, chunks=[chunk1])
+
+    # 1. Valid diagnosis search
+    res = client.post(
+        "/api/rag/search",
+        json={"query": "What is the diagnosis?", "document_id": doc.id, "top_k": 3},
+        cookies={"session_id": session_id},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    assert data["intent"] == "diagnosis"
+    assert data["total_results"] >= 1
+    assert "stable angina" in data["results"][0]["content"].lower()
+
+    # 2. Unsupported blood glucose search -> not_found
+    res2 = client.post(
+        "/api/rag/search",
+        json={"query": "What is the patient's blood glucose level?", "document_id": doc.id, "top_k": 3},
+        cookies={"session_id": session_id},
+    )
+    assert res2.status_code == 200
+    data2 = res2.json()
+    assert data2["status"] == "not_found"
+    assert data2["total_results"] == 0
+    assert data2["message"] == "The requested information was not found in the uploaded document."
 
 

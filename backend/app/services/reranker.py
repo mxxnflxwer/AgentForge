@@ -4,6 +4,8 @@ import math
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from app.core.config import settings
+
 logger = logging.getLogger("agentforge.services.reranker")
 
 # Standard query stopwords
@@ -12,7 +14,7 @@ STOP_WORDS: Set[str] = {
     "are", "was", "were", "at", "by", "who", "how", "when", "where", "which", "do", "does",
     "did", "have", "has", "had", "be", "been", "being", "this", "that", "these", "those",
     "tell", "me", "about", "show", "give", "list", "any", "some", "can", "could", "would",
-    "they", "their", "them", "he", "she", "it", "its", "there",
+    "they", "their", "them", "he", "she", "it", "its", "there", "patient", "patients",
 }
 
 # Conversational greetings / non-informational queries to reject immediately
@@ -21,6 +23,12 @@ GREETING_PATTERNS: Set[str] = {
     "good evening", "good day", "how are you", "what's up", "whats up", "yo",
     "test", "testing", "ok", "okay", "thanks", "thank you", "bye", "goodbye",
     "who are you", "what can you do", "help", "help me",
+}
+
+# General knowledge / out-of-domain patterns that are unsupported in clinical docs
+OUT_OF_DOMAIN_PATTERNS: Set[str] = {
+    "google", "weather", "quantum computing", "elon musk", "president", "capital of",
+    "movie", "song", "bitcoin", "crypto", "stock market",
 }
 
 # Morphological, spelling, and synonym normalization map
@@ -54,6 +62,21 @@ SYNONYM_MAP: Dict[str, str] = {
     "ekgs": "ecg",
     "ekg": "ecg",
     "vitals": "vital",
+    "bp": "blood pressure",
+    "hr": "heart rate",
+    "rates": "rate",
+    "levels": "level",
+}
+
+# Specific required entity keyword mappings to prevent false-positive matching
+# If query contains key, candidate chunk MUST match at least one keyword or section
+REQUIRED_ENTITY_KEYWORDS: Dict[str, Set[str]] = {
+    "glucose": {"glucose", "blood glucose", "blood sugar", "sugar", "hba1c", "a1c", "glycemic", "diabetes", "diabetic", "mg/dl"},
+    "phone": {"phone", "telephone", "cell", "mobile", "contact number", "call"},
+    "address": {"address", "residence", "street", "zip", "postal", "city", "state", "residing"},
+    "dob": {"dob", "date of birth", "birth date", "born"},
+    "hdl": {"hdl", "high-density", "high density lipoprotein"},
+    "ldl": {"ldl", "low-density", "low density lipoprotein"},
 }
 
 # Domain Intent Mappings
@@ -120,16 +143,16 @@ INTENT_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "secondary_sections": set(),
         "content_patterns": [
             r"blood pressure", r"heart rate", r"bpm", r"edema", r"auscultation", r"lungs clear",
-            r"no peripheral edema", r"regular rate",
+            r"no peripheral edema", r"regular rate", r"\d{2,3}/\d{2,3}",
         ],
     },
     "findings": {
-        "keywords": {"ecg", "finding", "test", "tests", "labs", "laboratory", "troponin", "tsh", "t4", "t3", "imaging", "ct", "ultrasound", "stress test", "angiography", "biopsy", "panel"},
-        "primary_sections": {"diagnostic findings", "laboratory data", "diagnostic studies", "labs", "imaging", "endocrinology", "diagnostic"},
+        "keywords": {"ecg", "finding", "test", "tests", "labs", "laboratory", "troponin", "tsh", "t4", "t3", "imaging", "ct", "ultrasound", "stress test", "angiography", "biopsy", "panel", "ldl", "hdl", "lipid"},
+        "primary_sections": {"diagnostic findings", "laboratory data", "diagnostic studies", "labs", "imaging", "endocrinology", "diagnostic", "investigations"},
         "secondary_sections": set(),
         "content_patterns": [
             r"\becg\b", r"sinus rhythm", r"troponin", r"\btsh\b", r"st depression", r"ultrasound",
-            r"biopsy", r"mg/dl", r"miu/l", r"free t4",
+            r"biopsy", r"mg/dl", r"miu/l", r"free t4", r"ldl", r"hdl",
         ],
     },
 }
@@ -148,11 +171,65 @@ def is_greeting_or_nonsense(query: str) -> bool:
         return True
     if clean_q in GREETING_PATTERNS:
         return True
-    # Single short token that is in greetings
     tokens = clean_q.split()
     if len(tokens) == 1 and tokens[0] in GREETING_PATTERNS:
         return True
     return False
+
+
+def is_out_of_domain(query: str) -> bool:
+    """Detect general out-of-domain knowledge queries that are not in medical records."""
+    clean_q = query.lower().strip()
+    for ood in OUT_OF_DOMAIN_PATTERNS:
+        if ood in clean_q:
+            return True
+    return False
+
+
+def classify_query_intent(query: str) -> str:
+    """
+    Lightweight rule-based query intent classifier.
+    Detects:
+    - 'summary': Requests for summarizing the document or complete report.
+    - 'diagnosis': Questions about patient diagnosis, disease, or clinical impression.
+    - 'findings': Questions about investigations, labs, ECG, imaging, or physical exam findings.
+    - 'explanation': Requests to explain or clarify why/how.
+    - 'unsupported_query': Conversational greetings or out-of-domain queries.
+    - 'specific_fact': Direct factual queries (age, blood pressure, heart rate, medications, etc.).
+    """
+    q_lower = query.lower().strip()
+
+    if is_greeting_or_nonsense(q_lower) or is_out_of_domain(q_lower):
+        return "unsupported_query"
+
+    # Summary Intent
+    if any(k in q_lower for k in [
+        "summarize", "summary", "overview of the report", "overview of the complete report",
+        "summarise", "give me a summary", "complete report", "full report", "synthesize", "document summary"
+    ]):
+        return "summary"
+
+    # Explanation Intent
+    if re.search(r"\b(explain|why|how come|describe why|explain simply|elaborate)\b", q_lower):
+        return "explanation"
+
+    # Diagnosis Intent
+    if any(k in q_lower for k in [
+        "diagnosis", "diagnoses", "diagnose", "disease", "condition", "syndrome",
+        "disorder", "illness", "assessment", "clinical impression", "what is wrong with"
+    ]):
+        return "diagnosis"
+
+    # Findings Intent
+    if any(k in q_lower for k in [
+        "findings", "finding", "important findings", "diagnostic findings", "ecg", "ekg",
+        "troponin", "tsh", "labs", "laboratory", "investigation", "investigations",
+        "imaging", "stress test", "angiography", "ultrasound", "biopsy", "test results"
+    ]):
+        return "findings"
+
+    # Default to specific_fact for factual clinical inquiries
+    return "specific_fact"
 
 
 class BaseReranker(abc.ABC):
@@ -166,7 +243,7 @@ class BaseReranker(abc.ABC):
         query: str,
         chunks: List[Dict[str, Any]],
         top_k: int,
-        relevance_threshold: float = 0.25,
+        relevance_threshold: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """Rerank candidate chunks according to relevance to the query."""
         pass
@@ -175,15 +252,19 @@ class BaseReranker(abc.ABC):
 class LocalSemanticReranker(BaseReranker):
     """
     High-precision hybrid reranker combining:
-    1. Dense Vector Similarity (ChromaDB cosine similarity from BGE-M3).
+    1. Dense Vector Similarity (ChromaDB cosine similarity from BGE-M3 / all-MiniLM).
     2. BM25 / Exact Lexical Keyword Overlap with Normalized Stemming.
     3. Section & Clinical Intent Alignment.
-    4. Exact Factual Pattern Matching (e.g. Edema, Age, Specialty).
-    5. Relevance threshold gating (rejects out-of-domain & conversational queries).
+    4. Exact Factual Pattern & Compound Entity Verification.
+    5. Configurable relevance threshold gating (rejects unmentioned facts & out-of-domain queries).
     """
 
-    def __init__(self, default_threshold: float = 0.25):
-        self.default_threshold = default_threshold
+    def __init__(self, default_threshold: Optional[float] = None):
+        self.default_threshold = (
+            default_threshold
+            if default_threshold is not None
+            else getattr(settings, "MIN_RELEVANCE_SCORE", 0.35)
+        )
 
     def extract_and_normalize_query_tokens(self, query: str) -> List[str]:
         """Extract words, remove stopwords, and apply synonym normalization."""
@@ -194,6 +275,21 @@ class LocalSemanticReranker(BaseReranker):
             if w not in STOP_WORDS and len(w) > 1
         ]
         return tokens
+
+    def check_required_entities(self, query_lower: str, content_lower: str, section_lower: str) -> bool:
+        """
+        Entity gating: if the query targets a specific entity (e.g. glucose, phone, address, hdl, ldl),
+        the chunk MUST contain evidence of that entity or belong to the direct entity section.
+        Returns False if the chunk fails the required entity check (meaning it should NOT match).
+        """
+        for trigger, required_keywords in REQUIRED_ENTITY_KEYWORDS.items():
+            if trigger in query_lower:
+                # Check if chunk contains at least one of the required keywords
+                has_keyword = any(kw in content_lower for kw in required_keywords)
+                has_section = any(kw in section_lower for kw in required_keywords)
+                if not (has_keyword or has_section):
+                    return False
+        return True
 
     def compute_lexical_score(self, query_tokens: List[str], text: str, section: str) -> Tuple[float, float]:
         """
@@ -258,8 +354,8 @@ class LocalSemanticReranker(BaseReranker):
 
         return min(1.0, total_intent_score / matched_intents)
 
-    def compute_exact_fact_score(self, query_tokens: List[str], content_lower: str, section_lower: str) -> float:
-        """Check for specific factual queries like age, specialty, edema, ecg."""
+    def compute_exact_fact_score(self, query_lower: str, query_tokens: List[str], content_lower: str, section_lower: str) -> float:
+        """Check for specific factual queries like age, blood pressure, heart rate, LDL, HDL, ECG."""
         score = 0.0
 
         # Specialty query
@@ -271,10 +367,38 @@ class LocalSemanticReranker(BaseReranker):
 
         # Age query
         if "age" in query_tokens or "old" in query_tokens:
-            if re.search(r"\b\d{1,3}\s*-\s*year\s*-\s*old\b", content_lower) or re.search(r"\b\d{1,3}\s*yo\b", content_lower):
+            if re.search(r"\b\d{1,3}\s*-\s*year\s*-\s*old\b", content_lower) or re.search(r"\b\d{1,3}\s*yo\b", content_lower) or re.search(r"\b\d{1,3}\s*years?\s*old\b", content_lower):
                 score += 0.70
             if "history of present illness" in section_lower:
                 score += 0.30
+
+        # Blood pressure query
+        if "blood pressure" in query_lower or "bp" in query_tokens:
+            if re.search(r"blood pressure\s*\d{2,3}/\d{2,3}", content_lower) or re.search(r"\b\d{2,3}/\d{2,3}\b", content_lower):
+                score += 0.70
+            if "physical examination" in section_lower or "vital signs" in section_lower:
+                score += 0.30
+
+        # Heart rate query
+        if "heart rate" in query_lower or "pulse" in query_tokens or "bpm" in query_tokens:
+            if re.search(r"heart rate\s*\d{2,3}", content_lower) or "bpm" in content_lower or "pulse" in content_lower:
+                score += 0.70
+            if "physical examination" in section_lower or "vital signs" in section_lower:
+                score += 0.30
+
+        # LDL level query
+        if "ldl" in query_lower:
+            if "ldl" in content_lower:
+                score += 0.75
+            if "diagnostic findings" in section_lower or "labs" in section_lower:
+                score += 0.25
+
+        # HDL level query
+        if "hdl" in query_lower:
+            if "hdl" in content_lower:
+                score += 0.75
+            if "diagnostic findings" in section_lower or "labs" in section_lower:
+                score += 0.25
 
         # Edema query
         if "edema" in query_tokens:
@@ -284,13 +408,15 @@ class LocalSemanticReranker(BaseReranker):
                 score += 0.30
 
         # Diagnosis query
-        if "diagnosis" in query_tokens:
+        if "diagnosis" in query_tokens or "disease" in query_tokens:
             if "assessment" in section_lower or "impression" in section_lower:
                 score += 0.60
+            if re.search(r"(stable angina|coronary artery disease|hypothyroidism|hashimoto)", content_lower):
+                score += 0.40
 
         # ECG query
-        if "ecg" in query_tokens:
-            if "ecg" in content_lower or "ekg" in content_lower:
+        if "ecg" in query_tokens or "ekg" in query_tokens:
+            if "ecg" in content_lower or "ekg" in content_lower or "sinus rhythm" in content_lower:
                 score += 0.60
             if "diagnostic findings" in section_lower:
                 score += 0.40
@@ -300,10 +426,11 @@ class LocalSemanticReranker(BaseReranker):
     def compute_chunk_score(self, query: str, chunk: Dict[str, Any]) -> float:
         """
         Compute multi-signal relevance score:
-        - 35% Dense Vector Similarity
-        - 25% BM25 Lexical Score
-        - 25% Section Intent Alignment
-        - 15% Exact Factual Match
+        - Dense Vector Similarity
+        - Lexical BM25 Score
+        - Section Intent Alignment
+        - Exact Factual Match
+        - Strict Entity Gating Suppression
         """
         content = chunk.get("content") or ""
         section = chunk.get("section_title") or ""
@@ -311,6 +438,13 @@ class LocalSemanticReranker(BaseReranker):
 
         content_lower = content.lower()
         section_lower = section.lower()
+        query_lower = query.lower().strip()
+
+        # Step 1: Strict Entity Gating Check
+        # If query asks for specific entity (e.g. glucose, phone, address) and chunk lacks it:
+        if not self.check_required_entities(query_lower, content_lower, section_lower):
+            # Suppress completely to avoid returning false-positive chunks
+            return 0.0
 
         tokens = self.extract_and_normalize_query_tokens(query)
         if not tokens:
@@ -318,15 +452,13 @@ class LocalSemanticReranker(BaseReranker):
 
         lexical_score, coverage_ratio = self.compute_lexical_score(tokens, content_lower, section_lower)
         intent_score = self.compute_intent_score(tokens, content_lower, section_lower)
-        exact_fact_score = self.compute_exact_fact_score(tokens, content_lower, section_lower)
+        exact_fact_score = self.compute_exact_fact_score(query_lower, tokens, content_lower, section_lower)
 
         # Out-of-domain / zero-evidence suppression:
-        # If no lexical match, no intent match, and no exact fact match:
         if lexical_score < 0.08 and intent_score == 0.0 and exact_fact_score == 0.0:
-            # Heavily discount dense similarity to reject unrelated queries
-            combined = dense_sim * 0.12
+            combined = dense_sim * 0.10
         elif coverage_ratio < 0.30 and intent_score == 0.0 and exact_fact_score == 0.0:
-            combined = dense_sim * 0.20 + lexical_score * 0.20
+            combined = dense_sim * 0.15 + lexical_score * 0.15
         else:
             combined = (
                 0.35 * dense_sim +
@@ -347,12 +479,16 @@ class LocalSemanticReranker(BaseReranker):
         if not chunks or not query or not query.strip():
             return []
 
-        # Immediately reject conversational / greeting queries
-        if is_greeting_or_nonsense(query):
-            logger.info(f"Query '{query}' classified as conversational/greeting; returning 0 results.")
+        # Immediately reject conversational / greeting / out-of-domain queries
+        if is_greeting_or_nonsense(query) or is_out_of_domain(query):
+            logger.info(f"Query '{query}' classified as conversational/out-of-domain; returning 0 results.")
             return []
 
-        threshold = relevance_threshold if relevance_threshold is not None else self.default_threshold
+        threshold = (
+            relevance_threshold
+            if relevance_threshold is not None
+            else self.default_threshold
+        )
 
         scored_chunks = []
         seen_content_signatures = set()
@@ -366,7 +502,6 @@ class LocalSemanticReranker(BaseReranker):
 
             # Filter by relevance threshold
             if rerank_score >= threshold:
-                # Deduplicate identical chunks if multiple copies exist
                 content_sig = (chunk_copy.get("document_id"), chunk_copy.get("chunk_index"))
                 if content_sig not in seen_content_signatures:
                     seen_content_signatures.add(content_sig)

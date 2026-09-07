@@ -30,12 +30,32 @@ class RetrievedChunk(BaseModel):
     chunk_index: int
     content: str
     section_title: Optional[str] = None
-    distance: float
-    similarity_score: float
+    distance: float = 0.0
+    similarity_score: float = 0.0
     relevance_score: Optional[float] = None
+
+
+class SectionSummary(BaseModel):
+    section_title: str
+    content: str
+    chunk_indices: List[int] = []
+
+
+class RAGDebugInfo(BaseModel):
+    retrieved_chunks: int
+    filtered_chunks: int
+    threshold: float
+    intent: str
 
 
 class RAGSearchResponse(BaseModel):
     query: str
+    status: str = "success"
+    intent: str = "specific_fact"
     total_results: int
-    results: List[RetrievedChunk]
+    message: Optional[str] = None
+    document_id: Optional[str] = None
+    sections: Optional[List[SectionSummary]] = None
+    summary_context: Optional[str] = None
+    results: List[RetrievedChunk] = []
+    debug: Optional[RAGDebugInfo] = None

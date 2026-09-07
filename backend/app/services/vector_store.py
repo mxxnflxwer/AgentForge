@@ -216,6 +216,54 @@ class VectorStore:
 
         return retrieved
 
+    def get_all_document_chunks(
+        self,
+        user_id: str,
+        document_id: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve all chunks belonging to a document, ordered by chunk_index.
+        Used for full-document retrieval and summary queries.
+        """
+        try:
+            results = self._collection.get(
+                where={
+                    "$and": [
+                        {"user_id": {"$eq": str(user_id)}},
+                        {"document_id": {"$eq": str(document_id)}},
+                    ]
+                },
+                include=["documents", "metadatas"],
+            )
+        except Exception as e:
+            logger.error(f"Error retrieving all document chunks from ChromaDB: {e}")
+            return []
+
+        if not results or not results["ids"]:
+            return []
+
+        ids_list = results["ids"]
+        docs_list = results.get("documents") or []
+        metas_list = results.get("metadatas") or []
+
+        chunks: List[Dict[str, Any]] = []
+        for i in range(len(ids_list)):
+            meta = metas_list[i] if i < len(metas_list) else {}
+            content = docs_list[i] if i < len(docs_list) else ""
+            chunks.append({
+                "chunk_id": str(meta.get("chunk_id", "")),
+                "document_id": str(meta.get("document_id", "")),
+                "chunk_index": int(meta.get("chunk_index", 0)),
+                "content": content,
+                "section_title": meta.get("section_title") or None,
+                "distance": 0.0,
+                "similarity_score": 1.0,
+                "relevance_score": 1.0,
+            })
+
+        chunks.sort(key=lambda x: x["chunk_index"])
+        return chunks
+
 
 _vector_store_instance: Optional[VectorStore] = None
 

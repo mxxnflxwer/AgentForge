@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     CHROMA_PERSIST_DIRECTORY: str = "storage/chromadb"
     CHROMA_COLLECTION_NAME: str = "agentforge_documents"
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
+    MIN_RELEVANCE_SCORE: float = 0.35
+    DEBUG_RETRIEVAL: bool = True
 
     @property
     def cors_origins(self) -> list[str]:

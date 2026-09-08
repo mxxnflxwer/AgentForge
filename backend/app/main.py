@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from app.api import auth_router, documents_router, rag_router, users_router
+from app.api import auth_router, documents_router, query_router, rag_router, users_router
 from app.core.config import settings
 from app.core.database import engine
 
@@ -71,3 +71,4 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(documents_router)
 app.include_router(rag_router)
+app.include_router(query_router)

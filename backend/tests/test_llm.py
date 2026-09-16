@@ -50,15 +50,26 @@ def test_offline_fallback():
         context="Assessment: Patient diagnosed with Type 2 Diabetes.",
         reason="No API key provided",
     )
-    assert resp.model == "Gemini 2.5 Flash-Lite"
+    assert resp.model == "Gemini 3.5 Flash-Lite"
     assert resp.success is False
     assert "No API key provided" in (resp.error or "")
     assert "Type 2 Diabetes" in resp.answer
 
 
+def test_missing_api_key_configuration():
+    gemini = GeminiAdapter(api_key="")
+    assert gemini.is_configured() is False
+
+    qwen = QwenAdapter(api_key="")
+    assert qwen.is_configured() is False
+
+    gpt_oss = GPTOSSAdapter(api_key="")
+    assert gpt_oss.is_configured() is False
+
+
 @pytest.mark.asyncio
 async def test_gemini_adapter_mock_success():
-    adapter = GeminiAdapter(api_key="mock_gemini_key")
+    adapter = GeminiAdapter(api_key="mock_gemini_key", model_id="gemini-3.5-flash-lite")
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.json.return_value = {
@@ -79,15 +90,21 @@ async def test_gemini_adapter_mock_success():
             context="Patient has stable angina.",
         )
         assert result.success is True
-        assert result.model == "Gemini 2.5 Flash-Lite"
+        assert result.model == "Gemini 3.5 Flash-Lite"
         assert result.provider == "Google"
         assert "stable angina" in result.answer
         assert result.latency_ms >= 0
 
+        # Verify URL and header authentication
+        called_url, called_kwargs = mock_post.call_args
+        assert "models/gemini-3.5-flash-lite:generateContent" in called_url[0]
+        assert "key=mock_gemini_key" in called_url[0]
+        assert called_kwargs["headers"].get("x-goog-api-key") == "mock_gemini_key"
+
 
 @pytest.mark.asyncio
 async def test_qwen_adapter_mock_success():
-    adapter = QwenAdapter(api_key="mock_qwen_key")
+    adapter = QwenAdapter(api_key="mock_qwen_key", base_url="https://openrouter.ai/api/v1")
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.json.return_value = {
@@ -109,13 +126,22 @@ async def test_qwen_adapter_mock_success():
         )
         assert result.success is True
         assert result.model == "Qwen 3.6 27B"
-        assert result.provider == "Qwen"
+        assert result.provider == "OpenRouter"
         assert "Coronary artery disease" in result.answer
+
+        # Verify OpenRouter URL and Bearer header
+        called_url, called_kwargs = mock_post.call_args
+        assert "https://openrouter.ai/api/v1/chat/completions" == called_url[0]
+        assert called_kwargs["headers"].get("Authorization") == "Bearer mock_qwen_key"
 
 
 @pytest.mark.asyncio
 async def test_gpt_oss_adapter_mock_success():
-    adapter = GPTOSSAdapter(api_key="mock_gpt_oss_key")
+    adapter = GPTOSSAdapter(
+        api_key="mock_hf_token",
+        base_url="https://router.huggingface.co/v1",
+        model_id="openai/gpt-oss-120b",
+    )
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.json.return_value = {
@@ -137,8 +163,13 @@ async def test_gpt_oss_adapter_mock_success():
         )
         assert result.success is True
         assert result.model == "GPT-OSS 120B"
-        assert result.provider == "OpenAI-Compatible"
+        assert result.provider == "Hugging Face"
         assert "130/85" in result.answer
+
+        # Verify Hugging Face URL and Authorization Bearer header
+        called_url, called_kwargs = mock_post.call_args
+        assert "https://router.huggingface.co/v1/chat/completions" == called_url[0]
+        assert called_kwargs["headers"].get("Authorization") == "Bearer mock_hf_token"
 
 
 @pytest.mark.asyncio
@@ -151,7 +182,7 @@ async def test_llm_router_compare_all():
          patch.object(GPTOSSAdapter, "generate", new_callable=AsyncMock) as mock_gpt:
         
         mock_gemini.return_value = LLMResponse(
-            model="Gemini 2.5 Flash-Lite",
+            model="Gemini 3.5 Flash-Lite",
             provider="Google",
             answer="Gemini answer.",
             latency_ms=105.2,
@@ -159,14 +190,14 @@ async def test_llm_router_compare_all():
         )
         mock_qwen.return_value = LLMResponse(
             model="Qwen 3.6 27B",
-            provider="Qwen",
+            provider="OpenRouter",
             answer="Qwen answer.",
             latency_ms=150.8,
             success=True,
         )
         mock_gpt.return_value = LLMResponse(
             model="GPT-OSS 120B",
-            provider="OpenAI-Compatible",
+            provider="Hugging Face",
             answer="GPT-OSS answer.",
             latency_ms=210.4,
             success=True,
@@ -179,7 +210,7 @@ async def test_llm_router_compare_all():
 
         assert len(results) == 3
         model_names = [r.model for r in results]
-        assert "Gemini 2.5 Flash-Lite" in model_names
+        assert "Gemini 3.5 Flash-Lite" in model_names
         assert "Qwen 3.6 27B" in model_names
         assert "GPT-OSS 120B" in model_names
         assert all(r.success for r in results)
@@ -191,7 +222,7 @@ def test_api_models_endpoint(client: TestClient):
     data = response.json()
     assert "models" in data
     names = [m["name"] for m in data["models"]]
-    assert "Gemini 2.5 Flash-Lite" in names
+    assert "Gemini 3.5 Flash-Lite" in names
     assert "Qwen 3.6 27B" in names
     assert "GPT-OSS 120B" in names
 
@@ -259,7 +290,7 @@ def test_api_query_answer_success(client: TestClient, mock_auth_user):
              patch.object(GeminiAdapter, "generate", new_callable=AsyncMock) as mock_gemini:
             
             mock_gemini.return_value = LLMResponse(
-                model="Gemini 2.5 Flash-Lite",
+                model="Gemini 3.5 Flash-Lite",
                 provider="Google",
                 answer="The patient is diagnosed with stable angina pectoris.",
                 latency_ms=115.0,
@@ -315,7 +346,7 @@ def test_api_query_compare_success(client: TestClient, mock_auth_user):
             
             mock_compare.return_value = [
                 LLMResponse(
-                    model="Gemini 2.5 Flash-Lite",
+                    model="Gemini 3.5 Flash-Lite",
                     provider="Google",
                     answer="Diagnosis: Stable angina.",
                     latency_ms=98.0,
@@ -323,14 +354,14 @@ def test_api_query_compare_success(client: TestClient, mock_auth_user):
                 ),
                 LLMResponse(
                     model="Qwen 3.6 27B",
-                    provider="Qwen",
+                    provider="OpenRouter",
                     answer="Clinical diagnosis is stable angina pectoris.",
                     latency_ms=160.0,
                     success=True,
                 ),
                 LLMResponse(
                     model="GPT-OSS 120B",
-                    provider="OpenAI-Compatible",
+                    provider="Hugging Face",
                     answer="Findings indicate stable angina.",
                     latency_ms=210.0,
                     success=True,
@@ -347,7 +378,7 @@ def test_api_query_compare_success(client: TestClient, mock_auth_user):
             data = res.json()
             assert data["status"] == "success"
             assert len(data["results"]) == 3
-            assert data["results"][0]["model"] == "Gemini 2.5 Flash-Lite"
+            assert data["results"][0]["model"] == "Gemini 3.5 Flash-Lite"
             assert data["results"][1]["model"] == "Qwen 3.6 27B"
             assert data["results"][2]["model"] == "GPT-OSS 120B"
             assert len(data["sources"]) == 1

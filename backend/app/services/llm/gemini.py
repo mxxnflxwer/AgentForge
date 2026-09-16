@@ -16,21 +16,21 @@ logger = logging.getLogger("agentforge.services.llm.gemini")
 
 class GeminiAdapter(BaseLLMAdapter):
     """
-    Adapter for Gemini 2.5 Flash-Lite using Google Generative Language REST API.
+    Adapter for Gemini 3.5 Flash-Lite using Google Generative Language REST API.
     """
 
     def __init__(
         self,
-        name: str = "Gemini 2.5 Flash-Lite",
+        name: str = "Gemini 3.5 Flash-Lite",
         provider: str = "Google",
         model_id: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         timeout: Optional[float] = None,
     ):
-        model_name = model_id or getattr(settings, "GEMINI_MODEL_NAME", "gemini-2.5-flash-lite")
+        model_name = model_id or getattr(settings, "GEMINI_MODEL_NAME", "gemini-3.5-flash-lite")
         super().__init__(name=name, provider=provider, model_id=model_name)
-        self.api_key = api_key or getattr(settings, "GEMINI_API_KEY", None)
+        self.api_key = api_key if api_key is not None else getattr(settings, "GEMINI_API_KEY", None)
         self.base_url = (base_url or getattr(settings, "GEMINI_API_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")).rstrip("/")
         self.timeout = timeout or getattr(settings, "LLM_TIMEOUT_SECONDS", 30.0)
 
@@ -44,7 +44,7 @@ class GeminiAdapter(BaseLLMAdapter):
         system_prompt: Optional[str] = None,
     ) -> LLMResponse:
         """
-        Calls Gemini 2.5 Flash-Lite API with anti-hallucination context and system prompt.
+        Calls Gemini 3.5 Flash-Lite API with anti-hallucination context and system prompt.
         """
         if not self.is_configured():
             logger.info("Gemini API key not configured. Returning fallback response.")
@@ -58,6 +58,10 @@ class GeminiAdapter(BaseLLMAdapter):
         user_prompt = build_medical_prompt(query=query, context=context)
 
         url = f"{self.base_url}/models/{self.model_id}:generateContent?key={self.api_key}"
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
 
         payload: Dict[str, Any] = {
             "contents": [
@@ -81,7 +85,7 @@ class GeminiAdapter(BaseLLMAdapter):
                 response = await client.post(
                     url,
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    headers=headers,
                 )
                 latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
@@ -129,7 +133,7 @@ class GeminiAdapter(BaseLLMAdapter):
 
         except httpx.TimeoutException as exc:
             latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            err_msg = f"Gemini API request timed out after {self.timeout}s: {exc}"
+            err_msg = f"Gemini API request timed out after {self.timeout}s"
             logger.error(err_msg)
             return LLMResponse(
                 model=self.name,

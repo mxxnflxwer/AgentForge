@@ -26,6 +26,7 @@ class LLMRouter:
         gpt_oss = GPTOSSAdapter()
 
         self.register_adapter("gemini", gemini)
+        self.register_adapter("gemini-3.5-flash-lite", gemini)
         self.register_adapter("gemini-2.5-flash-lite", gemini)
 
         self.register_adapter("qwen", qwen)

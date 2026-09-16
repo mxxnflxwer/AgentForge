@@ -21,19 +21,19 @@ class Settings(BaseSettings):
     MIN_RELEVANCE_SCORE: float = 0.35
     DEBUG_RETRIEVAL: bool = True
 
-    # LLM Settings: Gemini 2.5 Flash-Lite
+    # LLM Settings: Gemini 3.5 Flash-Lite
     GEMINI_API_KEY: str | None = None
     GEMINI_API_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
-    GEMINI_MODEL_NAME: str = "gemini-2.5-flash-lite"
+    GEMINI_MODEL_NAME: str = "gemini-3.5-flash-lite"
 
-    # LLM Settings: Qwen 3.6 27B (via OpenAI-compatible / OpenRouter / DashScope / Groq API)
+    # LLM Settings: Qwen 3.6 27B (via OpenAI-compatible / OpenRouter API)
     QWEN_API_KEY: str | None = None
     QWEN_API_BASE_URL: str = "https://openrouter.ai/api/v1"
     QWEN_MODEL_NAME: str = "qwen/qwen-2.5-72b-instruct"
 
-    # LLM Settings: GPT-OSS 120B (via OpenAI-compatible API)
+    # LLM Settings: GPT-OSS 120B (via Hugging Face Inference Providers OpenAI-compatible endpoint)
     GPT_OSS_API_KEY: str | None = None
-    GPT_OSS_API_BASE_URL: str = "https://openrouter.ai/api/v1"
+    GPT_OSS_API_BASE_URL: str = "https://router.huggingface.co/v1"
     GPT_OSS_MODEL_NAME: str = "openai/gpt-oss-120b"
 
     # Common LLM settings

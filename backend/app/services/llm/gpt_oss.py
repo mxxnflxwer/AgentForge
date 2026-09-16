@@ -16,14 +16,13 @@ logger = logging.getLogger("agentforge.services.llm.gpt_oss")
 
 class GPTOSSAdapter(BaseLLMAdapter):
     """
-    Adapter for GPT-OSS 120B using OpenAI-compatible Chat Completions API
-    (e.g., OpenRouter, vLLM, Groq, Ollama, or custom endpoint).
+    Adapter for GPT-OSS 120B using Hugging Face Inference Providers OpenAI-compatible Chat Completions API.
     """
 
     def __init__(
         self,
         name: str = "GPT-OSS 120B",
-        provider: str = "OpenAI-Compatible",
+        provider: str = "Hugging Face",
         model_id: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
@@ -31,8 +30,8 @@ class GPTOSSAdapter(BaseLLMAdapter):
     ):
         model_name = model_id or getattr(settings, "GPT_OSS_MODEL_NAME", "openai/gpt-oss-120b")
         super().__init__(name=name, provider=provider, model_id=model_name)
-        self.api_key = api_key or getattr(settings, "GPT_OSS_API_KEY", None)
-        self.base_url = (base_url or getattr(settings, "GPT_OSS_API_BASE_URL", "https://openrouter.ai/api/v1")).rstrip("/")
+        self.api_key = api_key if api_key is not None else getattr(settings, "GPT_OSS_API_KEY", None)
+        self.base_url = (base_url or getattr(settings, "GPT_OSS_API_BASE_URL", "https://router.huggingface.co/v1")).rstrip("/")
         self.timeout = timeout or getattr(settings, "LLM_TIMEOUT_SECONDS", 30.0)
 
     def is_configured(self) -> bool:
@@ -45,7 +44,7 @@ class GPTOSSAdapter(BaseLLMAdapter):
         system_prompt: Optional[str] = None,
     ) -> LLMResponse:
         """
-        Calls GPT-OSS 120B API via OpenAI-compatible Chat Completions endpoint.
+        Calls GPT-OSS 120B API via Hugging Face Inference Providers OpenAI-compatible endpoint.
         """
         if not self.is_configured():
             logger.info("GPT-OSS API key not configured. Returning fallback response.")
@@ -122,7 +121,7 @@ class GPTOSSAdapter(BaseLLMAdapter):
 
         except httpx.TimeoutException as exc:
             latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            err_msg = f"GPT-OSS API request timed out after {self.timeout}s: {exc}"
+            err_msg = f"GPT-OSS API request timed out after {self.timeout}s"
             logger.error(err_msg)
             return LLMResponse(
                 model=self.name,

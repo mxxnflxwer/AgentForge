@@ -77,9 +77,9 @@ interface QueryCompareResponse {
 const API_BASE = 'http://localhost:8000'
 
 const AVAILABLE_MODELS = [
-  { id: 'gemini', name: 'Gemini 2.5 Flash-Lite', provider: 'Google', badge: 'Fast & Grounded' },
-  { id: 'qwen', name: 'Qwen 3.6 27B', provider: 'Qwen', badge: 'High Accuracy' },
-  { id: 'gpt_oss', name: 'GPT-OSS 120B', provider: 'OpenAI-Compatible', badge: 'Reasoning' },
+  { id: 'gemini', name: 'Gemini 3.5 Flash-Lite', provider: 'Google', badge: 'Fast & Grounded' },
+  { id: 'qwen', name: 'Qwen 3.6 27B', provider: 'OpenRouter', badge: 'High Accuracy' },
+  { id: 'gpt_oss', name: 'GPT-OSS 120B', provider: 'Hugging Face', badge: 'Reasoning' },
 ]
 
 // Safe helper getters
@@ -445,11 +445,11 @@ function MainApp() {
           <div className="rag-logo-badge">⚡ AgentForge</div>
           <h1>Medical Document Analyzer & Model Comparison</h1>
           <p className="rag-subtitle">
-            RAG Ingestion Pipeline ➔ 3-LLM Integration (Gemini 2.5 Flash-Lite, Qwen 3.6 27B, GPT-OSS 120B) ➔ AgentEvo Foundation
+            RAG Ingestion Pipeline ➔ 3-LLM Integration (Gemini 3.5 Flash-Lite, Qwen 3.6 27B, GPT-OSS 120B) ➔ AgentEvo Foundation
           </p>
         </div>
         <div className="rag-header-right">
-          <span className="rag-tag">Gemini 2.5 Flash-Lite</span>
+          <span className="rag-tag">Gemini 3.5 Flash-Lite</span>
           <span className="rag-tag">Qwen 3.6 27B</span>
           <span className="rag-tag">GPT-OSS 120B</span>
           {isLoggedIn ? (
@@ -846,7 +846,7 @@ function MainApp() {
                   {generating && (
                     <div className="rag-placeholder">
                       <div className="rag-spinner"></div>
-                      <p>Executing RAG retrieval once & querying Gemini 2.5 Flash-Lite, Qwen 3.6 27B, and GPT-OSS 120B concurrently...</p>
+                      <p>Executing RAG retrieval once & querying Gemini 3.5 Flash-Lite, Qwen 3.6 27B, and GPT-OSS 120B concurrently...</p>
                     </div>
                   )}
 

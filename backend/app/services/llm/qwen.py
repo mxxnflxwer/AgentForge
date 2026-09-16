@@ -16,14 +16,13 @@ logger = logging.getLogger("agentforge.services.llm.qwen")
 
 class QwenAdapter(BaseLLMAdapter):
     """
-    Adapter for Qwen 3.6 27B using OpenAI-compatible Chat Completions API
-    (e.g., OpenRouter, DashScope, Groq, Ollama, or custom endpoint).
+    Adapter for Qwen 3.6 27B using OpenAI-compatible Chat Completions API via OpenRouter.
     """
 
     def __init__(
         self,
         name: str = "Qwen 3.6 27B",
-        provider: str = "Qwen",
+        provider: str = "OpenRouter",
         model_id: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
@@ -31,7 +30,7 @@ class QwenAdapter(BaseLLMAdapter):
     ):
         model_name = model_id or getattr(settings, "QWEN_MODEL_NAME", "qwen/qwen-2.5-72b-instruct")
         super().__init__(name=name, provider=provider, model_id=model_name)
-        self.api_key = api_key or getattr(settings, "QWEN_API_KEY", None)
+        self.api_key = api_key if api_key is not None else getattr(settings, "QWEN_API_KEY", None)
         self.base_url = (base_url or getattr(settings, "QWEN_API_BASE_URL", "https://openrouter.ai/api/v1")).rstrip("/")
         self.timeout = timeout or getattr(settings, "LLM_TIMEOUT_SECONDS", 30.0)
 
@@ -45,7 +44,7 @@ class QwenAdapter(BaseLLMAdapter):
         system_prompt: Optional[str] = None,
     ) -> LLMResponse:
         """
-        Calls Qwen API via OpenAI-compatible Chat Completions endpoint.
+        Calls Qwen API via OpenRouter OpenAI-compatible Chat Completions endpoint.
         """
         if not self.is_configured():
             logger.info("Qwen API key not configured. Returning fallback response.")
@@ -122,7 +121,7 @@ class QwenAdapter(BaseLLMAdapter):
 
         except httpx.TimeoutException as exc:
             latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            err_msg = f"Qwen API request timed out after {self.timeout}s: {exc}"
+            err_msg = f"Qwen API request timed out after {self.timeout}s"
             logger.error(err_msg)
             return LLMResponse(
                 model=self.name,

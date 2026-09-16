@@ -898,3 +898,235 @@ body {
     transform: rotate(360deg);
   }
 }
+
+/* -------------------------------------------------------------
+ * AgentEvo Evaluation Scorecard & Telemetry Styling
+ * ----------------------------------------------------------- */
+
+.rag-label-with-hint {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.rag-input-hint {
+  font-size: 11px;
+  color: var(--rag-text-muted);
+  font-weight: normal;
+}
+
+.rag-eval-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rag-card-border);
+}
+
+.rag-eval-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rag-eval-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rag-eval-title-group h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  margin: 0;
+}
+
+.rag-eval-pill {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #a78bfa;
+  background: rgba(139, 92, 246, 0.15);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(139, 92, 246, 0.35);
+}
+
+.rag-eval-model-badge {
+  font-size: 11px;
+  color: var(--rag-text-muted);
+  background: #0f1523;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--rag-card-border);
+}
+
+.rag-eval-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.rag-eval-metric-card {
+  background: #0b0e14;
+  border: 1px solid var(--rag-card-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.rag-eval-metric-card:hover {
+  border-color: rgba(59, 130, 246, 0.4);
+  transform: translateY(-1px);
+}
+
+.rag-eval-metric-label {
+  font-size: 11px;
+  color: var(--rag-text-muted);
+  font-weight: 500;
+}
+
+.rag-eval-metric-value {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.rag-eval-metric-sub {
+  font-size: 10px;
+  color: #64748b;
+  line-height: 1.2;
+}
+
+.rag-eval-claims-alert {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #fbbf24;
+  margin-top: 10px;
+}
+
+.rag-eval-claims-alert ul {
+  margin: 6px 0 0 16px;
+  padding: 0;
+}
+
+.rag-eval-claims-alert li {
+  margin-bottom: 4px;
+  color: #fde68a;
+}
+
+.rag-eval-unavailable {
+  font-size: 12px;
+  color: var(--rag-text-muted);
+  background: #0f1523;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-top: 12px;
+  border: 1px dashed var(--rag-card-border);
+}
+
+/* Comparison Box Evaluation */
+.rag-compare-eval-box {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--rag-card-border);
+  background: rgba(11, 14, 20, 0.5);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.rag-compare-eval-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #a78bfa;
+  margin-bottom: 8px;
+}
+
+.rag-compare-eval-cost {
+  font-size: 11px;
+  font-weight: 700;
+  color: #34d399;
+}
+
+.rag-compare-eval-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+}
+
+.rag-compare-eval-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+}
+
+.rag-compare-eval-label {
+  color: var(--rag-text-muted);
+}
+
+.rag-compare-eval-val {
+  font-weight: 600;
+}
+
+.rag-compare-eval-unsupported {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.12);
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.rag-compare-eval-unavailable {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--rag-text-muted);
+  font-style: italic;
+}
+
+/* Color utilities */
+.text-green {
+  color: #4ade80;
+}
+
+.text-emerald {
+  color: #34d399;
+}
+
+.text-yellow {
+  color: #facc15;
+}
+
+.text-red {
+  color: #f87171;
+}
+
+.text-blue {
+  color: #60a5fa;
+}
+
+.text-purple {
+  color: #c084fc;
+}
+
+.text-cyan {
+  color: #38bdf8;
+}
+
+.text-muted {
+  color: #64748b;
+}

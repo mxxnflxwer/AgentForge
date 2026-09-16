@@ -44,6 +44,25 @@ interface RAGSearchResponse {
   results: RetrievedChunk[]
 }
 
+export interface EvaluationMetrics {
+  model: string
+  accuracy: number | null
+  groundedness: number
+  hallucination_rate: number
+  supported_claims: number
+  unsupported_claims: string[]
+  total_claims: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  latency_ms: number
+  execution_time_ms: number
+  input_cost: number
+  output_cost: number
+  total_cost: number
+  details?: Record<string, any>
+}
+
 interface QueryAnswerResponse {
   status: string
   query: string
@@ -53,6 +72,7 @@ interface QueryAnswerResponse {
   sources: QuerySource[]
   latency_ms: number
   disclaimer: string
+  evaluation?: EvaluationMetrics
 }
 
 interface ModelComparisonResult {
@@ -62,6 +82,7 @@ interface ModelComparisonResult {
   latency_ms: number
   success: boolean
   error?: string | null
+  evaluation?: EvaluationMetrics
 }
 
 interface QueryCompareResponse {
@@ -81,6 +102,31 @@ const AVAILABLE_MODELS = [
   { id: 'qwen', name: 'Qwen 3.6 27B', provider: 'OpenRouter', badge: 'High Accuracy' },
   { id: 'gpt_oss', name: 'GPT-OSS 120B', provider: 'Hugging Face', badge: 'Reasoning' },
 ]
+
+// Formatting helpers for Evaluation telemetry
+const formatPercent = (val: number | null | undefined): string => {
+  if (val === null || val === undefined) return 'N/A'
+  return `${(val * 100).toFixed(1)}%`
+}
+
+const formatMs = (ms: number | null | undefined): string => {
+  if (ms === null || ms === undefined) return '0.0 ms'
+  if (ms >= 1000) {
+    return `${(ms / 1000).toFixed(2)}s (${ms.toFixed(0)} ms)`
+  }
+  return `${ms.toFixed(1)} ms`
+}
+
+const formatCost = (cost: number | null | undefined): string => {
+  if (cost === null || cost === undefined || cost === 0) return '$0.000000'
+  if (cost < 0.0001) return `$${cost.toFixed(6)}`
+  return `$${cost.toFixed(4)}`
+}
+
+const formatTokens = (tokens: number | null | undefined): string => {
+  if (tokens === null || tokens === undefined) return '0'
+  return tokens.toLocaleString()
+}
 
 // Safe helper getters
 const getDocFilename = (doc?: DocumentItem | null): string => {
@@ -165,6 +211,7 @@ function MainApp() {
   const [selectedModel, setSelectedModel] = useState<string>('gemini')
   const [queryMode, setQueryMode] = useState<'single' | 'compare'>('single')
   const [query, setQuery] = useState('What is the clinical diagnosis?')
+  const [expectedAnswer, setExpectedAnswer] = useState('')
   const [topK, setTopK] = useState<number>(5)
 
   // Execution states
@@ -335,13 +382,22 @@ function MainApp() {
 
     try {
       if (queryMode === 'single') {
-        const payload: { query: string; document_id?: string; model: string; top_k: number } = {
+        const payload: {
+          query: string
+          document_id?: string
+          model: string
+          top_k: number
+          expected_answer?: string
+        } = {
           query: query.trim(),
           model: selectedModel,
           top_k: topK,
         }
         if (selectedDocId) {
           payload.document_id = selectedDocId
+        }
+        if (expectedAnswer.trim()) {
+          payload.expected_answer = expectedAnswer.trim()
         }
 
         const res = await fetch(`${API_BASE}/api/query/answer`, {
@@ -360,12 +416,20 @@ function MainApp() {
         setSingleAnswer(data)
       } else {
         // Multi-model comparison
-        const payload: { query: string; document_id?: string; top_k: number } = {
+        const payload: {
+          query: string
+          document_id?: string
+          top_k: number
+          expected_answer?: string
+        } = {
           query: query.trim(),
           top_k: topK,
         }
         if (selectedDocId) {
           payload.document_id = selectedDocId
+        }
+        if (expectedAnswer.trim()) {
+          payload.expected_answer = expectedAnswer.trim()
         }
 
         const res = await fetch(`${API_BASE}/api/query/compare`, {
@@ -743,6 +807,20 @@ function MainApp() {
                         🛡️ Phone Number (Out-of-Domain Test)
                       </button>
                     </div>
+                    {/* Optional Reference Answer for Accuracy Metric */}
+                    <div className="rag-form-group">
+                      <label className="rag-label-with-hint">
+                        <span>Expected / Reference Answer:</span>
+                        <span className="rag-input-hint">(Optional — calculates accuracy metric)</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Stable angina pectoris (leave empty if evaluating open-ended retrieval)"
+                        value={expectedAnswer}
+                        onChange={(e) => setExpectedAnswer(e.target.value)}
+                        className="rag-text-input"
+                      />
+                    </div>
                   </div>
 
                   <button
@@ -751,7 +829,7 @@ function MainApp() {
                     className="rag-btn rag-btn-primary rag-btn-block rag-btn-lg"
                   >
                     {generating
-                      ? (queryMode === 'compare' ? '⚡ Querying 3 Models Concurrently...' : `⚡ Generating with ${AVAILABLE_MODELS.find(m => m.id === selectedModel)?.name}...`)
+                      ? (queryMode === 'compare' ? '⚡ Querying 3 Models Concurrently & Evaluating...' : `⚡ Generating with ${AVAILABLE_MODELS.find(m => m.id === selectedModel)?.name} & Evaluating...`)
                       : (queryMode === 'compare' ? '⚖️ Run 3-Model Comparative Evaluation' : '✨ Generate Grounded Answer')}
                   </button>
                 </form>
@@ -761,7 +839,7 @@ function MainApp() {
               {queryMode === 'single' && (
                 <div className="rag-card rag-results-panel">
                   <div className="rag-card-header">
-                    <h2>🎯 Generated Grounded Answer</h2>
+                    <h2>🎯 Generated Grounded Answer & Evaluation</h2>
                     {singleAnswer && (
                       <div className="rag-header-metrics">
                         <span className="rag-metric-tag">⚡ {singleAnswer.latency_ms} ms</span>
@@ -775,7 +853,7 @@ function MainApp() {
                   {generating && (
                     <div className="rag-placeholder">
                       <div className="rag-spinner"></div>
-                      <p>Retrieving context via BGE-M3 + Reranker and generating answer...</p>
+                      <p>Retrieving context via BGE-M3 + Reranker, generating answer, and running AgentEvo Evaluation Engine...</p>
                     </div>
                   )}
 
@@ -802,6 +880,114 @@ function MainApp() {
                           </div>
                         )}
                       </div>
+
+                      {/* AgentEvo Evaluation Scorecard */}
+                      {singleAnswer.evaluation ? (
+                        <div className="rag-eval-section">
+                          <div className="rag-eval-header">
+                            <div className="rag-eval-title-group">
+                              <span className="rag-eval-pill">AgentEvo</span>
+                              <h3>Evaluation Metrics & Telemetry</h3>
+                            </div>
+                            <span className="rag-eval-model-badge">{singleAnswer.evaluation.model}</span>
+                          </div>
+
+                          <div className="rag-eval-grid">
+                            {/* Groundedness */}
+                            <div className="rag-eval-metric-card">
+                              <span className="rag-eval-metric-label">Groundedness</span>
+                              <span className={`rag-eval-metric-value ${singleAnswer.evaluation.groundedness >= 0.8 ? 'text-green' : singleAnswer.evaluation.groundedness >= 0.5 ? 'text-yellow' : 'text-red'}`}>
+                                {formatPercent(singleAnswer.evaluation.groundedness)}
+                              </span>
+                              <span className="rag-eval-metric-sub">
+                                {singleAnswer.evaluation.supported_claims} / {singleAnswer.evaluation.total_claims} verified claims
+                              </span>
+                            </div>
+
+                            {/* Hallucination Rate */}
+                            <div className="rag-eval-metric-card">
+                              <span className="rag-eval-metric-label">Hallucination Rate</span>
+                              <span className={`rag-eval-metric-value ${singleAnswer.evaluation.hallucination_rate === 0 ? 'text-green' : singleAnswer.evaluation.hallucination_rate <= 0.2 ? 'text-yellow' : 'text-red'}`}>
+                                {formatPercent(singleAnswer.evaluation.hallucination_rate)}
+                              </span>
+                              <span className="rag-eval-metric-sub">
+                                {singleAnswer.evaluation.unsupported_claims.length} unsupported claim(s)
+                              </span>
+                            </div>
+
+                            {/* Accuracy */}
+                            <div className="rag-eval-metric-card">
+                              <span className="rag-eval-metric-label">Accuracy</span>
+                              <span className={`rag-eval-metric-value ${singleAnswer.evaluation.accuracy !== null && singleAnswer.evaluation.accuracy !== undefined ? (singleAnswer.evaluation.accuracy >= 0.8 ? 'text-green' : singleAnswer.evaluation.accuracy >= 0.5 ? 'text-yellow' : 'text-red') : 'text-muted'}`}>
+                                {singleAnswer.evaluation.accuracy !== null && singleAnswer.evaluation.accuracy !== undefined
+                                  ? formatPercent(singleAnswer.evaluation.accuracy)
+                                  : 'N/A'}
+                              </span>
+                              <span className="rag-eval-metric-sub">
+                                {singleAnswer.evaluation.accuracy !== null && singleAnswer.evaluation.accuracy !== undefined
+                                  ? 'Reference match score'
+                                  : 'No reference answer provided'}
+                              </span>
+                            </div>
+
+                            {/* Token Usage */}
+                            <div className="rag-eval-metric-card">
+                              <span className="rag-eval-metric-label">Token Usage</span>
+                              <span className="rag-eval-metric-value text-purple">
+                                {formatTokens(singleAnswer.evaluation.total_tokens)}
+                              </span>
+                              <span className="rag-eval-metric-sub">
+                                In: {formatTokens(singleAnswer.evaluation.input_tokens)} | Out: {formatTokens(singleAnswer.evaluation.output_tokens)}
+                              </span>
+                            </div>
+
+                            {/* LLM Latency */}
+                            <div className="rag-eval-metric-card">
+                              <span className="rag-eval-metric-label">LLM Latency</span>
+                              <span className="rag-eval-metric-value text-yellow">
+                                {formatMs(singleAnswer.evaluation.latency_ms)}
+                              </span>
+                              <span className="rag-eval-metric-sub">Model Generation Time</span>
+                            </div>
+
+                            {/* Execution Time */}
+                            <div className="rag-eval-metric-card">
+                              <span className="rag-eval-metric-label">Execution Time</span>
+                              <span className="rag-eval-metric-value text-cyan">
+                                {formatMs(singleAnswer.evaluation.execution_time_ms)}
+                              </span>
+                              <span className="rag-eval-metric-sub">End-to-End Pipeline</span>
+                            </div>
+
+                            {/* Estimated Cost */}
+                            <div className="rag-eval-metric-card">
+                              <span className="rag-eval-metric-label">Estimated Cost</span>
+                              <span className="rag-eval-metric-value text-emerald">
+                                {formatCost(singleAnswer.evaluation.total_cost)}
+                              </span>
+                              <span className="rag-eval-metric-sub">
+                                In: {formatCost(singleAnswer.evaluation.input_cost)} | Out: {formatCost(singleAnswer.evaluation.output_cost)}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Unsupported Claims Alert */}
+                          {singleAnswer.evaluation.unsupported_claims && singleAnswer.evaluation.unsupported_claims.length > 0 && (
+                            <div className="rag-eval-claims-alert">
+                              <strong>⚠️ Unsupported Claims Detected in Generated Answer:</strong>
+                              <ul>
+                                {singleAnswer.evaluation.unsupported_claims.map((claim, cIdx) => (
+                                  <li key={cIdx}>{claim}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="rag-eval-unavailable">
+                          <span>ℹ️ Evaluation metrics not available for this response.</span>
+                        </div>
+                      )}
 
                       {/* Source Chunks */}
                       {singleAnswer.sources.length > 0 && (
@@ -846,14 +1032,14 @@ function MainApp() {
                   {generating && (
                     <div className="rag-placeholder">
                       <div className="rag-spinner"></div>
-                      <p>Executing RAG retrieval once & querying Gemini 3.5 Flash-Lite, Qwen 3.6 27B, and GPT-OSS 120B concurrently...</p>
+                      <p>Executing RAG retrieval once & querying Gemini 3.5 Flash-Lite, Qwen 3.6 27B, and GPT-OSS 120B concurrently with AgentEvo evaluation...</p>
                     </div>
                   )}
 
                   {!generating && !compareResults && (
                     <div className="rag-placeholder">
                       <span className="rag-placeholder-icon">⚖️</span>
-                      <p>Click <strong>Run 3-Model Comparative Evaluation</strong> to compare answers and latency side-by-side.</p>
+                      <p>Click <strong>Run 3-Model Comparative Evaluation</strong> to compare answers, groundedness, tokens, cost, and latency side-by-side.</p>
                     </div>
                   )}
 
@@ -889,6 +1075,57 @@ function MainApp() {
                               {res.error && (
                                 <div className="rag-compare-error">
                                   <span>Error / Notice:</span> {res.error}
+                                </div>
+                              )}
+
+                              {/* Per-Model AgentEvo Evaluation Metrics */}
+                              {res.evaluation ? (
+                                <div className="rag-compare-eval-box">
+                                  <div className="rag-compare-eval-title">
+                                    <span>AgentEvo Evaluation</span>
+                                    <span className="rag-compare-eval-cost">{formatCost(res.evaluation.total_cost)}</span>
+                                  </div>
+                                  <div className="rag-compare-eval-metrics">
+                                    <div className="rag-compare-eval-item">
+                                      <span className="rag-compare-eval-label">Groundedness</span>
+                                      <span className={`rag-compare-eval-val ${res.evaluation.groundedness >= 0.8 ? 'text-green' : res.evaluation.groundedness >= 0.5 ? 'text-yellow' : 'text-red'}`}>
+                                        {formatPercent(res.evaluation.groundedness)}
+                                      </span>
+                                    </div>
+                                    <div className="rag-compare-eval-item">
+                                      <span className="rag-compare-eval-label">Hallucination</span>
+                                      <span className={`rag-compare-eval-val ${res.evaluation.hallucination_rate === 0 ? 'text-green' : res.evaluation.hallucination_rate <= 0.2 ? 'text-yellow' : 'text-red'}`}>
+                                        {formatPercent(res.evaluation.hallucination_rate)}
+                                      </span>
+                                    </div>
+                                    <div className="rag-compare-eval-item">
+                                      <span className="rag-compare-eval-label">Accuracy</span>
+                                      <span className={`rag-compare-eval-val ${res.evaluation.accuracy !== null && res.evaluation.accuracy !== undefined ? (res.evaluation.accuracy >= 0.8 ? 'text-green' : res.evaluation.accuracy >= 0.5 ? 'text-yellow' : 'text-red') : 'text-muted'}`}>
+                                        {res.evaluation.accuracy !== null && res.evaluation.accuracy !== undefined ? formatPercent(res.evaluation.accuracy) : 'N/A'}
+                                      </span>
+                                    </div>
+                                    <div className="rag-compare-eval-item">
+                                      <span className="rag-compare-eval-label">Tokens (Total)</span>
+                                      <span className="rag-compare-eval-val text-purple">{formatTokens(res.evaluation.total_tokens)}</span>
+                                    </div>
+                                    <div className="rag-compare-eval-item">
+                                      <span className="rag-compare-eval-label">LLM Latency</span>
+                                      <span className="rag-compare-eval-val text-yellow">{formatMs(res.evaluation.latency_ms)}</span>
+                                    </div>
+                                    <div className="rag-compare-eval-item">
+                                      <span className="rag-compare-eval-label">Exec Time</span>
+                                      <span className="rag-compare-eval-val text-cyan">{formatMs(res.evaluation.execution_time_ms)}</span>
+                                    </div>
+                                  </div>
+                                  {res.evaluation.unsupported_claims && res.evaluation.unsupported_claims.length > 0 && (
+                                    <div className="rag-compare-eval-unsupported">
+                                      ⚠️ {res.evaluation.unsupported_claims.length} unsupported claim(s)
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="rag-compare-eval-unavailable">
+                                  <span>Evaluation metrics unavailable</span>
                                 </div>
                               )}
                             </div>

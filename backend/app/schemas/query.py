@@ -1,6 +1,8 @@
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
+from app.schemas.evaluation import EvaluationResponse
+
 
 class QueryAnswerRequest(BaseModel):
     query: str = Field(
@@ -18,6 +20,10 @@ class QueryAnswerRequest(BaseModel):
         "gemini",
         description="Selected LLM: 'gemini', 'qwen', or 'gpt_oss'.",
         examples=["gemini"],
+    )
+    expected_answer: Optional[str] = Field(
+        None,
+        description="Optional reference answer to calculate accuracy alongside groundedness and hallucination.",
     )
     top_k: int = Field(
         5,
@@ -45,6 +51,10 @@ class QueryAnswerResponse(BaseModel):
     sources: List[QueryAnswerSource] = []
     latency_ms: float
     disclaimer: str
+    evaluation: Optional[EvaluationResponse] = Field(
+        None,
+        description="AgentEvo evaluation metrics (accuracy, groundedness, hallucination rate, tokens, cost, latency, execution time).",
+    )
 
 
 class QueryCompareRequest(BaseModel):
@@ -58,6 +68,10 @@ class QueryCompareRequest(BaseModel):
     document_id: Optional[str] = Field(
         None,
         description="Optional document ID to scope retrieval to a specific document.",
+    )
+    expected_answer: Optional[str] = Field(
+        None,
+        description="Optional reference answer to evaluate accuracy across all models.",
     )
     top_k: int = Field(
         5,
@@ -74,6 +88,10 @@ class ModelComparisonResult(BaseModel):
     latency_ms: float
     success: bool
     error: Optional[str] = None
+    evaluation: Optional[EvaluationResponse] = Field(
+        None,
+        description="AgentEvo evaluation metrics specific to this model response.",
+    )
 
 
 class QueryCompareResponse(BaseModel):

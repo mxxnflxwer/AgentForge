@@ -27,9 +27,11 @@ DEFAULT_MODEL_PRICING: Dict[str, ModelPricing] = {
     "gemini": ModelPricing(input_price_per_1m=0.075, output_price_per_1m=0.30),
 
     # Qwen 2.5 72B / Qwen 3.6 27B via OpenRouter
-    "qwen/qwen-2.5-72b-instruct": ModelPricing(input_price_per_1m=0.35, output_price_per_1m=0.40),
+    "qwen/qwen3.6-27b": ModelPricing(input_price_per_1m=0.20, output_price_per_1m=0.30),
     "qwen-3.6-27b": ModelPricing(input_price_per_1m=0.20, output_price_per_1m=0.30),
-    "qwen": ModelPricing(input_price_per_1m=0.35, output_price_per_1m=0.40),
+    "qwen 3.6 27b": ModelPricing(input_price_per_1m=0.20, output_price_per_1m=0.30),
+    "qwen/qwen-2.5-72b-instruct": ModelPricing(input_price_per_1m=0.35, output_price_per_1m=0.40),
+    "qwen": ModelPricing(input_price_per_1m=0.20, output_price_per_1m=0.30),
 
     # GPT-OSS 120B via Hugging Face Inference Providers
     "openai/gpt-oss-120b": ModelPricing(input_price_per_1m=0.50, output_price_per_1m=0.50),

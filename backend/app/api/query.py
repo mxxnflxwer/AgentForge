@@ -36,7 +36,7 @@ def build_context_from_retrieval(retrieval: RAGSearchResponse) -> str:
     context_parts: List[str] = []
     for chunk in retrieval.results:
         sec = chunk.section_title or "General"
-        context_parts.append(f"### Section: {sec} (Chunk #{chunk.chunk_index})\n{chunk.content}")
+        context_parts.append(f"Chunk #{chunk.chunk_index} — {sec}\n{chunk.content}")
 
     return "\n\n".join(context_parts).strip()
 
@@ -65,6 +65,8 @@ def convert_eval_result_to_response(result: EvaluationResult) -> EvaluationRespo
         hallucination_rate=result.hallucination_rate,
         supported_claims=result.supported_claims,
         unsupported_claims=result.unsupported_claims,
+        supported_claim_count=result.supported_claim_count,
+        unsupported_claim_count=result.unsupported_claim_count,
         total_claims=result.total_claims,
         input_tokens=result.input_tokens,
         output_tokens=result.output_tokens,
@@ -118,6 +120,7 @@ async def query_answer(
     5. Returns grounded answer, retrieved sources, latency, evaluation metrics, and medical disclaimer.
     """
     overall_start = time.perf_counter()
+    retrieval_start = time.perf_counter()
 
     retrieval = execute_rag_retrieval(
         user_id=current_user.id,
@@ -126,6 +129,7 @@ async def query_answer(
         top_k=request.top_k,
         db=db,
     )
+    retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
 
     llm_router = get_llm_router()
     adapter = llm_router.get_adapter(request.model) or llm_router.get_adapter("gemini")
@@ -155,6 +159,7 @@ async def query_answer(
             intent=retrieval.intent,
             model=model_display_name,
             answer="The requested information was not found in the uploaded document.",
+            context=None,
             sources=[],
             latency_ms=0.0,
             disclaimer=MEDICAL_DISCLAIMER,
@@ -168,7 +173,8 @@ async def query_answer(
         context=context_str,
     )
 
-    total_exec_ms = round((time.perf_counter() - overall_start) * 1000, 2)
+    # Individual pipeline execution time: retrieval + LLM generation
+    pipeline_exec_ms = round(retrieval_ms + (llm_resp.latency_ms or 0.0), 2)
 
     # Run AgentEvo Evaluation Engine on the response
     eval_input = EvaluationInput(
@@ -178,8 +184,10 @@ async def query_answer(
         expected_answer=request.expected_answer,
         model_name=llm_resp.model,
         latency_ms=llm_resp.latency_ms,
-        execution_time_ms=total_exec_ms,
+        execution_time_ms=pipeline_exec_ms,
         raw_usage=llm_resp.raw_usage,
+        success=llm_resp.success,
+        error=llm_resp.error,
     )
     eval_result = eval_engine.evaluate(eval_input)
 
@@ -191,6 +199,7 @@ async def query_answer(
         intent=retrieval.intent,
         model=llm_resp.model,
         answer=llm_resp.answer,
+        context=context_str,
         sources=sources,
         latency_ms=llm_resp.latency_ms,
         disclaimer=MEDICAL_DISCLAIMER,
@@ -217,6 +226,7 @@ async def query_compare(
     4. Measures individual model latencies and returns structured side-by-side results.
     """
     overall_start = time.perf_counter()
+    retrieval_start = time.perf_counter()
 
     retrieval = execute_rag_retrieval(
         user_id=current_user.id,
@@ -225,6 +235,7 @@ async def query_compare(
         top_k=request.top_k,
         db=db,
     )
+    retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
 
     llm_router = get_llm_router()
     eval_engine = get_evaluation_engine()
@@ -244,6 +255,8 @@ async def query_compare(
                 model_name=m["name"],
                 latency_ms=0.0,
                 execution_time_ms=total_exec_ms,
+                success=True,
+                error=None,
             )
             e_res = eval_engine.evaluate(eval_input)
 
@@ -275,10 +288,13 @@ async def query_compare(
         context=context_str,
     )
 
-    total_exec_ms = round((time.perf_counter() - overall_start) * 1000, 2)
+    total_batch_wall_ms = round((time.perf_counter() - overall_start) * 1000, 2)
 
     comparison_results: List[ModelComparisonResult] = []
     for r in llm_responses:
+        # Calculate dedicated per-model execution time: retrieval time + model latency
+        model_exec_time_ms = round(retrieval_ms + (r.latency_ms or 0.0), 2)
+
         eval_input = EvaluationInput(
             question=request.query,
             generated_answer=r.answer,
@@ -286,10 +302,14 @@ async def query_compare(
             expected_answer=request.expected_answer,
             model_name=r.model,
             latency_ms=r.latency_ms,
-            execution_time_ms=total_exec_ms,
+            execution_time_ms=model_exec_time_ms,
             raw_usage=r.raw_usage,
+            success=r.success,
+            error=r.error,
         )
         e_res = eval_engine.evaluate(eval_input)
+        e_res.details["batch_comparison_wall_time_ms"] = total_batch_wall_ms
+        e_res.details["retrieval_latency_ms"] = retrieval_ms
 
         comparison_results.append(
             ModelComparisonResult(

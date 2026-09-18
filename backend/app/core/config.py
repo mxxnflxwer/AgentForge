@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # LLM Settings: Qwen 3.6 27B (via OpenAI-compatible / OpenRouter API)
     QWEN_API_KEY: str | None = None
     QWEN_API_BASE_URL: str = "https://openrouter.ai/api/v1"
-    QWEN_MODEL_NAME: str = "qwen/qwen-2.5-72b-instruct"
+    QWEN_MODEL_NAME: str = "qwen/qwen3.6-27b"
 
     # LLM Settings: GPT-OSS 120B (via Hugging Face Inference Providers OpenAI-compatible endpoint)
     GPT_OSS_API_KEY: str | None = None

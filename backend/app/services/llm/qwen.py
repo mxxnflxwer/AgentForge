@@ -28,7 +28,7 @@ class QwenAdapter(BaseLLMAdapter):
         base_url: Optional[str] = None,
         timeout: Optional[float] = None,
     ):
-        model_name = model_id or getattr(settings, "QWEN_MODEL_NAME", "qwen/qwen-2.5-72b-instruct")
+        model_name = model_id or getattr(settings, "QWEN_MODEL_NAME", "qwen/qwen3.6-27b")
         super().__init__(name=name, provider=provider, model_id=model_name)
         self.api_key = api_key if api_key is not None else getattr(settings, "QWEN_API_KEY", None)
         self.base_url = (base_url or getattr(settings, "QWEN_API_BASE_URL", "https://openrouter.ai/api/v1")).rstrip("/")
@@ -105,14 +105,28 @@ class QwenAdapter(BaseLLMAdapter):
                     )
 
                 first_choice = choices[0]
-                message = first_choice.get("message", {})
-                answer_text = message.get("content", "").strip()
+                message = first_choice.get("message") or {}
+                content = message.get("content")
+                if content is None:
+                    content = ""
+                answer_text = content.strip()
                 usage = data.get("usage")
+
+                if not answer_text:
+                    return LLMResponse(
+                        model=self.name,
+                        provider=self.provider,
+                        answer="",
+                        latency_ms=latency_ms,
+                        success=False,
+                        error="Empty response content from model",
+                        raw_usage=usage,
+                    )
 
                 return LLMResponse(
                     model=self.name,
                     provider=self.provider,
-                    answer=answer_text or "The requested information was not found in the uploaded document.",
+                    answer=answer_text,
                     latency_ms=latency_ms,
                     success=True,
                     error=None,

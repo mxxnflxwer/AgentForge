@@ -48,6 +48,7 @@ class QueryAnswerResponse(BaseModel):
     intent: str
     model: str
     answer: str
+    context: Optional[str] = Field(None, description="Retrieved document context sent to LLM.")
     sources: List[QueryAnswerSource] = []
     latency_ms: float
     disclaimer: str

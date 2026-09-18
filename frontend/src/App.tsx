@@ -49,8 +49,10 @@ export interface EvaluationMetrics {
   accuracy: number | null
   groundedness: number
   hallucination_rate: number
-  supported_claims: number
+  supported_claims: string[]
   unsupported_claims: string[]
+  supported_claim_count?: number
+  unsupported_claim_count?: number
   total_claims: number
   input_tokens: number
   output_tokens: number
@@ -69,6 +71,7 @@ interface QueryAnswerResponse {
   intent: string
   model: string
   answer: string
+  context?: string | null
   sources: QuerySource[]
   latency_ms: number
   disclaimer: string
@@ -881,6 +884,14 @@ function MainApp() {
                         )}
                       </div>
 
+                      {/* Single Model Context Preview */}
+                      {singleAnswer.context && (
+                        <details className="rag-context-accordion" style={{ marginTop: 12 }}>
+                          <summary>📋 Retrieved Document Context (Sent to model)</summary>
+                          <pre className="rag-context-pre">{singleAnswer.context}</pre>
+                        </details>
+                      )}
+
                       {/* AgentEvo Evaluation Scorecard */}
                       {singleAnswer.evaluation ? (
                         <div className="rag-eval-section">
@@ -900,7 +911,7 @@ function MainApp() {
                                 {formatPercent(singleAnswer.evaluation.groundedness)}
                               </span>
                               <span className="rag-eval-metric-sub">
-                                {singleAnswer.evaluation.supported_claims} / {singleAnswer.evaluation.total_claims} verified claims
+                                {singleAnswer.evaluation.supported_claims?.length || singleAnswer.evaluation.supported_claim_count || 0} / {singleAnswer.evaluation.total_claims} verified claims
                               </span>
                             </div>
 
@@ -911,7 +922,7 @@ function MainApp() {
                                 {formatPercent(singleAnswer.evaluation.hallucination_rate)}
                               </span>
                               <span className="rag-eval-metric-sub">
-                                {singleAnswer.evaluation.unsupported_claims.length} unsupported claim(s)
+                                {singleAnswer.evaluation.unsupported_claims?.length || singleAnswer.evaluation.unsupported_claim_count || 0} unsupported claim(s)
                               </span>
                             </div>
 
@@ -947,7 +958,7 @@ function MainApp() {
                               <span className="rag-eval-metric-value text-yellow">
                                 {formatMs(singleAnswer.evaluation.latency_ms)}
                               </span>
-                              <span className="rag-eval-metric-sub">Model Generation Time</span>
+                              <span className="rag-eval-metric-sub">Model Inference Latency</span>
                             </div>
 
                             {/* Execution Time */}
@@ -956,7 +967,7 @@ function MainApp() {
                               <span className="rag-eval-metric-value text-cyan">
                                 {formatMs(singleAnswer.evaluation.execution_time_ms)}
                               </span>
-                              <span className="rag-eval-metric-sub">End-to-End Pipeline</span>
+                              <span className="rag-eval-metric-sub">RAG + LLM + Eval Workflow</span>
                             </div>
 
                             {/* Estimated Cost */}
@@ -971,15 +982,53 @@ function MainApp() {
                             </div>
                           </div>
 
-                          {/* Unsupported Claims Alert */}
-                          {singleAnswer.evaluation.unsupported_claims && singleAnswer.evaluation.unsupported_claims.length > 0 && (
-                            <div className="rag-eval-claims-alert">
-                              <strong>⚠️ Unsupported Claims Detected in Generated Answer:</strong>
-                              <ul>
-                                {singleAnswer.evaluation.unsupported_claims.map((claim, cIdx) => (
+                          {/* Supported Claims Details */}
+                          {singleAnswer.evaluation.supported_claims && singleAnswer.evaluation.supported_claims.length > 0 && (
+                            <details className="rag-compare-claims-details" style={{ marginTop: 10 }}>
+                              <summary>✓ {singleAnswer.evaluation.supported_claims.length} Supported Claim(s) Verified</summary>
+                              <ul className="rag-claims-list supported">
+                                {singleAnswer.evaluation.supported_claims.map((claim, cIdx) => (
                                   <li key={cIdx}>{claim}</li>
                                 ))}
                               </ul>
+                            </details>
+                          )}
+
+                          {/* Zero Unsupported Claims Banner */}
+                          {singleAnswer.evaluation.total_claims > 0 && (!singleAnswer.evaluation.unsupported_claims || singleAnswer.evaluation.unsupported_claims.length === 0) && (
+                            <div className="rag-compare-eval-supported-all" style={{ marginTop: 10 }}>
+                              ✓ All factual claims supported by retrieved evidence.
+                            </div>
+                          )}
+
+                          {/* Unsupported Claims Alert with Claim / Evidence / Reason */}
+                          {singleAnswer.evaluation.unsupported_claims && singleAnswer.evaluation.unsupported_claims.length > 0 && (
+                            <div className="rag-eval-claims-alert">
+                              <strong style={{ display: 'block', marginBottom: 6 }}>⚠️ Unsupported Claims Detected ({singleAnswer.evaluation.unsupported_claims.length}):</strong>
+                              <div className="rag-claims-breakdown-list">
+                                {singleAnswer.evaluation.unsupported_claims.map((claimText, cIdx) => {
+                                  const detail = (singleAnswer.evaluation?.details?.claim_breakdown || []).find((c: any) => c.claim === claimText)
+                                  return (
+                                    <div key={cIdx} className="rag-claim-card unsupported">
+                                      <div className="rag-claim-row"><strong>Claim:</strong> {claimText}</div>
+                                      <div className="rag-claim-row"><strong>Evidence:</strong> <span className="text-muted">{detail?.matched_context_snippet || "None found in retrieved document"}</span></div>
+                                      <div className="rag-claim-row"><strong>Reason:</strong> <span className="text-red">{detail?.reason || "Factual claim not substantiated by retrieved context"}</span></div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Status banners */}
+                          {singleAnswer.evaluation.details?.status === "empty_response" && (
+                            <div className="rag-eval-status-banner warning">
+                              ⚠️ Empty model response.
+                            </div>
+                          )}
+                          {singleAnswer.evaluation.details?.status === "model_error" && (
+                            <div className="rag-eval-status-banner error">
+                              ❌ Provider/API error: {singleAnswer.evaluation.details?.error_message || "API generation failed."}
                             </div>
                           )}
                         </div>
@@ -1047,7 +1096,7 @@ function MainApp() {
                     <div className="rag-comparison-container">
                       {/* Common Context Preview */}
                       {compareResults.context && (
-                        <details className="rag-context-accordion">
+                        <details className="rag-context-accordion" open>
                           <summary>📋 Shared Retrieved Document Context (Sent to all 3 models)</summary>
                           <pre className="rag-context-pre">{compareResults.context}</pre>
                         </details>
@@ -1063,7 +1112,7 @@ function MainApp() {
                                 <span className="rag-compare-provider">{res.provider}</span>
                               </div>
                               <div className="rag-compare-badges">
-                                <span className="rag-metric-tag">⚡ {res.latency_ms} ms</span>
+                                <span className="rag-metric-tag" title="Model API Network & Inference Latency">⚡ {res.latency_ms} ms</span>
                                 <span className={`rag-status-chip ${res.success ? 'rag-status-success' : 'rag-status-error'}`}>
                                   {res.success ? 'Success' : 'Notice'}
                                 </span>
@@ -1108,18 +1157,63 @@ function MainApp() {
                                       <span className="rag-compare-eval-label">Tokens (Total)</span>
                                       <span className="rag-compare-eval-val text-purple">{formatTokens(res.evaluation.total_tokens)}</span>
                                     </div>
-                                    <div className="rag-compare-eval-item">
+                                    <div className="rag-compare-eval-item" title="Model API Network & Inference Latency">
                                       <span className="rag-compare-eval-label">LLM Latency</span>
                                       <span className="rag-compare-eval-val text-yellow">{formatMs(res.evaluation.latency_ms)}</span>
                                     </div>
-                                    <div className="rag-compare-eval-item">
+                                    <div className="rag-compare-eval-item" title="Dedicated Model Pipeline Time (RAG Retrieval + Model Latency + Eval)">
                                       <span className="rag-compare-eval-label">Exec Time</span>
                                       <span className="rag-compare-eval-val text-cyan">{formatMs(res.evaluation.execution_time_ms)}</span>
                                     </div>
                                   </div>
+
+                                  {/* Supported Claims Details */}
+                                  {res.evaluation.supported_claims && res.evaluation.supported_claims.length > 0 && (
+                                    <details className="rag-compare-claims-details">
+                                      <summary>✓ {res.evaluation.supported_claims.length} Supported Claim(s)</summary>
+                                      <ul className="rag-claims-list supported">
+                                        {res.evaluation.supported_claims.map((claim, cIdx) => (
+                                          <li key={cIdx}>{claim}</li>
+                                        ))}
+                                      </ul>
+                                    </details>
+                                  )}
+
+                                  {/* Zero Unsupported Claims Banner */}
+                                  {res.evaluation.total_claims > 0 && (!res.evaluation.unsupported_claims || res.evaluation.unsupported_claims.length === 0) && (
+                                    <div className="rag-compare-eval-supported-all">
+                                      ✓ All factual claims supported by retrieved evidence.
+                                    </div>
+                                  )}
+
+                                  {/* Unsupported Claims Alert with Claim / Evidence / Reason */}
                                   {res.evaluation.unsupported_claims && res.evaluation.unsupported_claims.length > 0 && (
                                     <div className="rag-compare-eval-unsupported">
-                                      ⚠️ {res.evaluation.unsupported_claims.length} unsupported claim(s)
+                                      <div className="rag-unsupported-header">⚠️ {res.evaluation.unsupported_claims.length} Unsupported Claim(s):</div>
+                                      <div className="rag-claims-breakdown-list">
+                                        {res.evaluation.unsupported_claims.map((claimText, cIdx) => {
+                                          const detail = (res.evaluation?.details?.claim_breakdown || []).find((c: any) => c.claim === claimText)
+                                          return (
+                                            <div key={cIdx} className="rag-claim-card unsupported">
+                                              <div className="rag-claim-row"><strong>Claim:</strong> {claimText}</div>
+                                              <div className="rag-claim-row"><strong>Evidence:</strong> <span className="text-muted">{detail?.matched_context_snippet || "None found in retrieved document"}</span></div>
+                                              <div className="rag-claim-row"><strong>Reason:</strong> <span className="text-red">{detail?.reason || "Factual claim not substantiated by retrieved context"}</span></div>
+                                            </div>
+                                          )
+                                        })}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Status banners */}
+                                  {res.evaluation.details?.status === "empty_response" && (
+                                    <div className="rag-eval-status-banner warning">
+                                      ⚠️ Empty model response.
+                                    </div>
+                                  )}
+                                  {res.evaluation.details?.status === "model_error" && (
+                                    <div className="rag-eval-status-banner error">
+                                      ❌ Provider/API error: {res.evaluation.details?.error_message || "API generation failed."}
                                     </div>
                                   )}
                                 </div>

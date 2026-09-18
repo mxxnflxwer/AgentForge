@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 import logging
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,12 +10,26 @@ from app.core.database import engine
 
 logger = logging.getLogger("agentforge")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Pre-warm local ML embedding service on server boot to eliminate cold-start latency."""
+    logger.info("Initializing AgentForge embedding model...")
+    try:
+        from app.services.embedding_service import get_embedding_service
+        get_embedding_service()
+    except Exception as e:
+        logger.warning(f"Embedding service warm-up warning: {e}")
+    yield
+
+
 app = FastAPI(
     title="AgentForge API",
     description="AI Workflow Optimization Platform - Document Processing & Authentication",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS Configuration

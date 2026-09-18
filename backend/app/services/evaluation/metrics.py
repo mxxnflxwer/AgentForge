@@ -20,16 +20,32 @@ def extract_meaningful_tokens(text: str) -> Set[str]:
     return {w for w in words if w not in STOP_WORDS and len(w) > 1}
 
 
+import difflib
+
 def token_matches_set(token: str, token_set: Set[str]) -> bool:
-    """Check if token matches any token in set either exactly or via root prefix."""
+    """
+    Check if a token matches any token in target set via exact match,
+    suffix stripping, root prefix matching, or character similarity.
+    """
     if token in token_set:
         return True
+
+    t_clean = re.sub(r"(?:s|es|ed|ing|ly|al|ic|ion|ity|y|ive)$", "", token)
     for other in token_set:
-        if len(token) >= 5 and len(other) >= 5:
-            # Common prefix of at least 5 chars (e.g., 'diagnos' in 'diagnosis' / 'diagnosed')
-            prefix_len = min(len(token), len(other), 6)
+        o_clean = re.sub(r"(?:s|es|ed|ing|ly|al|ic|ion|ity|y|ive)$", "", other)
+        if t_clean and o_clean and t_clean == o_clean:
+            return True
+
+        if len(token) >= 4 and len(other) >= 4:
+            prefix_len = min(min(len(token), len(other)), 5)
             if token[:prefix_len] == other[:prefix_len]:
                 return True
+
+        if len(token) >= 5 and len(other) >= 5:
+            sim = difflib.SequenceMatcher(None, token, other).ratio()
+            if sim >= 0.80:
+                return True
+
     return False
 
 

@@ -31,7 +31,9 @@ class LLMRouter:
 
         self.register_adapter("qwen", qwen)
         self.register_adapter("qwen-3.6-27b", qwen)
+        self.register_adapter("qwen/qwen3.6-27b", qwen)
         self.register_adapter("qwen-2.5-72b", qwen)
+        self.register_adapter("qwen/qwen-2.5-72b-instruct", qwen)
 
         self.register_adapter("gpt_oss", gpt_oss)
         self.register_adapter("gpt-oss", gpt_oss)

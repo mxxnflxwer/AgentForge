@@ -105,14 +105,28 @@ class GPTOSSAdapter(BaseLLMAdapter):
                     )
 
                 first_choice = choices[0]
-                message = first_choice.get("message", {})
-                answer_text = message.get("content", "").strip()
+                message = first_choice.get("message") or {}
+                content = message.get("content")
+                if content is None:
+                    content = ""
+                answer_text = content.strip()
                 usage = data.get("usage")
+
+                if not answer_text:
+                    return LLMResponse(
+                        model=self.name,
+                        provider=self.provider,
+                        answer="",
+                        latency_ms=latency_ms,
+                        success=False,
+                        error="Empty response content from model",
+                        raw_usage=usage,
+                    )
 
                 return LLMResponse(
                     model=self.name,
                     provider=self.provider,
-                    answer=answer_text or "The requested information was not found in the uploaded document.",
+                    answer=answer_text,
                     latency_ms=latency_ms,
                     success=True,
                     error=None,

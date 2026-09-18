@@ -110,7 +110,7 @@ async def evaluate_rag_workflow(
     if retrieval.summary_context and retrieval.summary_context.strip():
         context_str = retrieval.summary_context.strip()
     elif retrieval.results:
-        parts = [f"[{r.section_title or 'General'} - Chunk #{r.chunk_index}]\n{r.content}" for r in retrieval.results]
+        parts = [f"Chunk #{r.chunk_index} — {r.section_title or 'General'}\n{r.content}" for r in retrieval.results]
         context_str = "\n\n".join(parts)
 
     sources_list = [

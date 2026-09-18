@@ -23,16 +23,20 @@ class EvaluationInput(BaseModel):
     latency_ms: Optional[float] = Field(None, description="LLM round-trip latency in milliseconds")
     execution_time_ms: Optional[float] = Field(None, description="Total pipeline execution time in milliseconds")
     raw_usage: Optional[Dict[str, Any]] = Field(None, description="Raw provider usage metadata")
+    success: bool = Field(True, description="Whether the LLM generation succeeded")
+    error: Optional[str] = Field(None, description="Error message if model generation failed")
 
 
 class EvaluationResult(BaseModel):
     """Unified standardized evaluation result across all AgentEvo metrics."""
     model: str = Field(..., description="Model identifier")
     accuracy: Optional[float] = Field(None, description="Factual accuracy score [0.0 - 1.0] if reference answer was provided")
-    groundedness: float = Field(..., description="Groundedness score: supported_claims / total_claims [0.0 - 1.0]")
-    hallucination_rate: float = Field(..., description="Hallucination rate: unsupported_claims / total_claims [0.0 - 1.0]")
-    supported_claims: int = Field(..., description="Number of supported factual assertions")
+    groundedness: Optional[float] = Field(None, description="Groundedness score: supported_claims / total_claims [0.0 - 1.0]. None for errors or empty responses.")
+    hallucination_rate: Optional[float] = Field(None, description="Hallucination rate: unsupported_claims / total_claims [0.0 - 1.0]. None for errors or empty responses.")
+    supported_claims: List[str] = Field(default_factory=list, description="List of supported factual assertions")
     unsupported_claims: List[str] = Field(default_factory=list, description="List of unsupported or hallucinated claim statements")
+    supported_claim_count: int = Field(0, description="Number of supported factual assertions")
+    unsupported_claim_count: int = Field(0, description="Number of unsupported or hallucinated claims")
     total_claims: int = Field(..., description="Total evaluated factual claims")
     input_tokens: int = Field(..., description="Input token count")
     output_tokens: int = Field(..., description="Output token count")
@@ -57,6 +61,44 @@ class EvaluationEngine:
         Evaluate a single LLM execution input and calculate all standardized metrics.
         """
         start_eval_time = time.perf_counter()
+
+        # Handle explicit model failure or empty response as an error state, NOT a hallucination
+        ans_clean = (input_data.generated_answer or "").strip()
+        if not input_data.success or input_data.error or not ans_clean:
+            eval_duration_ms = round((time.perf_counter() - start_eval_time) * 1000, 2)
+            exec_time = input_data.execution_time_ms if input_data.execution_time_ms is not None else 0.0
+            is_provider_error = not input_data.success or bool(input_data.error)
+            status_code = "model_error" if is_provider_error else "empty_response"
+            error_type = "provider_error" if is_provider_error else "empty_model_response"
+            error_msg = input_data.error or ("Empty model response" if not ans_clean else None)
+
+            return EvaluationResult(
+                model=input_data.model_name,
+                accuracy=None,
+                groundedness=None,
+                hallucination_rate=None,
+                supported_claims=[],
+                unsupported_claims=[],
+                supported_claim_count=0,
+                unsupported_claim_count=0,
+                total_claims=0,
+                input_tokens=0,
+                output_tokens=0,
+                total_tokens=0,
+                latency_ms=round(input_data.latency_ms or 0.0, 2),
+                execution_time_ms=round(exec_time, 2),
+                input_cost=0.0,
+                output_cost=0.0,
+                total_cost=0.0,
+                details={
+                    "evaluation_duration_ms": eval_duration_ms,
+                    "status": status_code,
+                    "error_type": error_type,
+                    "error_message": error_msg,
+                    "claim_breakdown": [],
+                    "pricing_applied": input_data.model_name,
+                },
+            )
 
         # 1. Groundedness Evaluation
         groundedness_res: GroundednessResult = calculate_groundedness(
@@ -121,8 +163,10 @@ class EvaluationEngine:
             accuracy=accuracy_score,
             groundedness=groundedness_res.groundedness,
             hallucination_rate=hallucination_res.hallucination_rate,
-            supported_claims=groundedness_res.supported_claims,
+            supported_claims=groundedness_res.supported_claims_list,
             unsupported_claims=hallucination_res.unsupported_claims,
+            supported_claim_count=groundedness_res.supported_claims,
+            unsupported_claim_count=hallucination_res.hallucinated_claims,
             total_claims=groundedness_res.total_claims,
             input_tokens=input_toks,
             output_tokens=output_toks,

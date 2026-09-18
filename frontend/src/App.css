@@ -1083,12 +1083,114 @@ body {
 }
 
 .rag-compare-eval-unsupported {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.rag-unsupported-header {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.rag-claims-list {
+  margin: 0;
+  padding-left: 14px;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.rag-claims-list li {
+  margin-bottom: 2px;
+}
+
+.rag-claims-list.supported {
+  color: #86efac;
+}
+
+.rag-compare-claims-details {
   margin-top: 6px;
-  font-size: 10px;
-  color: #fbbf24;
-  background: rgba(245, 158, 11, 0.12);
-  padding: 3px 6px;
+  font-size: 11px;
+  border: 1px solid rgba(74, 222, 128, 0.2);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.rag-compare-claims-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #4ade80;
+  font-size: 10.5px;
+}
+
+.rag-compare-eval-supported-all {
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: #4ade80;
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+.rag-claims-breakdown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.rag-claim-card {
+  background: rgba(0, 0, 0, 0.25);
   border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.rag-claim-card.unsupported {
+  border-left: 3px solid #f87171;
+}
+
+.rag-claim-row {
+  margin-bottom: 2px;
+}
+
+.rag-claim-row strong {
+  color: var(--rag-text);
+  margin-right: 4px;
+}
+
+.rag-eval-status-banner {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.rag-eval-status-banner.warning {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+}
+
+.rag-eval-status-banner.error {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+}
+
+.rag-eval-subtext {
+  font-size: 9.5px;
+  color: var(--rag-text-muted);
+  display: block;
 }
 
 .rag-compare-eval-unavailable {

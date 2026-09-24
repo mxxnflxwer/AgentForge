@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import './App.css'
+import { AgentEvoOptimizer } from './components/AgentEvoOptimizer'
 
 interface DocumentItem {
   id: string
@@ -206,8 +207,8 @@ function MainApp() {
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Active Main Tab: 'llm' | 'vector'
-  const [activeTab, setActiveTab] = useState<'llm' | 'vector'>('llm')
+  // Active Main Tab: 'llm' | 'vector' | 'optimizer'
+  const [activeTab, setActiveTab] = useState<'llm' | 'vector' | 'optimizer'>('llm')
 
   // Query & Model settings
   const [selectedDocId, setSelectedDocId] = useState<string>('')
@@ -683,6 +684,12 @@ function MainApp() {
               onClick={() => setActiveTab('vector')}
             >
               🔍 Vector Search (RAG Chunks)
+            </button>
+            <button
+              className={`rag-tab-btn ${activeTab === 'optimizer' ? 'rag-tab-active' : ''}`}
+              onClick={() => setActiveTab('optimizer')}
+            >
+              🧬 AgentEvo Optimizer (Pareto Evolution)
             </button>
           </div>
 
@@ -1402,6 +1409,16 @@ function MainApp() {
                 )}
               </div>
             </div>
+          )}
+
+          {activeTab === 'optimizer' && (
+            <AgentEvoOptimizer
+              apiBase={API_BASE}
+              documents={documents}
+              selectedDocId={selectedDocId}
+              setSelectedDocId={setSelectedDocId}
+              isLoggedIn={isLoggedIn}
+            />
           )}
         </div>
       </div>

@@ -4,6 +4,7 @@ from app.api.documents import router as documents_router
 from app.api.rag import router as rag_router
 from app.api.query import router as query_router
 from app.api.evaluation import router as evaluation_router
+from app.api.agent_evo import router as agent_evo_router
 
 __all__ = [
     "auth_router",
@@ -12,6 +13,7 @@ __all__ = [
     "rag_router",
     "query_router",
     "evaluation_router",
+    "agent_evo_router",
     "get_current_user",
     "require_user",
     "require_developer",

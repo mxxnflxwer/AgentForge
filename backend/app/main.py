@@ -12,16 +12,23 @@ from app.api import (
     query_router,
     rag_router,
     users_router,
+    workflows_router,
 )
 from app.core.config import settings
-from app.core.database import engine
+from app.core.database import Base, engine
 
 logger = logging.getLogger("agentforge")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Pre-warm local ML embedding service on server boot to eliminate cold-start latency."""
+    """Pre-warm local ML embedding service on server boot and ensure database tables exist."""
+    logger.info("Ensuring database tables are initialized...")
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        logger.warning(f"Database initialization warning: {e}")
+
     logger.info("Initializing AgentForge embedding model...")
     try:
         from app.services.embedding_service import get_embedding_service
@@ -97,3 +104,4 @@ app.include_router(rag_router)
 app.include_router(query_router)
 app.include_router(evaluation_router)
 app.include_router(agent_evo_router)
+app.include_router(workflows_router)

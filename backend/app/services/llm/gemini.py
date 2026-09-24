@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import Any, Dict, Optional
@@ -79,79 +80,111 @@ class GeminiAdapter(BaseLLMAdapter):
             },
         }
 
-        start_time = time.perf_counter()
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    url,
-                    json=payload,
-                    headers=headers,
-                )
+        max_attempts = 2
+        last_error = None
+        last_latency = 0.0
+
+        for attempt in range(max_attempts):
+            start_time = time.perf_counter()
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(
+                        url,
+                        json=payload,
+                        headers=headers,
+                    )
+                    latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                    last_latency = latency_ms
+
+                    # Transient retry for 503 UNAVAILABLE or 429 RATE_LIMIT
+                    if response.status_code in (503, 429) and attempt < max_attempts - 1:
+                        logger.warning(
+                            f"Gemini API returned transient status {response.status_code}. Retrying in 1.5s (attempt {attempt + 1}/{max_attempts})..."
+                        )
+                        await asyncio.sleep(1.5)
+                        continue
+
+                    if response.status_code != 200:
+                        err_msg = f"Gemini API returned status {response.status_code}: {response.text[:200]}"
+                        logger.error(err_msg)
+                        return LLMResponse(
+                            model=self.name,
+                            provider=self.provider,
+                            answer="",
+                            latency_ms=latency_ms,
+                            success=False,
+                            error=err_msg,
+                        )
+
+                    data = response.json()
+                    candidates = data.get("candidates", [])
+                    if not candidates:
+                        return LLMResponse(
+                            model=self.name,
+                            provider=self.provider,
+                            answer="",
+                            latency_ms=latency_ms,
+                            success=False,
+                            error="Empty candidates list in response",
+                        )
+
+                    first_candidate = candidates[0]
+                    content = first_candidate.get("content", {})
+                    parts = content.get("parts", [])
+                    text_parts = [p.get("text", "") for p in parts if "text" in p]
+                    answer_text = "".join(text_parts).strip()
+
+                    usage = data.get("usageMetadata")
+
+                    return LLMResponse(
+                        model=self.name,
+                        provider=self.provider,
+                        answer=answer_text or "The requested information was not found in the uploaded document.",
+                        latency_ms=latency_ms,
+                        success=True,
+                        error=None,
+                        raw_usage=usage,
+                    )
+
+            except httpx.TimeoutException as exc:
                 latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-
-                if response.status_code != 200:
-                    err_msg = f"Gemini API returned status {response.status_code}: {response.text[:200]}"
-                    logger.error(err_msg)
-                    return LLMResponse(
-                        model=self.name,
-                        provider=self.provider,
-                        answer=f"Error generating answer from {self.name}.",
-                        latency_ms=latency_ms,
-                        success=False,
-                        error=err_msg,
-                    )
-
-                data = response.json()
-                candidates = data.get("candidates", [])
-                if not candidates:
-                    return LLMResponse(
-                        model=self.name,
-                        provider=self.provider,
-                        answer="No answer returned by model.",
-                        latency_ms=latency_ms,
-                        success=False,
-                        error="Empty candidates list in response",
-                    )
-
-                first_candidate = candidates[0]
-                content = first_candidate.get("content", {})
-                parts = content.get("parts", [])
-                text_parts = [p.get("text", "") for p in parts if "text" in p]
-                answer_text = "".join(text_parts).strip()
-
-                usage = data.get("usageMetadata")
+                last_latency = latency_ms
+                err_msg = f"Gemini API request timed out after {self.timeout}s"
+                logger.error(err_msg)
+                last_error = err_msg
+                if attempt < max_attempts - 1:
+                    logger.warning(f"Gemini API request timed out. Retrying in 1.0s (attempt {attempt + 1}/{max_attempts})...")
+                    await asyncio.sleep(1.0)
+                    continue
 
                 return LLMResponse(
                     model=self.name,
                     provider=self.provider,
-                    answer=answer_text or "The requested information was not found in the uploaded document.",
+                    answer="",
                     latency_ms=latency_ms,
-                    success=True,
-                    error=None,
-                    raw_usage=usage,
+                    success=False,
+                    error=err_msg,
+                )
+            except Exception as exc:
+                latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                last_latency = latency_ms
+                err_msg = f"Gemini API exception: {str(exc)}"
+                logger.exception(err_msg)
+                last_error = err_msg
+                return LLMResponse(
+                    model=self.name,
+                    provider=self.provider,
+                    answer="",
+                    latency_ms=latency_ms,
+                    success=False,
+                    error=err_msg,
                 )
 
-        except httpx.TimeoutException as exc:
-            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            err_msg = f"Gemini API request timed out after {self.timeout}s"
-            logger.error(err_msg)
-            return LLMResponse(
-                model=self.name,
-                provider=self.provider,
-                answer="Generation request timed out.",
-                latency_ms=latency_ms,
-                success=False,
-                error=err_msg,
-            )
-        except Exception as exc:
-            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            err_msg = f"Gemini API exception: {str(exc)}"
-            logger.exception(err_msg)
-            return LLMResponse(
-                model=self.name,
-                provider=self.provider,
-                answer=f"Error communicating with {self.name}.",
-                latency_ms=latency_ms,
-                success=False,
-                error=err_msg,
-            )
+        return LLMResponse(
+            model=self.name,
+            provider=self.provider,
+            answer="",
+            latency_ms=last_latency,
+            success=False,
+            error=last_error or "Provider request failed after retries",
+        )

@@ -67,27 +67,41 @@ def generate_optimization_report(
     failed = [c for c in all_candidates if c.metrics.status != "success"]
 
     trade_offs: List[ParetoTradeOff] = []
-    base_perf = max(0.0001, baseline.metrics.performance)
-    base_cost = max(0.000001, baseline.metrics.cost)
-    base_lat = max(1.0, baseline.metrics.llm_latency_ms)
+    base_is_valid = baseline.metrics.status == "success"
+    base_perf = baseline.metrics.performance
+    base_cost = baseline.metrics.cost
+    base_lat = baseline.metrics.llm_latency_ms
 
     for p in pareto_candidates:
-        perf_delta = round(((p.metrics.performance - base_perf) / base_perf) * 100, 2)
-        cost_delta = round(((p.metrics.cost - base_cost) / base_cost) * 100, 2)
-        lat_delta = round(((p.metrics.llm_latency_ms - base_lat) / base_lat) * 100, 2)
+        if base_is_valid:
+            perf_denom = max(0.0001, base_perf)
+            cost_denom = max(0.000001, base_cost)
+            lat_denom = max(1.0, base_lat)
+            perf_delta = round(((p.metrics.performance - base_perf) / perf_denom) * 100, 2)
+            cost_delta = round(((p.metrics.cost - base_cost) / cost_denom) * 100, 2)
+            lat_delta = round(((p.metrics.llm_latency_ms - base_lat) / lat_denom) * 100, 2)
 
-        summary_parts = []
-        if p.candidate_id == baseline.candidate_id:
-            summary_parts.append("Baseline configuration is Pareto-optimal.")
-        else:
-            if perf_delta > 0 and cost_delta <= 0:
-                summary_parts.append(f"Strict improvement: +{perf_delta}% groundedness at {abs(cost_delta)}% lower cost.")
-            elif perf_delta >= 0 and cost_delta < 0:
-                summary_parts.append(f"Cost reduction: {abs(cost_delta)}% cheaper with equal groundedness.")
-            elif perf_delta > 0 and cost_delta > 0:
-                summary_parts.append(f"Performance trade-off: +{perf_delta}% groundedness with +{cost_delta}% cost increase.")
+            summary_parts = []
+            if p.candidate_id == baseline.candidate_id:
+                summary_parts.append("Baseline configuration is Pareto-optimal.")
             else:
-                summary_parts.append(f"Alternative trade-off point: Groundedness {p.metrics.performance * 100:.1f}%, Cost ${p.metrics.cost:.6f}.")
+                if perf_delta > 0 and cost_delta <= 0:
+                    summary_parts.append(f"Strict improvement: +{perf_delta}% groundedness at {abs(cost_delta)}% lower cost.")
+                elif perf_delta >= 0 and cost_delta < 0:
+                    summary_parts.append(f"Cost reduction: {abs(cost_delta)}% cheaper with equal groundedness.")
+                elif perf_delta > 0 and cost_delta > 0:
+                    summary_parts.append(f"Performance trade-off: +{perf_delta}% groundedness with +{cost_delta}% cost increase.")
+                else:
+                    summary_parts.append(f"Alternative trade-off point: Groundedness {p.metrics.performance * 100:.1f}%, Cost ${p.metrics.cost:.6f}.")
+        else:
+            perf_delta = 0.0
+            cost_delta = 0.0
+            lat_delta = 0.0
+            err_reason = baseline.metrics.error_message or baseline.metrics.status
+            summary_parts = [
+                f"Baseline evaluation unavailable ({err_reason}). Direct comparison deltas unavailable. "
+                f"Candidate achieved Groundedness {p.metrics.performance * 100:.1f}% at ${p.metrics.cost:.6f} cost / query."
+            ]
 
         diff = compute_workflow_diff(baseline.workflow.to_dict(), p.workflow.to_dict())
 

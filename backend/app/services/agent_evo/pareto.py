@@ -83,6 +83,14 @@ class ParetoArchive:
         self._all_evaluated.append(candidate)
         new_metrics = candidate.metrics
 
+        # Exclude failed/error candidates from Pareto archive
+        if new_metrics.status not in ("success", "evaluated"):
+            candidate.is_pareto_optimal = False
+            logger.info(
+                f"Candidate '{candidate.candidate_id}' has non-successful status '{new_metrics.status}'; excluded from Pareto archive."
+            )
+            return False
+
         # Step 1: Check if new candidate is dominated by existing archive members
         is_dominated = False
         for existing in self._archive:

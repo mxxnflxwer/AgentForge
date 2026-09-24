@@ -90,6 +90,24 @@ export interface OptimizationReport {
   approved_workflow_id?: string | null
 }
 
+export interface WorkflowVersion {
+  id: string
+  version_id: string
+  version_number: number
+  name: string
+  description?: string | null
+  source_run_id: string
+  source_candidate_id: string
+  model_id: string
+  provider: string
+  configuration: Record<string, any>
+  evaluation_snapshot: Record<string, any>
+  status: string
+  approved_by: string
+  approved_at: string
+  created_at: string
+}
+
 interface DocumentItem {
   id: string
   filename?: string
@@ -142,11 +160,14 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   const [currentStageIndex, setCurrentStageIndex] = useState<number>(0)
   const [report, setReport] = useState<OptimizationReport | null>(null)
   const [runs, setRuns] = useState<OptimizationReport[]>([])
+  const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersion[]>([])
   const [error, setError] = useState<string | null>(null)
 
   // Interactive Selection State
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
   const [inspectModalCandidate, setInspectModalCandidate] = useState<EvaluatedCandidate | null>(null)
+  const [inspectModalVersion, setInspectModalVersion] = useState<WorkflowVersion | null>(null)
+  const [confirmApprovalCandidate, setConfirmApprovalCandidate] = useState<EvaluatedCandidate | null>(null)
   const [approvingId, setApprovingId] = useState<string | null>(null)
   const [hoveredPoint, setHoveredPoint] = useState<EvaluatedCandidate | null>(null)
   const [isReportCollapsed, setIsReportCollapsed] = useState<boolean>(false)
@@ -157,19 +178,22 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   useEffect(() => {
     if (isLoggedIn) {
       fetchRuns()
+      fetchVersions()
     }
   }, [isLoggedIn])
 
   // Handle ESC key for modal
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && inspectModalCandidate) {
-        setInspectModalCandidate(null)
+      if (e.key === 'Escape') {
+        if (confirmApprovalCandidate) setConfirmApprovalCandidate(null)
+        else if (inspectModalVersion) setInspectModalVersion(null)
+        else if (inspectModalCandidate) setInspectModalCandidate(null)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [inspectModalCandidate])
+  }, [inspectModalCandidate, inspectModalVersion, confirmApprovalCandidate])
 
   // Select initial Pareto candidate when report loads
   useEffect(() => {
@@ -196,6 +220,20 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       }
     } catch (err) {
       console.warn('Could not fetch prior AgentEvo runs', err)
+    }
+  }
+
+  const fetchVersions = async () => {
+    try {
+      const res = await fetch(`${apiBase}/api/agent-evo/versions`, { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.versions && Array.isArray(data.versions)) {
+          setWorkflowVersions(data.versions)
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch workflow versions', err)
     }
   }
 
@@ -249,6 +287,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       const newReport: OptimizationReport = await res.json()
       setReport(newReport)
       await fetchRuns()
+      await fetchVersions()
     } catch (err: any) {
       setError(err.message || 'The optimization run could not be completed.')
     } finally {
@@ -261,15 +300,12 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   const handleApproveWorkflow = async (candidateId: string) => {
     if (!report) return
     setApprovingId(candidateId)
+    setError(null)
     try {
-      const res = await fetch(`${apiBase}/api/agent-evo/approve`, {
+      const res = await fetch(`${apiBase}/api/agent-evo/runs/${report.run_id}/candidates/${candidateId}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          run_id: report.run_id,
-          candidate_id: candidateId,
-        }),
       })
 
       if (!res.ok) {
@@ -277,8 +313,12 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
         throw new Error(errData.detail || 'Approval failed')
       }
 
-      const updatedReport: OptimizationReport = await res.json()
-      setReport(updatedReport)
+      const resData = await res.json()
+      if (resData.report) {
+        setReport(resData.report)
+      }
+      setConfirmApprovalCandidate(null)
+      await fetchVersions()
       await fetchRuns()
     } catch (err: any) {
       setError(err.message || 'Failed to record developer approval')
@@ -294,6 +334,19 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   // Dynamic Key Findings calculation
   const generateDynamicFindings = (cand: EvaluatedCandidate, base: EvaluatedCandidate): string[] => {
     const findings: string[] = []
+    if (base.metrics.status !== 'success') {
+      findings.push(
+        `Production baseline evaluation was unavailable (${base.metrics.error_message || base.metrics.status}). Direct metric comparisons against baseline are unavailable.`
+      )
+      return findings
+    }
+    if (cand.metrics.status !== 'success') {
+      findings.push(
+        `Candidate workflow evaluation failed (${cand.metrics.error_message || cand.metrics.status}).`
+      )
+      return findings
+    }
+
     const candGroundedness = cand.metrics.groundedness ?? cand.metrics.performance
     const baseGroundedness = base.metrics.groundedness ?? base.metrics.performance
     const groundednessDiff = candGroundedness - baseGroundedness
@@ -860,14 +913,18 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     <div className="evo-metric-card">
                       <span className="evo-metric-label">Groundedness</span>
                       <span className="evo-metric-number evo-num-green">
-                        {((activeCandidate.metrics.groundedness ?? activeCandidate.metrics.performance) * 100).toFixed(1)}%
+                        {activeCandidate.metrics.status !== 'success'
+                          ? 'Unavailable'
+                          : `${((activeCandidate.metrics.groundedness ?? activeCandidate.metrics.performance) * 100).toFixed(1)}%`}
                       </span>
                     </div>
 
                     <div className="evo-metric-card">
                       <span className="evo-metric-label">Hallucination</span>
                       <span className="evo-metric-number evo-num-cyan">
-                        {((activeCandidate.metrics.hallucination_rate ?? 0) * 100).toFixed(1)}%
+                        {activeCandidate.metrics.status !== 'success'
+                          ? 'Unavailable'
+                          : `${((activeCandidate.metrics.hallucination_rate ?? 0) * 100).toFixed(1)}%`}
                       </span>
                     </div>
 
@@ -913,38 +970,55 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                   {baselineCandidate && activeCandidate.candidate_id !== 'baseline' && (
                     <div className="evo-baseline-comparison">
                       <h4 className="evo-comp-title">Compared with Production Baseline</h4>
-                      <div className="evo-comp-grid">
-                        <div className="evo-comp-row">
-                          <span className="evo-comp-label">Groundedness</span>
-                          <span className="evo-comp-values">
-                            {((baselineCandidate.metrics.groundedness ?? baselineCandidate.metrics.performance) * 100).toFixed(1)}% → {((activeCandidate.metrics.groundedness ?? activeCandidate.metrics.performance) * 100).toFixed(1)}%
-                          </span>
+                      {baselineCandidate.metrics.status !== 'success' ? (
+                        <div className="evo-confirm-notice" style={{ marginTop: '8px' }}>
+                          <p>
+                            <strong>Baseline Unavailable:</strong> The production baseline evaluation failed (<code>{baselineCandidate.metrics.error_message || baselineCandidate.metrics.status}</code>).
+                          </p>
+                          <p>
+                            Direct percentage comparison deltas cannot be computed against an unavailable baseline.
+                          </p>
                         </div>
+                      ) : activeCandidate.metrics.status !== 'success' ? (
+                        <div className="evo-confirm-notice" style={{ marginTop: '8px' }}>
+                          <p>
+                            <strong>Candidate Evaluation Failed:</strong> <code>{activeCandidate.metrics.error_message || activeCandidate.metrics.status}</code>.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="evo-comp-grid">
+                          <div className="evo-comp-row">
+                            <span className="evo-comp-label">Groundedness</span>
+                            <span className="evo-comp-values">
+                              {((baselineCandidate.metrics.groundedness ?? baselineCandidate.metrics.performance) * 100).toFixed(1)}% → {((activeCandidate.metrics.groundedness ?? activeCandidate.metrics.performance) * 100).toFixed(1)}%
+                            </span>
+                          </div>
 
-                        <div className="evo-comp-row">
-                          <span className="evo-comp-label">Cost</span>
-                          <span className="evo-comp-values">
-                            ${baselineCandidate.metrics.cost.toFixed(6)} → ${activeCandidate.metrics.cost.toFixed(6)}
-                          </span>
-                          <span className={`evo-delta-tag ${activeCandidate.metrics.cost <= baselineCandidate.metrics.cost ? 'delta-good' : 'delta-bad'}`}>
-                            {baselineCandidate.metrics.cost > 0
-                              ? `${((activeCandidate.metrics.cost - baselineCandidate.metrics.cost) / baselineCandidate.metrics.cost * 100).toFixed(1)}%`
-                              : '0.0%'}
-                          </span>
-                        </div>
+                          <div className="evo-comp-row">
+                            <span className="evo-comp-label">Cost</span>
+                            <span className="evo-comp-values">
+                              ${baselineCandidate.metrics.cost.toFixed(6)} → ${activeCandidate.metrics.cost.toFixed(6)}
+                            </span>
+                            <span className={`evo-delta-tag ${activeCandidate.metrics.cost <= baselineCandidate.metrics.cost ? 'delta-good' : 'delta-bad'}`}>
+                              {baselineCandidate.metrics.cost > 0
+                                ? `${((activeCandidate.metrics.cost - baselineCandidate.metrics.cost) / baselineCandidate.metrics.cost * 100).toFixed(1)}%`
+                                : '0.0%'}
+                            </span>
+                          </div>
 
-                        <div className="evo-comp-row">
-                          <span className="evo-comp-label">Latency</span>
-                          <span className="evo-comp-values">
-                            {baselineCandidate.metrics.llm_latency_ms.toFixed(0)} ms → {activeCandidate.metrics.llm_latency_ms.toFixed(0)} ms
-                          </span>
-                          <span className={`evo-delta-tag ${activeCandidate.metrics.llm_latency_ms <= baselineCandidate.metrics.llm_latency_ms ? 'delta-good' : 'delta-bad'}`}>
-                            {baselineCandidate.metrics.llm_latency_ms > 0
-                              ? `${((activeCandidate.metrics.llm_latency_ms - baselineCandidate.metrics.llm_latency_ms) / baselineCandidate.metrics.llm_latency_ms * 100).toFixed(1)}%`
-                              : '0.0%'}
-                          </span>
+                          <div className="evo-comp-row">
+                            <span className="evo-comp-label">Latency</span>
+                            <span className="evo-comp-values">
+                              {baselineCandidate.metrics.llm_latency_ms.toFixed(0)} ms → {activeCandidate.metrics.llm_latency_ms.toFixed(0)} ms
+                            </span>
+                            <span className={`evo-delta-tag ${activeCandidate.metrics.llm_latency_ms <= baselineCandidate.metrics.llm_latency_ms ? 'delta-good' : 'delta-bad'}`}>
+                              {baselineCandidate.metrics.llm_latency_ms > 0
+                                ? `${((activeCandidate.metrics.llm_latency_ms - baselineCandidate.metrics.llm_latency_ms) / baselineCandidate.metrics.llm_latency_ms * 100).toFixed(1)}%`
+                                : '0.0%'}
+                            </span>
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       {/* Key Findings */}
                       <div className="evo-findings-box">
@@ -987,6 +1061,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     const isPareto = cand.is_pareto_optimal
                     const isApproved = report.approved_workflow_id === cand.candidate_id
                     const isSelected = selectedCandidateId === cand.candidate_id
+                    const isFailed = cand.metrics.status !== 'success'
 
                     return (
                       <tr
@@ -996,7 +1071,11 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                       >
                         <td>
                           {isBaseline ? (
-                            <span className="evo-status-tag tag-baseline">Baseline</span>
+                            <span className={`evo-status-tag ${isFailed ? 'tag-dominated' : 'tag-baseline'}`}>
+                              {isFailed ? 'Baseline (Error)' : 'Baseline'}
+                            </span>
+                          ) : isFailed ? (
+                            <span className="evo-status-tag tag-dominated">Failed</span>
                           ) : isPareto ? (
                             <span className="evo-status-tag tag-pareto">Pareto</span>
                           ) : (
@@ -1015,7 +1094,9 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                         </td>
                         <td>
                           <span className="evo-perf-val">
-                            {((cand.metrics.groundedness ?? cand.metrics.performance) * 100).toFixed(1)}%
+                            {isFailed
+                              ? 'Unavailable'
+                              : `${((cand.metrics.groundedness ?? cand.metrics.performance) * 100).toFixed(1)}%`}
                           </span>
                         </td>
                         <td>
@@ -1039,12 +1120,12 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                             </button>
 
                             {isBaseline ? (
-                              <span className="evo-current-tag">Current Workflow</span>
+                              <span className="evo-current-tag">Current Baseline</span>
                             ) : isPareto ? (
                               <button
                                 type="button"
                                 disabled={approvingId === cand.candidate_id || isApproved}
-                                onClick={() => handleApproveWorkflow(cand.candidate_id)}
+                                onClick={() => setConfirmApprovalCandidate(cand)}
                                 className={`evo-btn-approve ${isApproved ? 'evo-btn-approved' : ''}`}
                               >
                                 {approvingId === cand.candidate_id ? '...' : isApproved ? '✓ Approved' : 'Approve'}
@@ -1118,6 +1199,102 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                   <div><strong>Performance Objective:</strong> Groundedness ↑</div>
                   <div><strong>Cost Objective:</strong> Cost / Query ↓</div>
                 </div>
+              </div>
+            )}
+          </section>
+
+          {/* 10. WORKFLOW VERSIONS */}
+          <section className="evo-section evo-versions-section" aria-labelledby="evo-versions-title">
+            <div className="evo-section-header">
+              <div className="evo-header-with-badge">
+                <h2 id="evo-versions-title" className="evo-section-title">Approved Workflow Versions</h2>
+                <span className="evo-count-badge">{workflowVersions.length} Available</span>
+              </div>
+              <span className="evo-section-caption">
+                Immutable versioned workflow configurations created via explicit developer approval. Baseline remains intact.
+              </span>
+            </div>
+
+            {workflowVersions.length === 0 ? (
+              <div className="evo-versions-empty">
+                <p>No approved workflow versions recorded yet. Inspect and approve a Pareto-optimal candidate above to persist a version.</p>
+              </div>
+            ) : (
+              <div className="evo-table-container">
+                <table className="evo-table">
+                  <thead>
+                    <tr>
+                      <th>Version</th>
+                      <th>Workflow Name</th>
+                      <th>Source Candidate</th>
+                      <th>Model</th>
+                      <th>Groundedness</th>
+                      <th>Cost / Query</th>
+                      <th>Approved At</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {workflowVersions.map((ver) => {
+                      const snap = ver.evaluation_snapshot || {}
+                      const groundedness = snap.groundedness ?? snap.performance ?? null
+                      const cost = snap.cost ?? null
+                      const formattedDate = ver.approved_at ? new Date(ver.approved_at).toLocaleString() : 'N/A'
+
+                      return (
+                        <tr key={ver.id || ver.version_id} className="evo-table-row">
+                          <td>
+                            <span className="evo-version-tag">v{ver.version_number}</span>
+                            <div className="evo-cell-sub"><code>{ver.version_id}</code></div>
+                          </td>
+                          <td>
+                            <strong>{ver.name}</strong>
+                            {ver.description && <div className="evo-cell-sub">{ver.description}</div>}
+                          </td>
+                          <td>
+                            <div className="evo-cell-sub">Candidate: <code>{ver.source_candidate_id}</code></div>
+                            <div className="evo-cell-sub">Run: <code>{ver.source_run_id}</code></div>
+                          </td>
+                          <td>
+                            <div className="evo-model-cell">
+                              <span className="evo-provider-name">{ver.provider}</span>
+                              <span className="evo-model-id">{ver.model_id}</span>
+                            </div>
+                          </td>
+                          <td>
+                            <span className="evo-perf-val">
+                              {groundedness !== null ? `${(groundedness * 100).toFixed(1)}%` : 'N/A'}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="evo-cost-val">
+                              {cost !== null ? `$${Number(cost).toFixed(6)}` : 'N/A'}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="evo-approver-info">
+                              <span className="evo-approver-user">{ver.approved_by || 'Developer'}</span>
+                              <span className="evo-approved-date">{formattedDate}</span>
+                            </div>
+                          </td>
+                          <td>
+                            <span className="evo-gov-state-pill gov-approved">{ver.status.toUpperCase()}</span>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              onClick={() => setInspectModalVersion(ver)}
+                              className="evo-btn-inspect"
+                            >
+                              Inspect Version
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </section>
@@ -1203,11 +1380,20 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
               {/* Evaluation Metrics Section */}
               <div className="evo-modal-block">
                 <h4 className="evo-modal-block-title">Evaluation</h4>
+                {inspectModalCandidate.metrics.status !== 'success' && (
+                  <div className="evo-confirm-notice" style={{ marginBottom: '10px' }}>
+                    <p>
+                      <strong>Evaluation Failed:</strong> <code>{inspectModalCandidate.metrics.error_message || inspectModalCandidate.metrics.status}</code>
+                    </p>
+                  </div>
+                )}
                 <div className="evo-modal-grid">
                   <div className="evo-modal-field">
                     <span className="evo-field-key">Groundedness</span>
                     <span className="evo-field-value evo-val-green">
-                      {inspectModalCandidate.metrics.groundedness !== null && inspectModalCandidate.metrics.groundedness !== undefined
+                      {inspectModalCandidate.metrics.status !== 'success'
+                        ? 'Unavailable'
+                        : inspectModalCandidate.metrics.groundedness !== null && inspectModalCandidate.metrics.groundedness !== undefined
                         ? `${(inspectModalCandidate.metrics.groundedness * 100).toFixed(1)}%`
                         : `${(inspectModalCandidate.metrics.performance * 100).toFixed(1)}%`}
                     </span>
@@ -1215,7 +1401,9 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                   <div className="evo-modal-field">
                     <span className="evo-field-key">Hallucination</span>
                     <span className="evo-field-value evo-val-cyan">
-                      {inspectModalCandidate.metrics.hallucination_rate !== null && inspectModalCandidate.metrics.hallucination_rate !== undefined
+                      {inspectModalCandidate.metrics.status !== 'success'
+                        ? 'Unavailable'
+                        : inspectModalCandidate.metrics.hallucination_rate !== null && inspectModalCandidate.metrics.hallucination_rate !== undefined
                         ? `${(inspectModalCandidate.metrics.hallucination_rate * 100).toFixed(1)}%`
                         : '0.0%'}
                     </span>
@@ -1376,12 +1564,259 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                 <button
                   type="button"
                   disabled={approvingId === inspectModalCandidate.candidate_id || report?.approved_workflow_id === inspectModalCandidate.candidate_id}
-                  onClick={() => handleApproveWorkflow(inspectModalCandidate.candidate_id)}
+                  onClick={() => setConfirmApprovalCandidate(inspectModalCandidate)}
                   className={`evo-btn-primary ${report?.approved_workflow_id === inspectModalCandidate.candidate_id ? 'evo-btn-approved' : ''}`}
                 >
                   {report?.approved_workflow_id === inspectModalCandidate.candidate_id ? '✓ Approved' : 'Approve Workflow Candidate'}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* APPROVAL CONFIRMATION MODAL */}
+      {confirmApprovalCandidate && (
+        <div
+          className="evo-modal-backdrop"
+          onClick={() => setConfirmApprovalCandidate(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="evo-confirm-panel"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="evo-confirm-head">
+              <span className="evo-confirm-icon">🛡️</span>
+              <div>
+                <h3 className="evo-confirm-title">Approve Workflow Candidate?</h3>
+                <span className="evo-confirm-sub">Explicit Governance & Versioning Action</span>
+              </div>
+            </div>
+
+            <div className="evo-confirm-body">
+              <div className="evo-confirm-meta">
+                <div className="evo-confirm-row">
+                  <span className="evo-confirm-label">Candidate:</span>
+                  <span className="evo-confirm-value"><strong>{confirmApprovalCandidate.workflow.name}</strong> <code>({confirmApprovalCandidate.candidate_id})</code></span>
+                </div>
+                <div className="evo-confirm-row">
+                  <span className="evo-confirm-label">Model:</span>
+                  <span className="evo-confirm-value">{confirmApprovalCandidate.workflow.model.provider} / <code>{confirmApprovalCandidate.workflow.model.model_id}</code></span>
+                </div>
+                <div className="evo-confirm-row">
+                  <span className="evo-confirm-label">Groundedness:</span>
+                  <span className="evo-confirm-value evo-val-green">
+                    {((confirmApprovalCandidate.metrics.groundedness ?? confirmApprovalCandidate.metrics.performance) * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="evo-confirm-row">
+                  <span className="evo-confirm-label">Cost / Query:</span>
+                  <span className="evo-confirm-value evo-val-amber">
+                    ${confirmApprovalCandidate.metrics.cost.toFixed(6)}
+                  </span>
+                </div>
+                <div className="evo-confirm-row">
+                  <span className="evo-confirm-label">Retrieval:</span>
+                  <span className="evo-confirm-value">
+                    Top-K: {confirmApprovalCandidate.workflow.retrieval.top_k} | Threshold: {confirmApprovalCandidate.workflow.retrieval.similarity_threshold}
+                  </span>
+                </div>
+              </div>
+
+              <div className="evo-confirm-notice">
+                <p>
+                  <strong>Governance Policy:</strong> Approving creates a new immutable workflow version for future reference.
+                </p>
+                <p>
+                  The current production baseline will <strong>not</strong> be replaced or automatically deployed.
+                </p>
+              </div>
+            </div>
+
+            <div className="evo-confirm-actions">
+              <button
+                type="button"
+                onClick={() => setConfirmApprovalCandidate(null)}
+                className="evo-btn-secondary"
+                disabled={approvingId === confirmApprovalCandidate.candidate_id}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleApproveWorkflow(confirmApprovalCandidate.candidate_id)}
+                className="evo-btn-primary"
+                disabled={approvingId === confirmApprovalCandidate.candidate_id}
+              >
+                {approvingId === confirmApprovalCandidate.candidate_id ? 'Approving...' : 'Approve Workflow'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* INSPECT WORKFLOW VERSION MODAL */}
+      {inspectModalVersion && (
+        <div
+          className="evo-modal-backdrop"
+          onClick={() => setInspectModalVersion(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="evo-modal-panel"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="evo-modal-head">
+              <div>
+                <div className="evo-modal-badges">
+                  <span className="evo-version-tag">v{inspectModalVersion.version_number}</span>
+                  <span className="evo-status-tag tag-pareto">✓ {inspectModalVersion.status.toUpperCase()}</span>
+                </div>
+                <h3 className="evo-modal-heading">{inspectModalVersion.name}</h3>
+                <span className="evo-modal-subheading">Version ID: <code>{inspectModalVersion.version_id}</code></span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInspectModalVersion(null)}
+                className="evo-modal-close"
+                aria-label="Close modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="evo-modal-content">
+              {/* Governance & Provenance */}
+              <div className="evo-modal-block">
+                <h4 className="evo-modal-block-title">Governance & Provenance</h4>
+                <div className="evo-modal-grid">
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Approved By</span>
+                    <span className="evo-field-value">{inspectModalVersion.approved_by || 'Developer'}</span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Approved At</span>
+                    <span className="evo-field-value" style={{ fontSize: '12px' }}>
+                      {inspectModalVersion.approved_at ? new Date(inspectModalVersion.approved_at).toLocaleString() : 'N/A'}
+                    </span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Source Candidate</span>
+                    <span className="evo-field-value"><code>{inspectModalVersion.source_candidate_id}</code></span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Source Run</span>
+                    <span className="evo-field-value"><code>{inspectModalVersion.source_run_id}</code></span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Workflow Configuration */}
+              <div className="evo-modal-block">
+                <h4 className="evo-modal-block-title">Workflow Configuration</h4>
+                <div className="evo-modal-grid">
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Provider</span>
+                    <span className="evo-field-value">{inspectModalVersion.provider}</span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Model ID</span>
+                    <span className="evo-field-value"><code>{inspectModalVersion.model_id}</code></span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Top-K</span>
+                    <span className="evo-field-value">{inspectModalVersion.configuration?.retrieval?.top_k ?? 'N/A'}</span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Similarity Threshold</span>
+                    <span className="evo-field-value">{inspectModalVersion.configuration?.retrieval?.similarity_threshold ?? 'N/A'}</span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Reranking</span>
+                    <span className="evo-field-value">{inspectModalVersion.configuration?.retrieval?.enable_rerank ? 'Enabled' : 'Disabled'}</span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Prompt Template</span>
+                    <span className="evo-field-value">{inspectModalVersion.configuration?.prompt?.template_name ?? 'N/A'}</span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Chunk Size</span>
+                    <span className="evo-field-value">{inspectModalVersion.configuration?.retrieval?.chunk_size ?? 'N/A'} tokens</span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Chunk Overlap</span>
+                    <span className="evo-field-value">{inspectModalVersion.configuration?.retrieval?.chunk_overlap ?? 'N/A'} tokens</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Evaluation Snapshot */}
+              <div className="evo-modal-block">
+                <h4 className="evo-modal-block-title">Evaluation Snapshot (At Time of Approval)</h4>
+                <div className="evo-modal-grid">
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Groundedness</span>
+                    <span className="evo-field-value evo-val-green">
+                      {inspectModalVersion.evaluation_snapshot?.groundedness !== null && inspectModalVersion.evaluation_snapshot?.groundedness !== undefined
+                        ? `${(inspectModalVersion.evaluation_snapshot.groundedness * 100).toFixed(1)}%`
+                        : inspectModalVersion.evaluation_snapshot?.performance !== undefined
+                        ? `${(inspectModalVersion.evaluation_snapshot.performance * 100).toFixed(1)}%`
+                        : 'N/A'}
+                    </span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Hallucination</span>
+                    <span className="evo-field-value evo-val-cyan">
+                      {inspectModalVersion.evaluation_snapshot?.hallucination_rate !== null && inspectModalVersion.evaluation_snapshot?.hallucination_rate !== undefined
+                        ? `${(inspectModalVersion.evaluation_snapshot.hallucination_rate * 100).toFixed(1)}%`
+                        : '0.0%'}
+                    </span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Cost / Query</span>
+                    <span className="evo-field-value evo-val-amber">
+                      ${Number(inspectModalVersion.evaluation_snapshot?.cost || 0).toFixed(6)}
+                    </span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">LLM Latency</span>
+                    <span className="evo-field-value evo-val-purple">
+                      {Number(inspectModalVersion.evaluation_snapshot?.llm_latency_ms || 0).toFixed(0)} ms
+                    </span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Execution Time</span>
+                    <span className="evo-field-value">
+                      {Number(inspectModalVersion.evaluation_snapshot?.execution_time_ms || 0).toFixed(0)} ms
+                    </span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Total Tokens</span>
+                    <span className="evo-field-value">
+                      {inspectModalVersion.evaluation_snapshot?.total_tokens ?? 'N/A'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Raw JSON Spec */}
+              <details className="evo-details-block">
+                <summary className="evo-details-summary">Raw Configuration Spec (JSON)</summary>
+                <pre className="evo-json-pre">{JSON.stringify(inspectModalVersion.configuration, null, 2)}</pre>
+              </details>
+            </div>
+
+            <div className="evo-modal-foot">
+              <button
+                type="button"
+                onClick={() => setInspectModalVersion(null)}
+                className="evo-btn-secondary"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>

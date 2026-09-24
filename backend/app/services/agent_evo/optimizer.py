@@ -1,9 +1,12 @@
 import asyncio
+import datetime
 import logging
+from typing import Dict, List, Optional, Tuple
 import uuid
-from typing import Dict, List, Optional
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.models.workflow_version import WorkflowVersion
 from app.services.agent_evo.candidate_generator import generate_candidates
 from app.services.agent_evo.evaluator_adapter import EvaluatorAdapter
 from app.services.agent_evo.pareto import EvaluatedCandidate, ParetoArchive
@@ -22,7 +25,7 @@ class AgentEvoOptimizer:
     3. Evaluates all candidates through Phase 6 evaluator adapter.
     4. Computes Pareto dominance and maintains Pareto archive.
     5. Produces comprehensive optimization trade-off report.
-    6. Manages human developer approval state.
+    6. Manages human developer approval state and workflow versioning.
     """
 
     def __init__(self):
@@ -37,24 +40,115 @@ class AgentEvoOptimizer:
         """List all completed optimization runs, newest first."""
         return sorted(self._runs.values(), key=lambda r: r.timestamp, reverse=True)
 
-    def approve_workflow(self, run_id: str, candidate_id: str) -> Optional[OptimizationReport]:
+    def approve_workflow(
+        self,
+        run_id: str,
+        candidate_id: str,
+        approved_by: str,
+        db: Optional[Session] = None,
+    ) -> Tuple[OptimizationReport, WorkflowVersion]:
         """
-        Record human developer approval for a specific candidate workflow.
-        Does NOT automatically deploy or overwrite production without explicit governance.
+        Record human developer approval for a specific candidate workflow and persist a WorkflowVersion.
+        Enforces:
+        - Optimization run must exist.
+        - Candidate must exist in that run.
+        - Baseline cannot be approved as an optimization candidate.
+        - Only Pareto-optimal candidates can be approved (dominated rejected).
+        - Idempotency: multiple approvals for the same candidate do not duplicate workflow versions.
+        - Production baseline remains unchanged.
         """
         run = self._runs.get(run_id)
         if not run:
-            return None
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Optimization run '{run_id}' not found.",
+            )
 
         # Verify candidate exists in run
         matching_cand = next((c for c in run.all_candidates if c.candidate_id == candidate_id), None)
         if not matching_cand:
-            logger.warning(f"Candidate '{candidate_id}' not found in run '{run_id}'.")
-            return None
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Candidate '{candidate_id}' not found in optimization run '{run_id}'.",
+            )
+
+        # Validation Rule: Baseline is not an optimization candidate
+        if candidate_id == "baseline" or matching_cand.candidate_id == "baseline":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Baseline workflow cannot be approved as an optimization candidate.",
+            )
+
+        # Validation Rule: Only Pareto-optimal candidates are eligible for approval
+        if not matching_cand.is_pareto_optimal:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Candidate '{candidate_id}' is dominated and not eligible for approval. Only Pareto-optimal workflows can be approved.",
+            )
+
+        # Check for existing version (Idempotency)
+        existing_version = None
+        if db:
+            existing_version = db.query(WorkflowVersion).filter(
+                WorkflowVersion.source_run_id == run_id,
+                WorkflowVersion.source_candidate_id == candidate_id,
+            ).first()
+
+        if existing_version:
+            run.approved_workflow_id = candidate_id
+            logger.info(
+                f"Candidate '{candidate_id}' in run '{run_id}' was already approved as version '{existing_version.version_id}'."
+            )
+            return run, existing_version
+
+        # Sequential version number calculation
+        version_number = 1
+        if db:
+            count = db.query(WorkflowVersion).count()
+            version_number = count + 1
+
+        version_id = f"wf_v{version_number}_{uuid.uuid4().hex[:6]}"
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+
+        wf_version = WorkflowVersion(
+            version_id=version_id,
+            version_number=version_number,
+            name=matching_cand.workflow.name,
+            description=matching_cand.workflow.description or f"Approved optimization candidate from run {run_id}",
+            source_run_id=run_id,
+            source_candidate_id=candidate_id,
+            model_id=matching_cand.workflow.model.model_id,
+            provider=matching_cand.workflow.model.provider,
+            configuration=matching_cand.workflow.to_dict(),
+            evaluation_snapshot=matching_cand.metrics.model_dump(),
+            status="approved",
+            approved_by=approved_by,
+            approved_at=now_utc,
+            created_at=now_utc,
+        )
+
+        if db:
+            db.add(wf_version)
+            db.commit()
+            db.refresh(wf_version)
 
         run.approved_workflow_id = candidate_id
-        logger.info(f"Developer approved workflow '{candidate_id}' for optimization run '{run_id}'.")
-        return run
+        logger.info(f"Developer '{approved_by}' approved workflow '{candidate_id}' creating version '{version_id}'.")
+        return run, wf_version
+
+    def list_versions(self, db: Optional[Session] = None) -> List[WorkflowVersion]:
+        """Retrieve all approved workflow versions, newest first."""
+        if db:
+            return db.query(WorkflowVersion).order_by(WorkflowVersion.version_number.desc()).all()
+        return []
+
+    def get_version(self, version_id: str, db: Optional[Session] = None) -> Optional[WorkflowVersion]:
+        """Retrieve a specific workflow version by version_id or database UUID."""
+        if db:
+            return db.query(WorkflowVersion).filter(
+                (WorkflowVersion.version_id == version_id) | (WorkflowVersion.id == version_id)
+            ).first()
+        return None
 
     async def run_optimization(
         self,

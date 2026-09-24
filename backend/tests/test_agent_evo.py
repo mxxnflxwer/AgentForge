@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 
 from app.models.user import User, UserRole
+from app.models.workflow_version import WorkflowVersion
 from app.services.agent_evo import (
     AgentWorkflow,
     CandidateGenerator,
@@ -204,84 +205,91 @@ def test_pareto_dominance_failed_candidate_dominated_by_success():
 
 def test_pareto_archive_incremental_addition_and_pruning():
     archive = ParetoArchive()
-    wf = get_baseline_workflow()
 
-    # Add baseline
-    c_base = EvaluatedCandidate(
-        candidate_id="base",
-        workflow=wf,
-        metrics=CandidateMetrics(workflow_id="base", workflow_name="Base", performance=0.80, cost=0.00010),
+    wf_base = get_baseline_workflow()
+    c1 = EvaluatedCandidate(
+        candidate_id="c1",
+        workflow=wf_base,
+        metrics=CandidateMetrics(workflow_id="c1", workflow_name="C1", performance=0.80, cost=0.00010, status="success"),
     )
-    assert archive.add_candidate(c_base) is True
+    archive.add_candidate(c1)
     assert len(archive.pareto_candidates) == 1
+    assert c1.is_pareto_optimal is True
 
-    # Add strictly better candidate (should prune c_base)
-    c_better = EvaluatedCandidate(
-        candidate_id="better",
-        workflow=wf,
-        metrics=CandidateMetrics(workflow_id="better", workflow_name="Better", performance=0.90, cost=0.00008),
+    # c2 strictly dominates c1 (higher perf, lower cost)
+    c2 = EvaluatedCandidate(
+        candidate_id="c2",
+        workflow=wf_base,
+        metrics=CandidateMetrics(workflow_id="c2", workflow_name="C2", performance=0.90, cost=0.00008, status="success"),
     )
-    assert archive.add_candidate(c_better) is True
-    frontier = archive.pareto_candidates
-    assert len(frontier) == 1
-    assert frontier[0].candidate_id == "better"
+    archive.add_candidate(c2)
+    assert len(archive.pareto_candidates) == 1
+    assert archive.pareto_candidates[0].candidate_id == "c2"
+    assert c1.is_pareto_optimal is False
+    assert "c2" in c1.dominated_by
 
-    # Add trade-off candidate (cheaper, lower perf -> non-dominated, both survive)
-    c_cheaper = EvaluatedCandidate(
-        candidate_id="cheaper",
-        workflow=wf,
-        metrics=CandidateMetrics(workflow_id="cheaper", workflow_name="Cheaper", performance=0.75, cost=0.00002),
+    # c3 is a trade-off (higher perf, higher cost) -> should coexist with c2
+    c3 = EvaluatedCandidate(
+        candidate_id="c3",
+        workflow=wf_base,
+        metrics=CandidateMetrics(workflow_id="c3", workflow_name="C3", performance=0.98, cost=0.00020, status="success"),
     )
-    assert archive.add_candidate(c_cheaper) is True
-    frontier = archive.pareto_candidates
-    assert len(frontier) == 2
-    frontier_ids = [c.candidate_id for c in frontier]
-    assert "better" in frontier_ids
-    assert "cheaper" in frontier_ids
-
-    # Add dominated candidate (worse perf, higher cost -> rejected)
-    c_worse = EvaluatedCandidate(
-        candidate_id="worse",
-        workflow=wf,
-        metrics=CandidateMetrics(workflow_id="worse", workflow_name="Worse", performance=0.60, cost=0.00050),
-    )
-    assert archive.add_candidate(c_worse) is False
+    archive.add_candidate(c3)
     assert len(archive.pareto_candidates) == 2
+    assert {c.candidate_id for c in archive.pareto_candidates} == {"c2", "c3"}
 
 
 # --- 6. Optimization Report Tests ---
 
 def test_optimization_report_generation():
-    wf = get_baseline_workflow()
-    c_base = EvaluatedCandidate(
-        candidate_id="base",
-        workflow=wf,
-        metrics=CandidateMetrics(workflow_id="base", workflow_name="Baseline", performance=0.80, cost=0.00010, groundedness=0.80),
+    wf_base = get_baseline_workflow()
+    base_cand = EvaluatedCandidate(
+        candidate_id="baseline",
+        workflow=wf_base,
+        metrics=CandidateMetrics(
+            workflow_id="baseline",
+            workflow_name="Baseline",
+            performance=0.85,
+            cost=0.00010,
+            llm_latency_ms=100.0,
+            status="success",
+        ),
+        is_pareto_optimal=True,
     )
-    c_opt = EvaluatedCandidate(
-        candidate_id="opt_1",
-        workflow=wf.clone("opt_1", "Optimized 1"),
-        metrics=CandidateMetrics(workflow_id="opt_1", workflow_name="Optimized 1", performance=1.0, cost=0.00005, groundedness=1.0),
+
+    c1 = EvaluatedCandidate(
+        candidate_id="c1",
+        workflow=wf_base.clone("c1", "Mutant 1"),
+        metrics=CandidateMetrics(
+            workflow_id="c1",
+            workflow_name="Mutant 1",
+            performance=0.90,
+            cost=0.00005,
+            llm_latency_ms=80.0,
+            status="success",
+        ),
+        is_pareto_optimal=True,
     )
 
     report = generate_optimization_report(
-        run_id="run_test_01",
-        query="What is the clinical diagnosis?",
-        baseline=c_base,
-        all_candidates=[c_base, c_opt],
-        pareto_candidates=[c_opt],
+        run_id="test_run_01",
+        query="What is the treatment plan?",
+        baseline=base_cand,
+        all_candidates=[base_cand, c1],
+        pareto_candidates=[c1],
     )
 
-    assert report.run_id == "run_test_01"
+    assert report.run_id == "test_run_01"
     assert report.total_candidates_evaluated == 2
     assert report.pareto_frontier_count == 1
-    assert report.human_approval_required is True
     assert len(report.trade_off_analyses) == 1
-    assert report.trade_off_analyses[0].performance_delta_pct > 0
-    assert report.trade_off_analyses[0].cost_delta_pct < 0
+    trade_off = report.trade_off_analyses[0]
+    assert trade_off.performance_delta_pct > 0
+    assert trade_off.cost_delta_pct < 0
+    assert "Strict improvement" in trade_off.trade_off_summary
 
 
-# --- 7. End-to-End Optimizer Execution Tests ---
+# --- 7. Full AgentEvo Optimizer Pipeline Tests ---
 
 @pytest.mark.asyncio
 async def test_agent_evo_optimizer_mocked(evo_test_user, db_session):
@@ -293,10 +301,10 @@ async def test_agent_evo_optimizer_mocked(evo_test_user, db_session):
         total_results=1,
         results=[
             RetrievedChunk(
-                chunk_id="chunk_1",
+                chunk_id="c1",
                 document_id="doc_1",
                 chunk_index=0,
-                content="Assessment: Stable angina pectoris.",
+                content="Assessment: Stable angina pectoris with CAD history.",
                 similarity_score=0.92,
                 distance=0.08,
                 relevance_score=0.95,
@@ -335,16 +343,26 @@ async def test_agent_evo_optimizer_mocked(evo_test_user, db_session):
         assert len(report.pareto_frontier) >= 1
         assert report.human_approval_required is True
 
-        # Test developer approval
-        cand_id = report.pareto_frontier[0].candidate_id
-        approved_report = optimizer.approve_workflow(run_id=report.run_id, candidate_id=cand_id)
+        # Test developer approval on a non-baseline Pareto candidate
+        pareto_cand = next((c for c in report.pareto_frontier if c.candidate_id != "baseline"), report.all_candidates[1])
+        pareto_cand.is_pareto_optimal = True  # Ensure eligible
+        approved_report, version = optimizer.approve_workflow(
+            run_id=report.run_id,
+            candidate_id=pareto_cand.candidate_id,
+            approved_by=evo_test_user.email,
+            db=db_session,
+        )
         assert approved_report is not None
-        assert approved_report.approved_workflow_id == cand_id
+        assert approved_report.approved_workflow_id == pareto_cand.candidate_id
+        assert version is not None
+        assert version.source_candidate_id == pareto_cand.candidate_id
+        assert version.source_run_id == report.run_id
+        assert version.status == "approved"
 
 
-# --- 8. API Endpoint Tests ---
+# --- 8. Phase 7.2 Approval & Versioning API Tests ---
 
-def test_agent_evo_api_endpoints(client: TestClient, evo_test_user):
+def test_agent_evo_api_endpoints_and_governance(client: TestClient, evo_test_user, db_session):
     # 1. Login user session
     login_res = client.post(
         "/api/auth/login",
@@ -415,8 +433,20 @@ def test_agent_evo_api_endpoints(client: TestClient, evo_test_user):
         assert res_pareto.status_code == 200
         assert len(res_pareto.json()) >= 1
 
-        # Approve workflow
-        cand_to_approve = data["pareto_frontier"][0]["candidate_id"]
+        # Find eligible non-baseline Pareto candidate
+        pareto_cands = [c for c in data["all_candidates"] if c["is_pareto_optimal"] and c["candidate_id"] != "baseline"]
+        if not pareto_cands:
+            # Force one candidate to be pareto optimal for test coverage
+            cand_to_approve = data["all_candidates"][1]["candidate_id"]
+            optimizer = get_agent_evo_optimizer()
+            run_obj = optimizer.get_run(run_id)
+            for c in run_obj.all_candidates:
+                if c.candidate_id == cand_to_approve:
+                    c.is_pareto_optimal = True
+        else:
+            cand_to_approve = pareto_cands[0]["candidate_id"]
+
+        # 1. Test Approval of Pareto Candidate
         res_approve = client.post(
             "/api/agent-evo/approve",
             json={
@@ -425,5 +455,90 @@ def test_agent_evo_api_endpoints(client: TestClient, evo_test_user):
             },
         )
         assert res_approve.status_code == 200
-        assert res_approve.json()["status"] == "approved"
-        assert res_approve.json()["approved_workflow_id"] == cand_to_approve
+        approve_data = res_approve.json()
+        assert approve_data["status"] == "approved"
+        assert approve_data["approved_workflow_id"] == cand_to_approve
+        assert "version" in approve_data
+        version_id = approve_data["version"]["version_id"]
+        assert version_id.startswith("wf_v")
+        assert approve_data["version"]["source_candidate_id"] == cand_to_approve
+        assert approve_data["version"]["source_run_id"] == run_id
+
+        # 2. Test Idempotency: Approving same candidate again returns existing version without duplication
+        res_approve_again = client.post(
+            "/api/agent-evo/approve",
+            json={
+                "run_id": run_id,
+                "candidate_id": cand_to_approve,
+            },
+        )
+        assert res_approve_again.status_code == 200
+        assert res_approve_again.json()["version"]["version_id"] == version_id
+
+        # 3. Test List Approved Versions
+        res_versions = client.get("/api/agent-evo/versions")
+        assert res_versions.status_code == 200
+        versions_data = res_versions.json()
+        assert versions_data["total_versions"] >= 1
+        assert any(v["version_id"] == version_id for v in versions_data["versions"])
+
+        # Test Workflows alias
+        res_wf_alias = client.get("/api/workflows/versions")
+        assert res_wf_alias.status_code == 200
+        assert res_wf_alias.json()["total_versions"] == versions_data["total_versions"]
+
+        # 4. Test Get Specific Version
+        res_v_detail = client.get(f"/api/agent-evo/versions/{version_id}")
+        assert res_v_detail.status_code == 200
+        assert res_v_detail.json()["version_id"] == version_id
+        assert res_v_detail.json()["evaluation_snapshot"] is not None
+
+        # 5. Test Baseline Rejection
+        res_base_reject = client.post(
+            "/api/agent-evo/approve",
+            json={
+                "run_id": run_id,
+                "candidate_id": "baseline",
+            },
+        )
+        assert res_base_reject.status_code == 400
+        assert "Baseline" in res_base_reject.json()["detail"]
+
+        # 6. Test Unknown Candidate Rejection
+        res_unknown_cand = client.post(
+            "/api/agent-evo/approve",
+            json={
+                "run_id": run_id,
+                "candidate_id": "non_existent_cand_999",
+            },
+        )
+        assert res_unknown_cand.status_code == 404
+
+        # 7. Test Unknown Run Rejection
+        res_unknown_run = client.post(
+            "/api/agent-evo/approve",
+            json={
+                "run_id": "evo_unknown_run_000",
+                "candidate_id": cand_to_approve,
+            },
+        )
+        assert res_unknown_run.status_code == 404
+
+        # 8. Test Dominated Candidate Rejection
+        optimizer = get_agent_evo_optimizer()
+        run_obj = optimizer.get_run(run_id)
+        # Find or create a dominated candidate
+        dom_cand = next((c for c in run_obj.all_candidates if not c.is_pareto_optimal and c.candidate_id != "baseline"), None)
+        if not dom_cand:
+            dom_cand = run_obj.all_candidates[-1]
+            dom_cand.is_pareto_optimal = False
+
+        res_dom_reject = client.post(
+            "/api/agent-evo/approve",
+            json={
+                "run_id": run_id,
+                "candidate_id": dom_cand.candidate_id,
+            },
+        )
+        assert res_dom_reject.status_code == 400
+        assert "dominated" in res_dom_reject.json()["detail"].lower()

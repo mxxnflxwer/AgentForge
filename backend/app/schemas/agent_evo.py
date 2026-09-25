@@ -28,6 +28,14 @@ class OptimizationRunRequest(BaseModel):
         le=10,
         description="Number of candidate workflow mutations to generate and evaluate.",
     )
+    seed: Optional[int] = Field(
+        None,
+        description="Optional seed for deterministic candidate generation.",
+    )
+    allowed_mutation_types: Optional[List[str]] = Field(
+        None,
+        description="Optional subset of mutation categories to explore: prompt, retrieval, model, operator, mixed.",
+    )
 
 
 class OptimizationRunListResponse(BaseModel):

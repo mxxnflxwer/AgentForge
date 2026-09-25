@@ -157,6 +157,8 @@ class AgentEvoOptimizer:
         document_id: Optional[str] = None,
         expected_answer: Optional[str] = None,
         candidate_count: int = 5,
+        seed: Optional[int] = None,
+        allowed_mutation_types: Optional[List[str]] = None,
         db: Optional[Session] = None,
     ) -> OptimizationReport:
         """
@@ -180,8 +182,13 @@ class AgentEvoOptimizer:
         )
         archive.add_candidate(baseline_evaluated)
 
-        # Step 2: Generate Mutated Candidate Workflows
-        candidates_to_eval = generate_candidates(baseline=baseline_wf, count=candidate_count)
+        # Step 2: Generate Diverse Mutated Candidate Workflows
+        candidates_to_eval = generate_candidates(
+            baseline=baseline_wf,
+            count=candidate_count,
+            seed=seed,
+            allowed_types=allowed_mutation_types,
+        )
         logger.info(f"Generated {len(candidates_to_eval)} mutated candidate workflows.")
 
         # Step 3: Evaluate Candidates Sequentially / Concurrently

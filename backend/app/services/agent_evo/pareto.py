@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.services.agent_evo.objective import CandidateMetrics
-from app.services.agent_evo.workflow import AgentWorkflow
+from app.services.agent_evo.workflow import AgentWorkflow, MutationMetadata
 
 logger = logging.getLogger("agentforge.services.agent_evo.pareto")
 
@@ -16,6 +16,7 @@ class EvaluatedCandidate(BaseModel):
     is_pareto_optimal: bool = Field(False, description="Whether candidate is on the Pareto frontier")
     dominated_by: List[str] = Field(default_factory=list, description="IDs of candidates that dominate this candidate")
     dominates_candidates: List[str] = Field(default_factory=list, description="IDs of candidates this candidate dominates")
+    mutation_metadata: Optional[MutationMetadata] = Field(None, description="Candidate mutation metadata")
 
 
 def dominates(a: CandidateMetrics, b: CandidateMetrics) -> bool:

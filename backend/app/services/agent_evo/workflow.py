@@ -1,6 +1,27 @@
+from enum import Enum
 import copy
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
+
+
+class MutationType(str, Enum):
+    """Supported mutation categories for AgentEvo workflow exploration."""
+    PROMPT = "prompt"
+    RETRIEVAL = "retrieval"
+    MODEL = "model"
+    OPERATOR = "operator"
+    MIXED = "mixed"
+
+
+class MutationMetadata(BaseModel):
+    """
+    Structured metadata explaining why and how a candidate was generated.
+    Provides complete traceability for evolutionary search research.
+    """
+    mutation_type: MutationType = Field(..., description="Category of mutation applied")
+    parent_workflow_id: str = Field("baseline", description="ID of the parent workflow")
+    mutation_description: str = Field(..., description="Human-readable explanation of the mutation")
+    generation_metadata: Dict[str, Any] = Field(default_factory=dict, description="Detailed mutation parameters and generation context")
 
 
 class RetrievalConfig(BaseModel):
@@ -44,13 +65,22 @@ class AgentWorkflow(BaseModel):
     model: ModelConfig = Field(default_factory=ModelConfig)
     prompt: PromptConfig = Field(default_factory=PromptConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    mutation_metadata: Optional[MutationMetadata] = Field(None, description="Exploration mutation metadata if generated")
 
-    def clone(self, new_id: str, new_name: str, new_description: str = "") -> "AgentWorkflow":
-        """Create a deep copy of this workflow with a new ID and description."""
+    def clone(
+        self,
+        new_id: str,
+        new_name: str,
+        new_description: str = "",
+        mutation_metadata: Optional[MutationMetadata] = None,
+    ) -> "AgentWorkflow":
+        """Create an isolated deep copy of this workflow with a new ID, description, and mutation metadata."""
         dumped = copy.deepcopy(self.model_dump())
         dumped["workflow_id"] = new_id
         dumped["name"] = new_name
         dumped["description"] = new_description
+        if mutation_metadata is not None:
+            dumped["mutation_metadata"] = mutation_metadata.model_dump()
         return AgentWorkflow(**dumped)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -92,4 +122,5 @@ def get_baseline_workflow() -> AgentWorkflow:
             timeout_seconds=30.0,
             context_compression=False,
         ),
+        mutation_metadata=None,
     )

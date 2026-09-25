@@ -86,6 +86,8 @@ async def optimize_workflow(
         document_id=request.document_id,
         expected_answer=request.expected_answer,
         candidate_count=request.candidate_count,
+        seed=request.seed,
+        allowed_mutation_types=request.allowed_mutation_types,
         db=db,
     )
     return report

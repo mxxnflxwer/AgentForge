@@ -11,6 +11,8 @@ from app.services.agent_evo import (
     EvaluatedCandidate,
     EvaluatorAdapter,
     ModelConfig,
+    MutationMetadata,
+    MutationType,
     OptimizationReport,
     ParetoArchive,
     PromptConfig,
@@ -542,3 +544,346 @@ def test_agent_evo_api_endpoints_and_governance(client: TestClient, evo_test_use
         )
         assert res_dom_reject.status_code == 400
         assert "dominated" in res_dom_reject.json()["detail"].lower()
+
+
+# --- 9. AgentEvo Exploration Phase Tests ---
+
+def test_exploration_prompt_mutation_produces_valid_configuration():
+    baseline = get_baseline_workflow()
+    candidates = generate_candidates(
+        baseline=baseline,
+        count=3,
+        allowed_types=[MutationType.PROMPT],
+        seed=42,
+    )
+    assert len(candidates) == 3
+    for cand in candidates:
+        assert cand.mutation_metadata is not None
+        assert cand.mutation_metadata.mutation_type == MutationType.PROMPT
+        assert cand.mutation_metadata.parent_workflow_id == "baseline"
+        assert len(cand.mutation_metadata.mutation_description) > 0
+        # Check that configuration is different from baseline prompt
+        is_diff = (
+            cand.prompt.template_name != baseline.prompt.template_name
+            or cand.prompt.custom_instructions != baseline.prompt.custom_instructions
+        )
+        assert is_diff, f"Candidate '{cand.workflow_id}' did not mutate prompt"
+        val = validate_workflow(cand)
+        assert val.is_valid is True, f"Validation failed: {val.errors}"
+
+
+def test_exploration_retrieval_mutation_produces_valid_configuration():
+    baseline = get_baseline_workflow()
+    candidates = generate_candidates(
+        baseline=baseline,
+        count=3,
+        allowed_types=[MutationType.RETRIEVAL],
+        seed=42,
+    )
+    assert len(candidates) == 3
+    for cand in candidates:
+        assert cand.mutation_metadata is not None
+        assert cand.mutation_metadata.mutation_type == MutationType.RETRIEVAL
+        assert cand.mutation_metadata.parent_workflow_id == "baseline"
+        is_diff = (
+            cand.retrieval.top_k != baseline.retrieval.top_k
+            or cand.retrieval.similarity_threshold != baseline.retrieval.similarity_threshold
+            or cand.retrieval.chunk_size != baseline.retrieval.chunk_size
+        )
+        assert is_diff, f"Candidate '{cand.workflow_id}' did not mutate retrieval"
+        val = validate_workflow(cand)
+        assert val.is_valid is True, f"Validation failed: {val.errors}"
+
+
+def test_exploration_model_mutation_produces_valid_configuration():
+    baseline = get_baseline_workflow()
+    candidates = generate_candidates(
+        baseline=baseline,
+        count=3,
+        allowed_types=[MutationType.MODEL],
+        seed=42,
+    )
+    assert len(candidates) == 3
+    for cand in candidates:
+        assert cand.mutation_metadata is not None
+        assert cand.mutation_metadata.mutation_type == MutationType.MODEL
+        assert cand.mutation_metadata.parent_workflow_id == "baseline"
+        is_diff = (
+            cand.model.model_id != baseline.model.model_id
+            or cand.model.provider != baseline.model.provider
+            or cand.model.temperature != baseline.model.temperature
+            or cand.model.max_tokens != baseline.model.max_tokens
+        )
+        assert is_diff, f"Candidate '{cand.workflow_id}' did not mutate model"
+        val = validate_workflow(cand)
+        assert val.is_valid is True, f"Validation failed: {val.errors}"
+
+
+def test_exploration_operator_mutation_produces_valid_executable_workflow():
+    baseline = get_baseline_workflow()
+    candidates = generate_candidates(
+        baseline=baseline,
+        count=2,
+        allowed_types=[MutationType.OPERATOR],
+        seed=42,
+    )
+    assert len(candidates) == 2
+    for cand in candidates:
+        assert cand.mutation_metadata is not None
+        assert cand.mutation_metadata.mutation_type == MutationType.OPERATOR
+        assert cand.mutation_metadata.parent_workflow_id == "baseline"
+        # Operator mutation should toggle execution operators like context compression
+        assert cand.execution.context_compression is True
+        val = validate_workflow(cand)
+        assert val.is_valid is True, f"Validation failed: {val.errors}"
+
+
+def test_exploration_mixed_mutation_produces_valid_configuration():
+    baseline = get_baseline_workflow()
+    candidates = generate_candidates(
+        baseline=baseline,
+        count=2,
+        allowed_types=[MutationType.MIXED],
+        seed=42,
+    )
+    assert len(candidates) == 2
+    for cand in candidates:
+        assert cand.mutation_metadata is not None
+        assert cand.mutation_metadata.mutation_type == MutationType.MIXED
+        assert cand.mutation_metadata.parent_workflow_id == "baseline"
+        assert "categories_mutated" in cand.mutation_metadata.generation_metadata
+        val = validate_workflow(cand)
+        assert val.is_valid is True, f"Validation failed: {val.errors}"
+
+
+def test_exploration_parent_workflow_is_unchanged_after_candidate_generation():
+    baseline = get_baseline_workflow()
+    base_dict_before = baseline.to_dict()
+
+    # Generate 5 diverse candidates
+    candidates = generate_candidates(baseline=baseline, count=5, seed=123)
+
+    # Mutate candidates further to stress-test independence
+    for cand in candidates:
+        cand.retrieval.top_k = 19
+        cand.model.model_id = "openai/gpt-oss-120b"
+        cand.prompt.template_name = "detailed_clinical"
+
+    base_dict_after = baseline.to_dict()
+    assert base_dict_before == base_dict_after, "Baseline was mutated in place!"
+    assert baseline.workflow_id == "baseline"
+    assert baseline.retrieval.top_k == 5
+    assert baseline.model.model_id == "gemini-3.5-flash-lite"
+
+
+def test_exploration_candidates_are_configuration_isolated():
+    baseline = get_baseline_workflow()
+    candidates = generate_candidates(baseline=baseline, count=5, seed=99)
+
+    c1, c2, c3 = candidates[0], candidates[1], candidates[2]
+    c1.retrieval.top_k = 1
+    c1.prompt.template_name = "concise_medical"
+
+    assert c2.retrieval.top_k != 1
+    assert c3.retrieval.top_k != 1
+    assert c1.workflow_id != c2.workflow_id != c3.workflow_id
+
+
+def test_exploration_candidate_ids_are_unique():
+    baseline = get_baseline_workflow()
+    candidates = generate_candidates(baseline=baseline, count=5, seed=55)
+    ids = [c.workflow_id for c in candidates]
+    assert len(ids) == len(set(ids)) == 5
+
+
+def test_exploration_mutation_metadata_recorded():
+    baseline = get_baseline_workflow()
+    candidates = generate_candidates(baseline=baseline, count=5, seed=777)
+    types_found = set()
+
+    for cand in candidates:
+        assert cand.mutation_metadata is not None
+        assert isinstance(cand.mutation_metadata.mutation_type, MutationType)
+        assert cand.mutation_metadata.parent_workflow_id == "baseline"
+        assert len(cand.mutation_metadata.mutation_description) > 5
+        types_found.add(cand.mutation_metadata.mutation_type)
+
+    # 5-candidate run should contain diversity across multiple categories
+    assert len(types_found) >= 4, f"Expected diversity across >=4 mutation types, got {types_found}"
+
+
+def test_exploration_invalid_mutations_rejected():
+    baseline = get_baseline_workflow()
+    invalid_wf = baseline.clone("cand_invalid", "Invalid Mutant")
+    invalid_wf.retrieval.top_k = 99  # Invalid: > 20
+    invalid_wf.retrieval.similarity_threshold = -0.5  # Invalid: < 0.0
+
+    val = validate_workflow(invalid_wf)
+    assert val.is_valid is False
+    assert len(val.errors) >= 2
+
+
+@pytest.mark.asyncio
+async def test_exploration_invalid_mutation_handled_in_evaluation(evo_test_user, db_session):
+    baseline = get_baseline_workflow()
+    invalid_wf = baseline.clone("cand_bad_params", "Bad Params")
+    invalid_wf.retrieval.top_k = 50  # Out of bounds
+
+    cand = await EvaluatorAdapter.evaluate_candidate(
+        workflow=invalid_wf,
+        query="Test query",
+        user_id=evo_test_user.id,
+        db=db_session,
+    )
+    assert cand.metrics.status == "invalid"
+    assert cand.is_pareto_optimal is False
+    assert "Validation failed" in (cand.metrics.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_exploration_provider_failures_preserve_error_and_excluded_from_pareto(evo_test_user, db_session):
+    baseline = get_baseline_workflow()
+    cand_wf = baseline.clone(
+        new_id="cand_failing_provider",
+        new_name="Failing Provider Mutant",
+        mutation_metadata=MutationMetadata(
+            mutation_type=MutationType.MODEL,
+            parent_workflow_id="baseline",
+            mutation_description="Simulates provider 503 error.",
+        ),
+    )
+
+    mock_retrieval = RAGSearchResponse(
+        query="What is the diagnosis?",
+        status="success",
+        total_results=1,
+        results=[
+            RetrievedChunk(
+                chunk_id="c1",
+                document_id="d1",
+                chunk_index=0,
+                content="Clinical assessment context.",
+                similarity_score=0.9,
+                distance=0.1,
+                relevance_score=0.9,
+            )
+        ],
+    )
+
+    mock_adapter = MagicMock()
+    mock_adapter.name = "Gemini 3.5 Flash-Lite"
+    mock_adapter.generate = AsyncMock(side_effect=RuntimeError("503 UNAVAILABLE: Model overloaded"))
+    mock_router = MagicMock()
+    mock_router.get_adapter.return_value = mock_adapter
+
+    with patch("app.services.agent_evo.evaluator_adapter.execute_rag_retrieval", return_value=mock_retrieval), \
+         patch("app.services.agent_evo.evaluator_adapter.get_llm_router", return_value=mock_router):
+
+        evaluated = await EvaluatorAdapter.evaluate_candidate(
+            workflow=cand_wf,
+            query="What is the diagnosis?",
+            user_id=evo_test_user.id,
+            db=db_session,
+        )
+
+        assert evaluated.metrics.status == "model_error"
+        assert evaluated.metrics.error_message is not None
+        assert "503 UNAVAILABLE" in evaluated.metrics.error_message
+
+        # Ensure failed candidate cannot enter Pareto Archive
+        archive = ParetoArchive()
+        archive.add_candidate(evaluated)
+        assert len(archive.pareto_candidates) == 0
+        assert evaluated.is_pareto_optimal is False
+
+
+def test_exploration_deterministic_seed_generation():
+    baseline = get_baseline_workflow()
+    run1 = generate_candidates(baseline=baseline, count=4, seed=12345)
+    run2 = generate_candidates(baseline=baseline, count=4, seed=12345)
+
+    assert len(run1) == len(run2) == 4
+    for c1, c2 in zip(run1, run2):
+        assert c1.workflow_id == c2.workflow_id
+        assert c1.to_dict() == c2.to_dict()
+        assert c1.mutation_metadata.to_dict() == c2.mutation_metadata.to_dict() if hasattr(c1.mutation_metadata, "to_dict") else c1.mutation_metadata.model_dump() == c2.mutation_metadata.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_exploration_full_optimizer_pipeline_with_diverse_candidates(evo_test_user, db_session):
+    optimizer = get_agent_evo_optimizer()
+
+    mock_retrieval = RAGSearchResponse(
+        query="What is the clinical diagnosis?",
+        status="success",
+        total_results=1,
+        results=[
+            RetrievedChunk(
+                chunk_id="c1",
+                document_id="doc_1",
+                chunk_index=0,
+                content="Assessment: Stable angina pectoris with CAD history.",
+                similarity_score=0.92,
+                distance=0.08,
+                relevance_score=0.95,
+            )
+        ],
+    )
+
+    mock_llm_response = LLMResponse(
+        model="Gemini 3.5 Flash-Lite",
+        provider="Google",
+        answer="The patient is diagnosed with stable angina pectoris.",
+        latency_ms=130.0,
+        success=True,
+    )
+
+    mock_adapter = MagicMock()
+    mock_adapter.name = "Gemini 3.5 Flash-Lite"
+    mock_adapter.generate = AsyncMock(return_value=mock_llm_response)
+    mock_router = MagicMock()
+    mock_router.get_adapter.return_value = mock_adapter
+
+    with patch("app.services.agent_evo.evaluator_adapter.execute_rag_retrieval", return_value=mock_retrieval), \
+         patch("app.services.agent_evo.evaluator_adapter.get_llm_router", return_value=mock_router):
+
+        report = await optimizer.run_optimization(
+            query="What is the clinical diagnosis?",
+            user_id=evo_test_user.id,
+            document_id="doc_1",
+            candidate_count=5,
+            seed=42,
+            db=db_session,
+        )
+
+        assert report.run_id.startswith("evo_")
+        assert report.total_candidates_evaluated == 6  # 1 baseline + 5 candidates
+        assert len(report.all_candidates) == 6
+
+        # Verify mutation metadata exists on all generated candidates
+        for cand in report.all_candidates:
+            if cand.candidate_id != "baseline":
+                assert cand.mutation_metadata is not None
+                assert cand.mutation_metadata.mutation_type in [
+                    MutationType.PROMPT,
+                    MutationType.RETRIEVAL,
+                    MutationType.MODEL,
+                    MutationType.OPERATOR,
+                    MutationType.MIXED,
+                ]
+
+        # Verify Pareto frontier exists
+        assert len(report.pareto_frontier) >= 1
+
+        # Verify approval governance on a Pareto candidate
+        pareto_cand = next((c for c in report.pareto_frontier if c.candidate_id != "baseline"), report.all_candidates[1])
+        pareto_cand.is_pareto_optimal = True
+        appr_report, version = optimizer.approve_workflow(
+            run_id=report.run_id,
+            candidate_id=pareto_cand.candidate_id,
+            approved_by=evo_test_user.email,
+            db=db_session,
+        )
+        assert appr_report.approved_workflow_id == pareto_cand.candidate_id
+        assert version.version_id.startswith("wf_v")
+

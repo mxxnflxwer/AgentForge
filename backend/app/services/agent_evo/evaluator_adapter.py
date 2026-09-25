@@ -65,6 +65,28 @@ If the information is missing, state: "The requested information was not found i
     return build_medical_prompt(query=cleaned_query, context=cleaned_context)
 
 
+def apply_context_compression_operator(context_str: str) -> str:
+    """
+    Context compression operator: Removes redundant blank lines and limits excessive chunk noise
+    while preserving clinical entities, numbers, and structured sections.
+    """
+    if not context_str or not context_str.strip():
+        return ""
+    lines = context_str.strip().split("\n")
+    compressed_lines = []
+    seen = set()
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Deduplicate identical consecutive lines
+        if stripped in seen and len(stripped) > 20:
+            continue
+        seen.add(stripped)
+        compressed_lines.append(stripped)
+    return "\n".join(compressed_lines)
+
+
 class EvaluatorAdapter:
     """
     Adapter bridging AgentEvo workflow execution with the Phase 6 Evaluation Engine.
@@ -102,6 +124,7 @@ class EvaluatorAdapter:
                 workflow=workflow,
                 metrics=metrics,
                 is_pareto_optimal=False,
+                mutation_metadata=workflow.mutation_metadata,
             )
 
         # 2. RAG Retrieval Stage with candidate retrieval parameters
@@ -129,6 +152,7 @@ class EvaluatorAdapter:
                 workflow=workflow,
                 metrics=metrics,
                 is_pareto_optimal=False,
+                mutation_metadata=workflow.mutation_metadata,
             )
 
         # Build context string
@@ -141,6 +165,10 @@ class EvaluatorAdapter:
                 for r in retrieval.results
             ]
             context_str = "\n\n".join(parts)
+
+        # Context Compression Operator Application
+        if workflow.execution.context_compression and context_str:
+            context_str = apply_context_compression_operator(context_str)
 
         # 3. LLM Generation Stage
         llm_router = get_llm_router()
@@ -213,4 +241,5 @@ class EvaluatorAdapter:
             workflow=workflow,
             metrics=metrics,
             is_pareto_optimal=False,
+            mutation_metadata=workflow.mutation_metadata,
         )

@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react'
 
+export type MutationType = 'prompt' | 'retrieval' | 'model' | 'operator' | 'mixed'
+
+export interface MutationMetadata {
+  mutation_type: MutationType
+  parent_workflow_id: string
+  mutation_description: string
+  generation_metadata?: Record<string, any>
+}
+
 export interface RetrievalConfig {
   top_k: number
   similarity_threshold: number
@@ -24,6 +33,7 @@ export interface PromptConfig {
 export interface ExecutionConfig {
   timeout_seconds: number
   max_retries: number
+  context_compression?: boolean
 }
 
 export interface AgentWorkflow {
@@ -34,6 +44,7 @@ export interface AgentWorkflow {
   model: ModelConfig
   prompt: PromptConfig
   execution: ExecutionConfig
+  mutation_metadata?: MutationMetadata | null
 }
 
 export interface CandidateMetrics {
@@ -61,6 +72,7 @@ export interface EvaluatedCandidate {
   is_pareto_optimal: boolean
   dominated_by: string[]
   dominates_candidates: string[]
+  mutation_metadata?: MutationMetadata | null
 }
 
 export interface ParetoTradeOff {
@@ -380,6 +392,25 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
     return findings
   }
 
+  // Helper to render exploration mutation badge
+  const renderMutationBadge = (cand: EvaluatedCandidate) => {
+    const meta = cand.mutation_metadata || cand.workflow.mutation_metadata
+    if (!meta) return null
+    const typeMap: Record<string, { label: string; className: string }> = {
+      prompt: { label: 'Prompt', className: 'evo-mut-prompt' },
+      retrieval: { label: 'Retrieval', className: 'evo-mut-retrieval' },
+      model: { label: 'Model', className: 'evo-mut-model' },
+      operator: { label: 'Operator', className: 'evo-mut-operator' },
+      mixed: { label: 'Mixed', className: 'evo-mut-mixed' },
+    }
+    const info = typeMap[meta.mutation_type] || { label: meta.mutation_type, className: 'evo-mut-default' }
+    return (
+      <span className={`evo-mutation-tag ${info.className}`} title={meta.mutation_description}>
+        {info.label}
+      </span>
+    )
+  }
+
   // Pipeline stages definition
   const pipelineStages = [
     { label: 'Baseline', desc: 'Reference workflow' },
@@ -634,6 +665,16 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
         )}
 
         <form onSubmit={handleRunOptimization} className="evo-setup-form">
+          {/* Exploration Mutation Strategies Bar */}
+          <div className="evo-strategy-badges">
+            <span className="evo-strategy-title">Mutation Strategies:</span>
+            <span className="evo-strategy-pill evo-strat-prompt">Prompt</span>
+            <span className="evo-strategy-pill evo-strat-retrieval">Retrieval</span>
+            <span className="evo-strategy-pill evo-strat-model">Model</span>
+            <span className="evo-strategy-pill evo-strat-operator">Logic / Operator</span>
+            <span className="evo-strategy-pill evo-strat-mixed">Mixed</span>
+          </div>
+
           {/* Preset Selector */}
           <div className="evo-form-group">
             <label className="evo-label">Evaluation Preset</label>
@@ -964,6 +1005,19 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                         Threshold: <strong>{activeCandidate.workflow.retrieval.similarity_threshold}</strong>
                       </span>
                     </div>
+
+                    {/* Exploration Mutation Strategy Card */}
+                    {(activeCandidate.mutation_metadata || activeCandidate.workflow.mutation_metadata) && (
+                      <div className="evo-metric-card evo-metric-card-span evo-mutation-card">
+                        <span className="evo-metric-label">Exploration Mutation Strategy</span>
+                        <div className="evo-mutation-card-content">
+                          {renderMutationBadge(activeCandidate)}
+                          <span className="evo-mutation-card-desc">
+                            {(activeCandidate.mutation_metadata || activeCandidate.workflow.mutation_metadata)?.mutation_description}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Baseline Comparison (if not baseline) */}
@@ -1083,8 +1137,18 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                           )}
                         </td>
                         <td>
-                          <strong>{cand.workflow.name}</strong>
-                          <div className="evo-cell-sub">{cand.candidate_id}</div>
+                          <div className="evo-wf-cell-header">
+                            <strong>{cand.workflow.name}</strong>
+                            {renderMutationBadge(cand)}
+                          </div>
+                          <div className="evo-cell-sub">
+                            <code>{cand.candidate_id}</code>
+                            {(cand.mutation_metadata || cand.workflow.mutation_metadata) && (
+                              <span className="evo-mut-desc-sub">
+                                {(cand.mutation_metadata || cand.workflow.mutation_metadata)?.mutation_description}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td>
                           <div className="evo-model-cell">
@@ -1320,6 +1384,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                   <span className={`evo-status-tag ${inspectModalCandidate.candidate_id === 'baseline' ? 'tag-baseline' : inspectModalCandidate.is_pareto_optimal ? 'tag-pareto' : 'tag-dominated'}`}>
                     {inspectModalCandidate.candidate_id === 'baseline' ? 'Baseline' : inspectModalCandidate.is_pareto_optimal ? 'Pareto-Optimal' : 'Dominated'}
                   </span>
+                  {renderMutationBadge(inspectModalCandidate)}
                   {report?.approved_workflow_id === inspectModalCandidate.candidate_id && (
                     <span className="evo-status-tag tag-pareto">✓ Approved</span>
                   )}
@@ -1338,6 +1403,33 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
             </div>
 
             <div className="evo-modal-content">
+              {/* Evolutionary Mutation Details */}
+              {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata) && (
+                <div className="evo-modal-block">
+                  <h4 className="evo-modal-block-title">Evolutionary Exploration Mutation</h4>
+                  <div className="evo-modal-grid">
+                    <div className="evo-modal-field">
+                      <span className="evo-field-key">Mutation Category</span>
+                      <span className="evo-field-value">
+                        {renderMutationBadge(inspectModalCandidate)}
+                      </span>
+                    </div>
+                    <div className="evo-modal-field">
+                      <span className="evo-field-key">Parent Workflow</span>
+                      <span className="evo-field-value">
+                        <code>{(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.parent_workflow_id}</code>
+                      </span>
+                    </div>
+                    <div className="evo-modal-field evo-metric-card-span">
+                      <span className="evo-field-key">Mutation Rationale & Description</span>
+                      <span className="evo-field-value">
+                        {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.mutation_description}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Configuration Section */}
               <div className="evo-modal-block">
                 <h4 className="evo-modal-block-title">Configuration</h4>

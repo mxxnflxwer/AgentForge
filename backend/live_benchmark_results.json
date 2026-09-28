@@ -1,0 +1,2674 @@
+{
+  "benchmark_id": "bench_3481077d1f",
+  "name": "Official Cross-Version Benchmark: Baseline + v1-v8",
+  "description": "Controlled reproducible 3-repetition benchmark under identical Phase 6 evaluation conditions across Baseline and Approved Versions v1 through v8.",
+  "status": "completed",
+  "preset_name": "clinical",
+  "query": "What is the primary clinical diagnosis and assessment for this patient?",
+  "document_id": "1a421a24-1fa3-4c5d-880e-9a860baefab4",
+  "document_ids": [
+    "1a421a24-1fa3-4c5d-880e-9a860baefab4",
+    "d48cb2ca-c6aa-4dc1-b641-80368dd3f577"
+  ],
+  "expected_answer": null,
+  "repetitions": 3,
+  "selected_versions": [
+    "baseline",
+    "wf_v1_60e5af",
+    "wf_v2_dfce47",
+    "wf_v3_4294dd",
+    "wf_v4_b0844c",
+    "wf_v5_0123b3",
+    "wf_v6_a8b827",
+    "wf_v7_adfa07",
+    "wf_v8_2b0b35"
+  ],
+  "results": [
+    {
+      "version_id": "baseline",
+      "version_number": 0,
+      "workflow_name": "Production Baseline",
+      "parent_workflow_id": null,
+      "source_candidate_id": null,
+      "source_run_id": null,
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 9249.78,
+      "execution_time_ms": 24235.39,
+      "retrieval": {
+        "top_k": 5,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "default_medical",
+      "prompt_strategy": "default_medical",
+      "context_compression": false,
+      "operator_config": {
+        "context_compression": false,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.17,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: Server disconnected without sending a response.",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 1896.47,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "baseline",
+        "name": "Production Baseline",
+        "description": "Standard baseline configuration: Gemini 3.5 Flash-Lite, top_k=5, threshold=0.35, default prompt.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 5,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "default_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": false
+        },
+        "mutation_metadata": null
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 5112.87,
+          "execution_time_ms": 34225.15
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 10462.36,
+          "execution_time_ms": 23443.77
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 12174.1,
+          "execution_time_ms": 15037.24
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": 0.0,
+        "latency_change_pct": 0.0,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "baseline",
+      "workflow": "Production Baseline",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 9249.78,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 3007.55
+      }
+    },
+    {
+      "version_id": "wf_v1_60e5af",
+      "version_number": 1,
+      "workflow_name": "Concise Prompt Optimization",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_concise_prompt",
+      "source_run_id": "evo_b256a60d48",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 10537.67,
+      "execution_time_ms": 15891.5,
+      "retrieval": {
+        "top_k": 4,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=4, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "concise_medical",
+      "prompt_strategy": "concise_medical",
+      "context_compression": false,
+      "operator_config": {
+        "context_compression": false,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.01,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: ",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 357.37,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "wf_v1_60e5af",
+        "name": "Concise Prompt Optimization",
+        "description": "Uses concise medical prompt template and top_k=4 to lower input/output token cost while maintaining grounding.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 4,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "concise_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": false
+        },
+        "mutation_metadata": null
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 8295.22,
+          "execution_time_ms": 21596.09
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 12024.14,
+          "execution_time_ms": 14250.89
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 11293.65,
+          "execution_time_ms": 11827.53
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": -13.92,
+        "latency_change_pct": 13.92,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v1_60e5af",
+      "workflow": "Concise Prompt Optimization",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 10537.67,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=4, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 1613.45
+      }
+    },
+    {
+      "version_id": "wf_v2_dfce47",
+      "version_number": 2,
+      "workflow_name": "High-Precision Retrieval",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_high_precision",
+      "source_run_id": "evo_5d755c7217",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 13192.47,
+      "execution_time_ms": 14615.16,
+      "retrieval": {
+        "top_k": 3,
+        "similarity_threshold": 0.45,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=3, sim_thresh=0.45, chunk_size=1000, rerank=True",
+      "prompt_template": "default_medical",
+      "prompt_strategy": "default_medical",
+      "context_compression": false,
+      "operator_config": {
+        "context_compression": false,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.01,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: ",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 1607.43,
+        "chunks_retrieved": 1
+      },
+      "configuration": {
+        "workflow_id": "wf_v2_dfce47",
+        "name": "High-Precision Retrieval",
+        "description": "Restricts retrieval to top_k=3 with stricter relevance threshold 0.45 to reduce noise and input tokens.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 3,
+          "similarity_threshold": 0.45,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "default_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": false
+        },
+        "mutation_metadata": null
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 12200.26,
+          "execution_time_ms": 13396.65
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 12819.6,
+          "execution_time_ms": 14267.21
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 14557.55,
+          "execution_time_ms": 16181.61
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": -42.62,
+        "latency_change_pct": 42.62,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v2_dfce47",
+      "workflow": "High-Precision Retrieval",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 13192.47,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=3, sim_thresh=0.45, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 997.82
+      }
+    },
+    {
+      "version_id": "wf_v3_4294dd",
+      "version_number": 3,
+      "workflow_name": "High-Precision Retrieval",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_retrieval_precision_362",
+      "source_run_id": "evo_058df54dc5",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 7264.36,
+      "execution_time_ms": 11837.28,
+      "retrieval": {
+        "top_k": 3,
+        "similarity_threshold": 0.45,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=3, sim_thresh=0.45, chunk_size=1000, rerank=True",
+      "prompt_template": "default_medical",
+      "prompt_strategy": "default_medical",
+      "context_compression": false,
+      "operator_config": {
+        "context_compression": false,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.0,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API returned status 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 653.49,
+        "chunks_retrieved": 1
+      },
+      "configuration": {
+        "workflow_id": "wf_v3_4294dd",
+        "name": "High-Precision Retrieval",
+        "description": "Restricted retrieval to top_k=3 with stricter relevance threshold 0.45 to filter low-confidence chunks.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 3,
+          "similarity_threshold": 0.45,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "default_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": false
+        },
+        "mutation_metadata": {
+          "mutation_type": "retrieval",
+          "parent_workflow_id": "baseline",
+          "mutation_description": "Restricted retrieval to top_k=3 with stricter relevance threshold 0.45 to filter low-confidence chunks.",
+          "generation_metadata": {
+            "top_k": 3,
+            "similarity_threshold": 0.45
+          }
+        }
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 12616.44,
+          "execution_time_ms": 14670.76
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 4883.19,
+          "execution_time_ms": 9758.98
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 4293.46,
+          "execution_time_ms": 11082.09
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": 21.46,
+        "latency_change_pct": -21.46,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v3_4294dd",
+      "workflow": "High-Precision Retrieval",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 7264.36,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=3, sim_thresh=0.45, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 3792.14
+      }
+    },
+    {
+      "version_id": "wf_v4_b0844c",
+      "version_number": 4,
+      "workflow_name": "Refined: Prompt Simplification",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_refine_prompt_125",
+      "source_run_id": "evo_a5bdab39a1",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 8757.9,
+      "execution_time_ms": 12175.14,
+      "retrieval": {
+        "top_k": 5,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "concise_medical",
+      "prompt_strategy": "concise_medical",
+      "context_compression": false,
+      "operator_config": {
+        "context_compression": false,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.01,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: ",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 1601.89,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "wf_v4_b0844c",
+        "name": "Refined: Prompt Simplification",
+        "description": "Replaced verbose medical prompt with concise grounded prompt to reduce input token cost while preserving grounding and safety requirements.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 5,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "concise_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": false
+        },
+        "mutation_metadata": {
+          "mutation_type": "refinement",
+          "parent_workflow_id": "baseline",
+          "mutation_description": "Replaced verbose medical prompt with concise grounded prompt to reduce input token cost while preserving grounding and safety requirements.",
+          "generation_metadata": {
+            "refinement_operation": "prompt_simplification",
+            "rationale": "Replaced verbose medical prompt with concise grounded prompt to reduce input token cost while preserving grounding and safety requirements.",
+            "fields_changed": [
+              "prompt.template_name",
+              "prompt.custom_instructions"
+            ],
+            "before_configuration": {
+              "template_name": "default_medical",
+              "custom_instructions": null
+            },
+            "after_configuration": {
+              "template_name": "concise_medical",
+              "custom_instructions": null
+            }
+          }
+        }
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 716.79,
+          "execution_time_ms": 8432.65
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 13800.71,
+          "execution_time_ms": 14702.92
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 11756.21,
+          "execution_time_ms": 13389.85
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": 5.32,
+        "latency_change_pct": -5.32,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v4_b0844c",
+      "workflow": "Refined: Prompt Simplification",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 8757.9,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 5746.86
+      }
+    },
+    {
+      "version_id": "wf_v5_0123b3",
+      "version_number": 5,
+      "workflow_name": "Refined: Context Compression",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_refine_compress_214",
+      "source_run_id": "evo_7016853da6",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 15174.39,
+      "execution_time_ms": 43861.58,
+      "retrieval": {
+        "top_k": 5,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "default_medical",
+      "prompt_strategy": "default_medical",
+      "context_compression": true,
+      "operator_config": {
+        "context_compression": true,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.03,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API returned status 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 1876.86,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "wf_v5_0123b3",
+        "name": "Refined: Context Compression",
+        "description": "Enabled context compression to reduce redundant retrieved context before LLM generation.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 5,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "default_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": true
+        },
+        "mutation_metadata": {
+          "mutation_type": "refinement",
+          "parent_workflow_id": "baseline",
+          "mutation_description": "Enabled context compression to reduce redundant retrieved context before LLM generation.",
+          "generation_metadata": {
+            "refinement_operation": "context_compression",
+            "rationale": "Enabled context compression to reduce redundant retrieved context before LLM generation.",
+            "fields_changed": [
+              "execution.context_compression"
+            ],
+            "before_configuration": {
+              "context_compression": false
+            },
+            "after_configuration": {
+              "context_compression": true
+            }
+          }
+        }
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 14054.0,
+          "execution_time_ms": 16436.75
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 17599.25,
+          "execution_time_ms": 55038.31
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 13869.93,
+          "execution_time_ms": 60109.67
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": -64.05,
+        "latency_change_pct": 64.05,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v5_0123b3",
+      "workflow": "Refined: Context Compression",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 15174.39,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 1716.28
+      }
+    },
+    {
+      "version_id": "wf_v6_a8b827",
+      "version_number": 6,
+      "workflow_name": "Cost-Optimized Composite",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_mixed_cost_438",
+      "source_run_id": "evo_52fd87a58c",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 16080.09,
+      "execution_time_ms": 20278.72,
+      "retrieval": {
+        "top_k": 3,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=3, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "concise_medical",
+      "prompt_strategy": "concise_medical",
+      "context_compression": true,
+      "operator_config": {
+        "context_compression": true,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.01,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: Server disconnected without sending a response.",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 2902.14,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "wf_v6_a8b827",
+        "name": "Cost-Optimized Composite",
+        "description": "Composite mutation: concise medical prompt + top_k=3 + context compression to maximize query efficiency.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 3,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "concise_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": true
+        },
+        "mutation_metadata": {
+          "mutation_type": "mixed",
+          "parent_workflow_id": "baseline",
+          "mutation_description": "Composite mutation: concise medical prompt + top_k=3 + context compression to maximize query efficiency.",
+          "generation_metadata": {
+            "categories_mutated": [
+              "prompt",
+              "retrieval",
+              "operator"
+            ],
+            "template_name": "concise_medical",
+            "top_k": 3,
+            "context_compression": true
+          }
+        }
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 18637.42,
+          "execution_time_ms": 23918.9
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 14773.59,
+          "execution_time_ms": 19145.31
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 14829.27,
+          "execution_time_ms": 17771.96
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": -73.84,
+        "latency_change_pct": 73.84,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v6_a8b827",
+      "workflow": "Cost-Optimized Composite",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 16080.09,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=3, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 1808.45
+      }
+    },
+    {
+      "version_id": "wf_v7_adfa07",
+      "version_number": 7,
+      "workflow_name": "Deterministic Gemini 3.5 Flash-Lite",
+      "parent_workflow_id": "wf_v6_a8b827",
+      "source_candidate_id": "cand_model_deterministic_652",
+      "source_run_id": "evo_07722d839f",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 12944.05,
+      "execution_time_ms": 33558.25,
+      "retrieval": {
+        "top_k": 3,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=3, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "concise_medical",
+      "prompt_strategy": "concise_medical",
+      "context_compression": true,
+      "operator_config": {
+        "context_compression": true,
+        "temperature": 0.0,
+        "max_tokens": 512
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.23,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: ",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 3806.51,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "wf_v7_adfa07",
+        "name": "Deterministic Gemini 3.5 Flash-Lite",
+        "description": "Adjusted Gemini 3.5 Flash-Lite to 0.0 temperature and 512 max tokens for deterministic clinical answers.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 3,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.0,
+          "max_tokens": 512
+        },
+        "prompt": {
+          "template_name": "concise_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": true
+        },
+        "mutation_metadata": {
+          "mutation_type": "model",
+          "parent_workflow_id": "wf_v6_a8b827",
+          "mutation_description": "Adjusted Gemini 3.5 Flash-Lite to 0.0 temperature and 512 max tokens for deterministic clinical answers.",
+          "generation_metadata": {
+            "provider": "Google",
+            "model_id": "gemini-3.5-flash-lite",
+            "temperature": 0.0,
+            "max_tokens": 512
+          }
+        }
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 14922.95,
+          "execution_time_ms": 61814.59
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 6145.04,
+          "execution_time_ms": 16709.66
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 17764.15,
+          "execution_time_ms": 22150.51
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": -39.94,
+        "latency_change_pct": 39.94,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v7_adfa07",
+      "workflow": "Deterministic Gemini 3.5 Flash-Lite",
+      "parent_workflow": "wf_v6_a8b827",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 12944.05,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=3, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 4945.57
+      }
+    },
+    {
+      "version_id": "wf_v8_2b0b35",
+      "version_number": 8,
+      "workflow_name": "Context Compression Operator",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_operator_compress_124",
+      "source_run_id": "evo_6a16ddb414",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 20556.75,
+      "execution_time_ms": 34367.28,
+      "retrieval": {
+        "top_k": 6,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=6, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "default_medical",
+      "prompt_strategy": "default_medical",
+      "context_compression": true,
+      "operator_config": {
+        "context_compression": true,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.0,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: Server disconnected without sending a response.",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 1080.68,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "wf_v8_2b0b35",
+        "name": "Context Compression Operator",
+        "description": "Activated context compression operator to filter redundant retrieved chunk sentences before prompt injection.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 6,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "default_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": true
+        },
+        "mutation_metadata": {
+          "mutation_type": "operator",
+          "parent_workflow_id": "baseline",
+          "mutation_description": "Activated context compression operator to filter redundant retrieved chunk sentences before prompt injection.",
+          "generation_metadata": {
+            "operator": "context_compression",
+            "context_compression_enabled": true,
+            "top_k": 6
+          }
+        }
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 32126.99,
+          "execution_time_ms": 55215.19
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 16202.22,
+          "execution_time_ms": 33432.33
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 13341.03,
+          "execution_time_ms": 14454.33
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": -122.24,
+        "latency_change_pct": 122.24,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v8_2b0b35",
+      "workflow": "Context Compression Operator",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 20556.75,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=6, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 8264.36
+      }
+    }
+  ],
+  "pareto_frontier": [
+    {
+      "version_id": "baseline",
+      "version_number": 0,
+      "workflow_name": "Production Baseline",
+      "parent_workflow_id": null,
+      "source_candidate_id": null,
+      "source_run_id": null,
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 9249.78,
+      "execution_time_ms": 24235.39,
+      "retrieval": {
+        "top_k": 5,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "default_medical",
+      "prompt_strategy": "default_medical",
+      "context_compression": false,
+      "operator_config": {
+        "context_compression": false,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.17,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: Server disconnected without sending a response.",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 1896.47,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "baseline",
+        "name": "Production Baseline",
+        "description": "Standard baseline configuration: Gemini 3.5 Flash-Lite, top_k=5, threshold=0.35, default prompt.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 5,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "default_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": false
+        },
+        "mutation_metadata": null
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 5112.87,
+          "execution_time_ms": 34225.15
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 10462.36,
+          "execution_time_ms": 23443.77
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 12174.1,
+          "execution_time_ms": 15037.24
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": 0.0,
+        "latency_change_pct": 0.0,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "baseline",
+      "workflow": "Production Baseline",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 9249.78,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 3007.55
+      }
+    },
+    {
+      "version_id": "wf_v1_60e5af",
+      "version_number": 1,
+      "workflow_name": "Concise Prompt Optimization",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_concise_prompt",
+      "source_run_id": "evo_b256a60d48",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 10537.67,
+      "execution_time_ms": 15891.5,
+      "retrieval": {
+        "top_k": 4,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=4, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "concise_medical",
+      "prompt_strategy": "concise_medical",
+      "context_compression": false,
+      "operator_config": {
+        "context_compression": false,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.01,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: ",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 357.37,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "wf_v1_60e5af",
+        "name": "Concise Prompt Optimization",
+        "description": "Uses concise medical prompt template and top_k=4 to lower input/output token cost while maintaining grounding.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 4,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "concise_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": false
+        },
+        "mutation_metadata": null
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 8295.22,
+          "execution_time_ms": 21596.09
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 12024.14,
+          "execution_time_ms": 14250.89
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 11293.65,
+          "execution_time_ms": 11827.53
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": -13.92,
+        "latency_change_pct": 13.92,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v1_60e5af",
+      "workflow": "Concise Prompt Optimization",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 10537.67,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=4, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 1613.45
+      }
+    },
+    {
+      "version_id": "wf_v2_dfce47",
+      "version_number": 2,
+      "workflow_name": "High-Precision Retrieval",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_high_precision",
+      "source_run_id": "evo_5d755c7217",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 13192.47,
+      "execution_time_ms": 14615.16,
+      "retrieval": {
+        "top_k": 3,
+        "similarity_threshold": 0.45,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=3, sim_thresh=0.45, chunk_size=1000, rerank=True",
+      "prompt_template": "default_medical",
+      "prompt_strategy": "default_medical",
+      "context_compression": false,
+      "operator_config": {
+        "context_compression": false,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.01,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: ",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 1607.43,
+        "chunks_retrieved": 1
+      },
+      "configuration": {
+        "workflow_id": "wf_v2_dfce47",
+        "name": "High-Precision Retrieval",
+        "description": "Restricts retrieval to top_k=3 with stricter relevance threshold 0.45 to reduce noise and input tokens.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 3,
+          "similarity_threshold": 0.45,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "default_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": false
+        },
+        "mutation_metadata": null
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 12200.26,
+          "execution_time_ms": 13396.65
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 12819.6,
+          "execution_time_ms": 14267.21
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 14557.55,
+          "execution_time_ms": 16181.61
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": -42.62,
+        "latency_change_pct": 42.62,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v2_dfce47",
+      "workflow": "High-Precision Retrieval",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 13192.47,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=3, sim_thresh=0.45, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 997.82
+      }
+    },
+    {
+      "version_id": "wf_v3_4294dd",
+      "version_number": 3,
+      "workflow_name": "High-Precision Retrieval",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_retrieval_precision_362",
+      "source_run_id": "evo_058df54dc5",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 7264.36,
+      "execution_time_ms": 11837.28,
+      "retrieval": {
+        "top_k": 3,
+        "similarity_threshold": 0.45,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=3, sim_thresh=0.45, chunk_size=1000, rerank=True",
+      "prompt_template": "default_medical",
+      "prompt_strategy": "default_medical",
+      "context_compression": false,
+      "operator_config": {
+        "context_compression": false,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.0,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API returned status 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 653.49,
+        "chunks_retrieved": 1
+      },
+      "configuration": {
+        "workflow_id": "wf_v3_4294dd",
+        "name": "High-Precision Retrieval",
+        "description": "Restricted retrieval to top_k=3 with stricter relevance threshold 0.45 to filter low-confidence chunks.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 3,
+          "similarity_threshold": 0.45,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "default_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": false
+        },
+        "mutation_metadata": {
+          "mutation_type": "retrieval",
+          "parent_workflow_id": "baseline",
+          "mutation_description": "Restricted retrieval to top_k=3 with stricter relevance threshold 0.45 to filter low-confidence chunks.",
+          "generation_metadata": {
+            "top_k": 3,
+            "similarity_threshold": 0.45
+          }
+        }
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 12616.44,
+          "execution_time_ms": 14670.76
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 4883.19,
+          "execution_time_ms": 9758.98
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 4293.46,
+          "execution_time_ms": 11082.09
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": 21.46,
+        "latency_change_pct": -21.46,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v3_4294dd",
+      "workflow": "High-Precision Retrieval",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 7264.36,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=3, sim_thresh=0.45, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 3792.14
+      }
+    },
+    {
+      "version_id": "wf_v4_b0844c",
+      "version_number": 4,
+      "workflow_name": "Refined: Prompt Simplification",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_refine_prompt_125",
+      "source_run_id": "evo_a5bdab39a1",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 8757.9,
+      "execution_time_ms": 12175.14,
+      "retrieval": {
+        "top_k": 5,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "concise_medical",
+      "prompt_strategy": "concise_medical",
+      "context_compression": false,
+      "operator_config": {
+        "context_compression": false,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.01,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: ",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 1601.89,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "wf_v4_b0844c",
+        "name": "Refined: Prompt Simplification",
+        "description": "Replaced verbose medical prompt with concise grounded prompt to reduce input token cost while preserving grounding and safety requirements.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 5,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "concise_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": false
+        },
+        "mutation_metadata": {
+          "mutation_type": "refinement",
+          "parent_workflow_id": "baseline",
+          "mutation_description": "Replaced verbose medical prompt with concise grounded prompt to reduce input token cost while preserving grounding and safety requirements.",
+          "generation_metadata": {
+            "refinement_operation": "prompt_simplification",
+            "rationale": "Replaced verbose medical prompt with concise grounded prompt to reduce input token cost while preserving grounding and safety requirements.",
+            "fields_changed": [
+              "prompt.template_name",
+              "prompt.custom_instructions"
+            ],
+            "before_configuration": {
+              "template_name": "default_medical",
+              "custom_instructions": null
+            },
+            "after_configuration": {
+              "template_name": "concise_medical",
+              "custom_instructions": null
+            }
+          }
+        }
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 716.79,
+          "execution_time_ms": 8432.65
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 13800.71,
+          "execution_time_ms": 14702.92
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 11756.21,
+          "execution_time_ms": 13389.85
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": 5.32,
+        "latency_change_pct": -5.32,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v4_b0844c",
+      "workflow": "Refined: Prompt Simplification",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 8757.9,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 5746.86
+      }
+    },
+    {
+      "version_id": "wf_v5_0123b3",
+      "version_number": 5,
+      "workflow_name": "Refined: Context Compression",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_refine_compress_214",
+      "source_run_id": "evo_7016853da6",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 15174.39,
+      "execution_time_ms": 43861.58,
+      "retrieval": {
+        "top_k": 5,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "default_medical",
+      "prompt_strategy": "default_medical",
+      "context_compression": true,
+      "operator_config": {
+        "context_compression": true,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.03,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API returned status 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 1876.86,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "wf_v5_0123b3",
+        "name": "Refined: Context Compression",
+        "description": "Enabled context compression to reduce redundant retrieved context before LLM generation.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 5,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "default_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": true
+        },
+        "mutation_metadata": {
+          "mutation_type": "refinement",
+          "parent_workflow_id": "baseline",
+          "mutation_description": "Enabled context compression to reduce redundant retrieved context before LLM generation.",
+          "generation_metadata": {
+            "refinement_operation": "context_compression",
+            "rationale": "Enabled context compression to reduce redundant retrieved context before LLM generation.",
+            "fields_changed": [
+              "execution.context_compression"
+            ],
+            "before_configuration": {
+              "context_compression": false
+            },
+            "after_configuration": {
+              "context_compression": true
+            }
+          }
+        }
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 14054.0,
+          "execution_time_ms": 16436.75
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 17599.25,
+          "execution_time_ms": 55038.31
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 13869.93,
+          "execution_time_ms": 60109.67
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": -64.05,
+        "latency_change_pct": 64.05,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v5_0123b3",
+      "workflow": "Refined: Context Compression",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 15174.39,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 1716.28
+      }
+    },
+    {
+      "version_id": "wf_v6_a8b827",
+      "version_number": 6,
+      "workflow_name": "Cost-Optimized Composite",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_mixed_cost_438",
+      "source_run_id": "evo_52fd87a58c",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 16080.09,
+      "execution_time_ms": 20278.72,
+      "retrieval": {
+        "top_k": 3,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=3, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "concise_medical",
+      "prompt_strategy": "concise_medical",
+      "context_compression": true,
+      "operator_config": {
+        "context_compression": true,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.01,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: Server disconnected without sending a response.",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 2902.14,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "wf_v6_a8b827",
+        "name": "Cost-Optimized Composite",
+        "description": "Composite mutation: concise medical prompt + top_k=3 + context compression to maximize query efficiency.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 3,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "concise_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": true
+        },
+        "mutation_metadata": {
+          "mutation_type": "mixed",
+          "parent_workflow_id": "baseline",
+          "mutation_description": "Composite mutation: concise medical prompt + top_k=3 + context compression to maximize query efficiency.",
+          "generation_metadata": {
+            "categories_mutated": [
+              "prompt",
+              "retrieval",
+              "operator"
+            ],
+            "template_name": "concise_medical",
+            "top_k": 3,
+            "context_compression": true
+          }
+        }
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 18637.42,
+          "execution_time_ms": 23918.9
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 14773.59,
+          "execution_time_ms": 19145.31
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 14829.27,
+          "execution_time_ms": 17771.96
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": -73.84,
+        "latency_change_pct": 73.84,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v6_a8b827",
+      "workflow": "Cost-Optimized Composite",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 16080.09,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=3, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 1808.45
+      }
+    },
+    {
+      "version_id": "wf_v7_adfa07",
+      "version_number": 7,
+      "workflow_name": "Deterministic Gemini 3.5 Flash-Lite",
+      "parent_workflow_id": "wf_v6_a8b827",
+      "source_candidate_id": "cand_model_deterministic_652",
+      "source_run_id": "evo_07722d839f",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 12944.05,
+      "execution_time_ms": 33558.25,
+      "retrieval": {
+        "top_k": 3,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=3, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "concise_medical",
+      "prompt_strategy": "concise_medical",
+      "context_compression": true,
+      "operator_config": {
+        "context_compression": true,
+        "temperature": 0.0,
+        "max_tokens": 512
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.23,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: ",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 3806.51,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "wf_v7_adfa07",
+        "name": "Deterministic Gemini 3.5 Flash-Lite",
+        "description": "Adjusted Gemini 3.5 Flash-Lite to 0.0 temperature and 512 max tokens for deterministic clinical answers.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 3,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.0,
+          "max_tokens": 512
+        },
+        "prompt": {
+          "template_name": "concise_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": true
+        },
+        "mutation_metadata": {
+          "mutation_type": "model",
+          "parent_workflow_id": "wf_v6_a8b827",
+          "mutation_description": "Adjusted Gemini 3.5 Flash-Lite to 0.0 temperature and 512 max tokens for deterministic clinical answers.",
+          "generation_metadata": {
+            "provider": "Google",
+            "model_id": "gemini-3.5-flash-lite",
+            "temperature": 0.0,
+            "max_tokens": 512
+          }
+        }
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 14922.95,
+          "execution_time_ms": 61814.59
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 6145.04,
+          "execution_time_ms": 16709.66
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 17764.15,
+          "execution_time_ms": 22150.51
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": -39.94,
+        "latency_change_pct": 39.94,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v7_adfa07",
+      "workflow": "Deterministic Gemini 3.5 Flash-Lite",
+      "parent_workflow": "wf_v6_a8b827",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 12944.05,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=3, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 4945.57
+      }
+    },
+    {
+      "version_id": "wf_v8_2b0b35",
+      "version_number": 8,
+      "workflow_name": "Context Compression Operator",
+      "parent_workflow_id": "baseline",
+      "source_candidate_id": "cand_operator_compress_124",
+      "source_run_id": "evo_6a16ddb414",
+      "model_id": "gemini-3.5-flash-lite",
+      "provider": "Google",
+      "groundedness": 0.0,
+      "hallucination_rate": 0.0,
+      "cost": 0.0,
+      "total_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "llm_latency_ms": 20556.75,
+      "execution_time_ms": 34367.28,
+      "retrieval": {
+        "top_k": 6,
+        "similarity_threshold": 0.35,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "reranking": true
+      },
+      "retrieval_config_summary": "top_k=6, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "prompt_template": "default_medical",
+      "prompt_strategy": "default_medical",
+      "context_compression": true,
+      "operator_config": {
+        "context_compression": true,
+        "temperature": 0.1,
+        "max_tokens": 1024
+      },
+      "is_pareto_optimal": true,
+      "pareto_status": "Pareto-optimal",
+      "dominated_by": [],
+      "dominates": [],
+      "claim_breakdown": [],
+      "raw_details": {
+        "evaluation_duration_ms": 0.0,
+        "status": "model_error",
+        "error_type": "provider_error",
+        "error_message": "Gemini API exception: Server disconnected without sending a response.",
+        "claim_breakdown": [],
+        "pricing_applied": "Gemini 3.5 Flash-Lite",
+        "retrieval_ms": 1080.68,
+        "chunks_retrieved": 2
+      },
+      "configuration": {
+        "workflow_id": "wf_v8_2b0b35",
+        "name": "Context Compression Operator",
+        "description": "Activated context compression operator to filter redundant retrieved chunk sentences before prompt injection.",
+        "retrieval": {
+          "chunk_size": 1000,
+          "chunk_overlap": 200,
+          "top_k": 6,
+          "similarity_threshold": 0.35,
+          "reranking": true
+        },
+        "model": {
+          "provider": "Google",
+          "model_id": "gemini-3.5-flash-lite",
+          "temperature": 0.1,
+          "max_tokens": 1024
+        },
+        "prompt": {
+          "template_name": "default_medical",
+          "custom_instructions": null
+        },
+        "execution": {
+          "timeout_seconds": 30.0,
+          "context_compression": true
+        },
+        "mutation_metadata": {
+          "mutation_type": "operator",
+          "parent_workflow_id": "baseline",
+          "mutation_description": "Activated context compression operator to filter redundant retrieved chunk sentences before prompt injection.",
+          "generation_metadata": {
+            "operator": "context_compression",
+            "context_compression_enabled": true,
+            "top_k": 6
+          }
+        }
+      },
+      "iterations_count": 3,
+      "runs": [
+        {
+          "iteration": 1,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 32126.99,
+          "execution_time_ms": 55215.19
+        },
+        {
+          "iteration": 2,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 16202.22,
+          "execution_time_ms": 33432.33
+        },
+        {
+          "iteration": 3,
+          "groundedness": 0.0,
+          "hallucination_rate": 0.0,
+          "cost": 0.0,
+          "total_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "llm_latency_ms": 13341.03,
+          "execution_time_ms": 14454.33
+        }
+      ],
+      "relative_changes": {
+        "groundedness_delta": 0.0,
+        "groundedness_change": 0.0,
+        "cost_reduction_pct": 0.0,
+        "cost_change_pct": 0.0,
+        "latency_reduction_pct": -122.24,
+        "latency_change_pct": 122.24,
+        "token_reduction_pct": 0.0,
+        "token_change_pct": 0.0
+      },
+      "version": "wf_v8_2b0b35",
+      "workflow": "Context Compression Operator",
+      "parent_workflow": "baseline",
+      "cost_per_query": 0.0,
+      "hallucination": 0.0,
+      "latency_ms": 20556.75,
+      "model": "gemini-3.5-flash-lite",
+      "retrieval_config": "top_k=6, sim_thresh=0.35, chunk_size=1000, rerank=True",
+      "std_dev": {
+        "groundedness": 0.0,
+        "hallucination": 0.0,
+        "cost": 0.0,
+        "cost_per_query": 0.0,
+        "tokens": 0.0,
+        "latency_ms": 8264.36
+      }
+    }
+  ],
+  "dominated_versions": [],
+  "summary": "Benchmark 'Official Cross-Version Benchmark: Baseline + v1-v8' evaluated 9 workflow versions against query 'What is the primary clinical diagnosis and assessm...'. 9 version(s) are Pareto-optimal (non-dominated on Groundedness vs Cost trade-off frontier), and 0 version(s) are dominated.",
+  "created_by": "user@example.com",
+  "created_at": "2026-09-28T16:13:43.679768+00:00"
+}

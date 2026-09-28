@@ -158,6 +158,7 @@ class AgentEvoOptimizer:
         expected_answer: Optional[str] = None,
         candidate_count: int = 5,
         seed: Optional[int] = None,
+        parent_workflow_id: Optional[str] = None,
         allowed_mutation_types: Optional[List[str]] = None,
         db: Optional[Session] = None,
     ) -> OptimizationReport:
@@ -169,25 +170,50 @@ class AgentEvoOptimizer:
 
         archive = ParetoArchive()
 
-        # Step 1: Evaluate Baseline Workflow
-        baseline_wf = get_baseline_workflow()
-        logger.info("Evaluating baseline workflow...")
+        # Step 1: Resolve and Evaluate Reference / Parent Workflow
+        parent_wf = get_baseline_workflow()
+        if parent_workflow_id and parent_workflow_id not in ("baseline", "Production Baseline"):
+            if db:
+                found_version = db.query(WorkflowVersion).filter(
+                    (WorkflowVersion.version_id == parent_workflow_id)
+                    | (WorkflowVersion.id == parent_workflow_id)
+                    | (WorkflowVersion.source_candidate_id == parent_workflow_id)
+                ).first()
+                if found_version and isinstance(found_version.configuration, dict):
+                    parent_wf = AgentWorkflow.from_dict(found_version.configuration)
+                    parent_wf.workflow_id = found_version.version_id
+                    parent_wf.name = found_version.name
+                    logger.info(f"Loaded parent workflow '{found_version.version_id}' ({found_version.name}) for run '{run_id}'.")
+                else:
+                    logger.warning(f"Parent workflow '{parent_workflow_id}' not found in DB; using baseline.")
+
+        logger.info(f"Evaluating reference workflow '{parent_wf.workflow_id}'...")
         baseline_evaluated: EvaluatedCandidate = await EvaluatorAdapter.evaluate_candidate(
-            workflow=baseline_wf,
+            workflow=parent_wf,
             query=query,
             user_id=user_id,
             document_id=document_id,
             expected_answer=expected_answer,
             db=db,
         )
+        baseline_evaluated.candidate_id = parent_wf.workflow_id
         archive.add_candidate(baseline_evaluated)
 
         # Step 2: Generate Diverse Mutated Candidate Workflows
+        existing_versions_configs = []
+        if db:
+            try:
+                db_versions = db.query(WorkflowVersion).all()
+                existing_versions_configs = [v.configuration for v in db_versions if v.configuration]
+            except Exception as e:
+                logger.warning(f"Failed to query existing workflow versions for duplicate prevention: {e}")
+
         candidates_to_eval = generate_candidates(
-            baseline=baseline_wf,
+            baseline=parent_wf,
             count=candidate_count,
             seed=seed,
             allowed_types=allowed_mutation_types,
+            existing_versions=existing_versions_configs,
         )
         logger.info(f"Generated {len(candidates_to_eval)} mutated candidate workflows.")
 

@@ -2933,8 +2933,30 @@ body {
 .evo-strategy-pill {
   font-size: 10.5px;
   font-weight: 600;
-  padding: 2px 7px;
+  padding: 3px 9px;
   border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #cbd5e1;
+}
+
+.evo-strategy-pill:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.15);
+}
+
+.evo-strat-active {
+  box-shadow: 0 0 0 1.5px #38bdf8, 0 0 8px rgba(56, 189, 248, 0.4);
+  filter: brightness(1.25);
+  font-weight: 700;
+}
+
+.evo-strat-all {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.35);
 }
 
 .evo-strat-prompt {
@@ -2965,6 +2987,11 @@ body {
   background: rgba(244, 63, 94, 0.15);
   color: #fb7185;
   border: 1px solid rgba(244, 63, 94, 0.3);
+}
+
+.evo-col-third {
+  flex: 1;
+  min-width: 180px;
 }
 
 .evo-mutation-tag {
@@ -3030,22 +3057,442 @@ body {
   line-height: 1.35;
 }
 
-.evo-mutation-card {
-  background: rgba(15, 23, 42, 0.7);
-  border: 1px solid rgba(168, 85, 247, 0.25);
+.evo-strat-refinement {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.35);
 }
 
-.evo-mutation-card-content {
+.evo-mut-refinement {
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+}
+
+.evo-refine-op-tag {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.evo-refine-diff-box {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 4px;
+  align-items: center;
+  gap: 12px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-top: 6px;
 }
 
-.evo-mutation-card-desc {
-  font-size: 12px;
-  color: #cbd5e1;
-  line-height: 1.4;
+.evo-refine-diff-col {
+  flex: 1;
+  min-width: 0;
 }
+
+.evo-refine-arrow {
+  color: #34d399;
+  font-size: 18px;
+  font-weight: 700;
+  user-select: none;
+}
+
+.evo-refine-cfg-pre {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #e2e8f0;
+  overflow-x: auto;
+  margin-top: 4px;
+  max-height: 140px;
+}
+
+/* ==========================================================================
+   AgentEvo Phase 7.3+ Version Benchmarking, Comparison & Lineage
+   ========================================================================== */
+
+/* Sub-navigation tabs */
+.evo-nav-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 10px;
+}
+
+.evo-nav-tab {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.evo-nav-tab:hover {
+  background: rgba(51, 65, 85, 0.7);
+  color: #f1f5f9;
+}
+
+.evo-nav-tab.active {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: #3b82f6;
+  box-shadow: 0 0 12px rgba(37, 99, 235, 0.4);
+}
+
+/* Benchmark Toolbar & Selector */
+.evo-bench-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.evo-bench-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.evo-btn-benchmark {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+  transition: all 0.2s ease;
+}
+
+.evo-btn-benchmark:hover:not(:disabled) {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.35);
+  transform: translateY(-1px);
+}
+
+.evo-btn-benchmark:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.evo-bench-pills-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.evo-ver-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.evo-ver-pill:hover {
+  background: rgba(30, 41, 59, 0.8);
+  color: #e2e8f0;
+}
+
+.evo-ver-pill.selected {
+  background: rgba(37, 99, 235, 0.2);
+  border-color: #3b82f6;
+  color: #60a5fa;
+}
+
+/* Benchmark Scatter Plot Container */
+.evo-bench-scatter-container {
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  position: relative;
+}
+
+.evo-bench-scatter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.evo-bench-scatter-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f1f5f9;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.evo-bench-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.evo-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.evo-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.evo-legend-dot.baseline {
+  background: #38bdf8;
+  border-radius: 2px;
+}
+
+.evo-legend-dot.pareto {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+
+.evo-legend-dot.dominated {
+  background: #64748b;
+}
+
+.evo-bench-svg-wrap {
+  width: 100%;
+  height: 240px;
+  position: relative;
+}
+
+.evo-bench-tooltip {
+  position: absolute;
+  background: rgba(15, 23, 42, 0.96);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: 6px;
+  padding: 10px 14px;
+  color: #f8fafc;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 50;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+  min-width: 220px;
+}
+
+.evo-bench-tooltip-title {
+  font-weight: 700;
+  color: #38bdf8;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 3px;
+}
+
+.evo-bench-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 2px;
+}
+
+/* Pareto Status Badges */
+.evo-pareto-optimal-badge {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.evo-dominated-badge {
+  background: rgba(100, 116, 139, 0.2);
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Lineage Visual Graph */
+.evo-lineage-container {
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.evo-lineage-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  position: relative;
+}
+
+.evo-lineage-level {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.evo-lineage-card {
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 14px 18px;
+  min-width: 280px;
+  flex: 1;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.evo-lineage-card:hover {
+  background: rgba(51, 65, 85, 0.8);
+  border-color: rgba(56, 189, 248, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.evo-lineage-card.is-baseline {
+  border-left: 4px solid #38bdf8;
+  background: rgba(14, 116, 144, 0.15);
+}
+
+.evo-lineage-card.is-refined {
+  border-left: 4px solid #10b981;
+}
+
+.evo-lineage-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.evo-lineage-tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f1f5f9;
+}
+
+.evo-lineage-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f8fafc;
+  margin-bottom: 4px;
+}
+
+.evo-lineage-meta {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.evo-lineage-connector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.evo-lineage-arrow-tag {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+/* Inspect Modal Details */
+.evo-inspect-diff-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.evo-diff-pane {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+
+.evo-diff-pane-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #94a3b8;
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.evo-val-green {
+  color: #34d399 !important;
+  font-weight: 700;
+}
+
+.evo-val-cyan {
+  color: #38bdf8 !important;
+  font-weight: 700;
+}
+
+.evo-val-amber {
+  color: #fbbf24 !important;
+  font-weight: 700;
+}
+
+.evo-val-purple {
+  color: #c084fc !important;
+  font-weight: 700;
+}
+
 
 

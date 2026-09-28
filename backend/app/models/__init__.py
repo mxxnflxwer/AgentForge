@@ -1,6 +1,7 @@
 from app.models.user import User, UserRole, UserSession
 from app.models.document import Document, DocumentChunk, DocumentProcessingStatus
 from app.models.workflow_version import WorkflowVersion
+from app.models.benchmark_run import BenchmarkRun
 
 __all__ = [
     "User",
@@ -10,4 +11,5 @@ __all__ = [
     "DocumentChunk",
     "DocumentProcessingStatus",
     "WorkflowVersion",
+    "BenchmarkRun",
 ]

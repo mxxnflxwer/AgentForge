@@ -5,12 +5,13 @@ from pydantic import BaseModel, Field
 
 
 class MutationType(str, Enum):
-    """Supported mutation categories for AgentEvo workflow exploration."""
+    """Supported mutation categories for AgentEvo workflow exploration and refinement."""
     PROMPT = "prompt"
     RETRIEVAL = "retrieval"
     MODEL = "model"
     OPERATOR = "operator"
     MIXED = "mixed"
+    REFINEMENT = "refinement"
 
 
 class MutationMetadata(BaseModel):

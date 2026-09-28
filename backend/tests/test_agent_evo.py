@@ -1,8 +1,10 @@
+import random
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 
 from app.models.user import User, UserRole
+from app.models.benchmark_run import BenchmarkRun
 from app.models.workflow_version import WorkflowVersion
 from app.services.agent_evo import (
     AgentWorkflow,
@@ -25,6 +27,8 @@ from app.services.agent_evo import (
     get_baseline_workflow,
     validate_workflow,
 )
+from app.services.agent_evo.benchmark_service import BenchmarkService
+from app.services.agent_evo.candidate_generator import normalize_workflow_config
 from app.core.security import hash_password
 from app.services.evaluation import EvaluationResult
 from app.services.llm.base import LLMResponse
@@ -886,4 +890,1022 @@ async def test_exploration_full_optimizer_pipeline_with_diverse_candidates(evo_t
         )
         assert appr_report.approved_workflow_id == pareto_cand.candidate_id
         assert version.version_id.startswith("wf_v")
+
+
+# ============================================================================
+# PHASE 7.3: REFINEMENT ENGINE TESTS
+# ============================================================================
+
+def test_refinement_retrieval_reduction():
+    """Test Refinement Operator A: reduces top_k while respecting lower bound >= 2."""
+    rand = random.Random(42)
+    wf = get_baseline_workflow()
+    wf.retrieval.top_k = 5
+
+    cand = CandidateGenerator._refine_retrieval_reduction(wf, rand)
+    assert cand is not None
+    assert cand.retrieval.top_k == 3
+    assert cand.mutation_metadata is not None
+    assert cand.mutation_metadata.mutation_type == MutationType.REFINEMENT
+    assert cand.mutation_metadata.generation_metadata["refinement_operation"] == "retrieval_reduction"
+    assert cand.mutation_metadata.generation_metadata["before_configuration"]["top_k"] == 5
+    assert cand.mutation_metadata.generation_metadata["after_configuration"]["top_k"] == 3
+
+    # If top_k is already at lower bound (2), operator returns None
+    wf.retrieval.top_k = 2
+    assert CandidateGenerator._refine_retrieval_reduction(wf, rand) is None
+
+
+def test_refinement_chunk_reduction():
+    """Test Refinement Operator B: reduces chunk_size and preserves chunk_overlap < chunk_size."""
+    rand = random.Random(42)
+    wf = get_baseline_workflow()
+    wf.retrieval.chunk_size = 1000
+    wf.retrieval.chunk_overlap = 200
+
+    cand = CandidateGenerator._refine_chunk_reduction(wf, rand)
+    assert cand is not None
+    assert cand.retrieval.chunk_size == 750
+    assert cand.retrieval.chunk_overlap < cand.retrieval.chunk_size
+    assert cand.mutation_metadata.generation_metadata["refinement_operation"] == "chunk_reduction"
+
+
+def test_refinement_context_compression():
+    """Test Refinement Operator C: enables context compression when disabled."""
+    rand = random.Random(42)
+    wf = get_baseline_workflow()
+    wf.execution.context_compression = False
+
+    cand = CandidateGenerator._refine_context_compression(wf, rand)
+    assert cand is not None
+    assert cand.execution.context_compression is True
+    assert cand.mutation_metadata.generation_metadata["refinement_operation"] == "context_compression"
+
+    # Already active returns None
+    assert CandidateGenerator._refine_context_compression(cand, rand) is None
+
+
+def test_refinement_prompt_simplification():
+    """Test Refinement Operator D: simplifies prompt template to concise grounded medical prompt."""
+    rand = random.Random(42)
+    wf = get_baseline_workflow()
+    wf.prompt.template_name = "clinical_cot"
+    wf.prompt.custom_instructions = "Elaborate extensively on differential diagnosis."
+
+    cand = CandidateGenerator._refine_prompt_simplification(wf, rand)
+    assert cand is not None
+    assert cand.prompt.template_name == "concise_medical"
+    assert cand.prompt.custom_instructions is None
+    assert cand.mutation_metadata.generation_metadata["refinement_operation"] == "prompt_simplification"
+
+
+def test_refinement_output_token_reduction():
+    """Test Refinement Operator E: reduces excessive max_tokens while protecting boundary >= 256."""
+    rand = random.Random(42)
+    wf = get_baseline_workflow()
+    wf.model.max_tokens = 1024
+
+    cand = CandidateGenerator._refine_output_token_reduction(wf, rand)
+    assert cand is not None
+    assert cand.model.max_tokens == 512
+    assert cand.mutation_metadata.generation_metadata["refinement_operation"] == "output_reduction"
+
+    # Further reduction
+    cand2 = CandidateGenerator._refine_output_token_reduction(cand, rand)
+    assert cand2 is not None
+    assert cand2.model.max_tokens == 384
+
+
+def test_refinement_redundant_config_cleanup():
+    """Test Refinement Operator F: normalizes redundant timeout and disables unneeded rerank for small top_k."""
+    rand = random.Random(42)
+    wf = get_baseline_workflow()
+    wf.execution.timeout_seconds = 120.0
+    wf.retrieval.top_k = 2
+    wf.retrieval.reranking = True
+
+    cand = CandidateGenerator._refine_redundant_config_cleanup(wf, rand)
+    assert cand is not None
+    assert cand.execution.timeout_seconds == 30.0
+    assert cand.retrieval.reranking is False
+    assert cand.mutation_metadata.generation_metadata["refinement_operation"] == "redundant_cleanup"
+
+
+def test_refinement_deep_copy_parent_isolation():
+    """Ensure refinement operators never modify the parent workflow in-place."""
+    rand = random.Random(42)
+    wf = get_baseline_workflow()
+    wf.retrieval.top_k = 5
+    wf.retrieval.chunk_size = 1000
+    original_top_k = wf.retrieval.top_k
+    original_chunk_size = wf.retrieval.chunk_size
+
+    cand1 = CandidateGenerator._refine_retrieval_reduction(wf, rand)
+    cand2 = CandidateGenerator._refine_chunk_reduction(wf, rand)
+
+    assert wf.retrieval.top_k == original_top_k == 5
+    assert wf.retrieval.chunk_size == original_chunk_size == 1000
+    assert cand1.retrieval.top_k != wf.retrieval.top_k
+    assert cand2.retrieval.chunk_size != wf.retrieval.chunk_size
+
+
+def test_refinement_duplicate_prevention_parent():
+    """Verify duplicate prevention skips candidates that match parent or known configs."""
+    wf = get_baseline_workflow()
+    # Baseline already has concise_medical and top_k=5
+    cands = generate_candidates(
+        baseline=wf,
+        count=5,
+        allowed_types=[MutationType.REFINEMENT],
+        seed=42,
+    )
+    # Check that no candidate has identical configuration to baseline
+    from app.services.agent_evo.candidate_generator import normalize_workflow_config
+    base_cfg = normalize_workflow_config(wf.to_dict())
+    cand_cfgs = [normalize_workflow_config(c.to_dict()) for c in cands]
+
+    for cfg in cand_cfgs:
+        assert cfg != base_cfg
+    # Check no duplicate candidates among themselves
+    assert len(cand_cfgs) == len(set(str(c) for c in cand_cfgs))
+
+
+def test_refinement_duplicate_prevention_existing_versions():
+    """Verify duplicate prevention rejects candidates matching existing approved versions in DB."""
+    wf = get_baseline_workflow()
+    # Mock an existing version configuration that has chunk_size = 750
+    existing_version_cfg = normalize_workflow_config(wf.to_dict())
+    existing_version_cfg["retrieval"]["chunk_size"] = 750
+    existing_version_cfg["retrieval"]["chunk_overlap"] = 150
+
+    cands = generate_candidates(
+        baseline=wf,
+        count=4,
+        allowed_types=[MutationType.REFINEMENT],
+        existing_versions=[{"configuration": existing_version_cfg}],
+        seed=42,
+    )
+
+    for c in cands:
+        cand_norm = normalize_workflow_config(c.to_dict())
+        assert cand_norm != existing_version_cfg
+
+
+def test_refinement_validator_safety():
+    """Ensure all generated refinement candidates strictly pass AgentWorkflow validation."""
+    wf = get_baseline_workflow()
+    cands = generate_candidates(
+        baseline=wf,
+        count=6,
+        allowed_types=[MutationType.REFINEMENT],
+    )
+    for c in cands:
+        val = validate_workflow(c)
+        assert val.is_valid, f"Candidate {c.workflow_id} failed validation: {val.errors}"
+
+
+def test_refinement_pareto_dominance_cheaper_same_groundedness():
+    """Test that a refined candidate with lower cost and same/better groundedness dominates."""
+    archive = ParetoArchive()
+    base_cand = EvaluatedCandidate(
+        candidate_id="baseline",
+        workflow=get_baseline_workflow(),
+        metrics=CandidateMetrics(
+            workflow_id="baseline",
+            workflow_name="Baseline",
+            performance=0.95,
+            cost=0.00045,
+            groundedness=0.95,
+            hallucination_rate=0.0,
+            accuracy=0.95,
+            total_tokens=450,
+            input_tokens=400,
+            output_tokens=50,
+            llm_latency_ms=180.0,
+            execution_time_ms=250.0,
+            status="success",
+        ),
+    )
+    archive.add_candidate(base_cand)
+
+    # Refined candidate with lower cost and identical groundedness
+    refined_wf = get_baseline_workflow()
+    refined_cand = EvaluatedCandidate(
+        candidate_id="cand_refine_retrieval_1",
+        workflow=refined_wf,
+        metrics=CandidateMetrics(
+            workflow_id="cand_refine_retrieval_1",
+            workflow_name="Refined: Tight Retrieval",
+            performance=0.95,
+            cost=0.00020,  # 55% cheaper
+            groundedness=0.95,
+            hallucination_rate=0.0,
+            accuracy=0.95,
+            total_tokens=220,
+            input_tokens=180,
+            output_tokens=40,
+            llm_latency_ms=110.0,
+            execution_time_ms=160.0,
+            status="success",
+        ),
+    )
+    archive.add_candidate(refined_cand)
+
+    frontier = archive.recompute_frontier()
+    frontier_ids = [c.candidate_id for c in frontier]
+
+    # Refined candidate dominates baseline because cost is strictly lower and groundedness is equal
+    assert "cand_refine_retrieval_1" in frontier_ids
+    assert "baseline" not in frontier_ids
+    assert refined_cand.is_pareto_optimal is True
+    assert base_cand.is_pareto_optimal is False
+    assert "cand_refine_retrieval_1" in base_cand.dominated_by
+
+
+@pytest.mark.asyncio
+async def test_refinement_full_optimization_and_approval(evo_test_user, db_session):
+    """End-to-end test of refinement optimization run and human approval governance."""
+    optimizer = get_agent_evo_optimizer()
+
+    mock_retrieval = RAGSearchResponse(
+        query="What is the cardiology diagnosis?",
+        status="success",
+        total_results=1,
+        results=[
+            RetrievedChunk(
+                chunk_id="c1",
+                document_id="doc_cardio",
+                chunk_index=0,
+                content="Assessment: Coronary artery disease with stable angina pectoris.",
+                similarity_score=0.94,
+                distance=0.06,
+                relevance_score=0.96,
+            )
+        ],
+    )
+
+    mock_llm_response = LLMResponse(
+        model="Gemini 3.5 Flash-Lite",
+        provider="Google",
+        answer="The patient is assessed with coronary artery disease and stable angina.",
+        latency_ms=120.0,
+        success=True,
+    )
+
+    mock_adapter = MagicMock()
+    mock_adapter.name = "Gemini 3.5 Flash-Lite"
+    mock_adapter.generate = AsyncMock(return_value=mock_llm_response)
+    mock_router = MagicMock()
+    mock_router.get_adapter.return_value = mock_adapter
+
+    with patch("app.services.agent_evo.evaluator_adapter.execute_rag_retrieval", return_value=mock_retrieval), \
+         patch("app.services.agent_evo.evaluator_adapter.get_llm_router", return_value=mock_router):
+
+        report = await optimizer.run_optimization(
+            query="What is the cardiology diagnosis?",
+            user_id=evo_test_user.id,
+            document_id="doc_cardio",
+            candidate_count=4,
+            seed=42,
+            allowed_mutation_types=["refinement"],
+            db=db_session,
+        )
+
+        assert report.run_id.startswith("evo_")
+        assert report.total_candidates_evaluated >= 2
+        refinement_cands = [c for c in report.all_candidates if c.candidate_id != "baseline"]
+        for c in refinement_cands:
+            assert c.mutation_metadata is not None
+            assert c.mutation_metadata.mutation_type == MutationType.REFINEMENT
+            assert "refinement_operation" in c.mutation_metadata.generation_metadata
+
+        # Approve top Pareto candidate
+        pareto_cands = [c for c in report.pareto_frontier if c.candidate_id != "baseline"]
+        if pareto_cands:
+            target_cand = pareto_cands[0]
+            appr_report, version = optimizer.approve_workflow(
+                run_id=report.run_id,
+                candidate_id=target_cand.candidate_id,
+                approved_by=evo_test_user.email,
+                db=db_session,
+            )
+            assert appr_report.approved_workflow_id == target_cand.candidate_id
+            assert version.version_id.startswith("wf_v")
+            assert version.configuration is not None
+            assert version.evaluation_snapshot is not None
+
+
+@pytest.mark.asyncio
+async def test_refinement_from_existing_approved_workflow_parent(evo_test_user, db_session):
+    """Test refining directly from an existing approved WorkflowVersion in the database."""
+    optimizer = get_agent_evo_optimizer()
+
+    # Seed an approved workflow version with custom high parameters
+    parent_cfg = get_baseline_workflow().to_dict()
+    parent_cfg["retrieval"]["top_k"] = 8
+    parent_cfg["model"]["max_tokens"] = 1024
+
+    seeded_version = WorkflowVersion(
+        version_id="wf_v10_parent_test",
+        version_number=10,
+        name="High Top-K Parent",
+        source_run_id="run_parent_seed",
+        source_candidate_id="cand_parent_seed",
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        configuration=parent_cfg,
+        evaluation_snapshot={"groundedness": 1.0, "cost": 0.00008},
+        status="approved",
+        approved_by=evo_test_user.email,
+    )
+    db_session.add(seeded_version)
+    db_session.commit()
+
+    mock_retrieval = RAGSearchResponse(
+        query="What is the cardiology diagnosis?",
+        status="success",
+        total_results=1,
+        results=[
+            RetrievedChunk(
+                chunk_id="c1",
+                document_id="doc_cardio",
+                chunk_index=0,
+                content="Assessment: Coronary artery disease with stable angina pectoris.",
+                similarity_score=0.94,
+                distance=0.06,
+                relevance_score=0.96,
+            )
+        ],
+    )
+
+    mock_llm_response = LLMResponse(
+        model="Gemini 3.5 Flash-Lite",
+        provider="Google",
+        answer="Assessment: Coronary artery disease with stable angina pectoris.",
+        latency_ms=100.0,
+        success=True,
+    )
+
+    mock_adapter = MagicMock()
+    mock_adapter.name = "Gemini 3.5 Flash-Lite"
+    mock_adapter.generate = AsyncMock(return_value=mock_llm_response)
+    mock_router = MagicMock()
+    mock_router.get_adapter.return_value = mock_adapter
+
+    with patch("app.services.agent_evo.evaluator_adapter.execute_rag_retrieval", return_value=mock_retrieval), \
+         patch("app.services.agent_evo.evaluator_adapter.get_llm_router", return_value=mock_router):
+
+        report = await optimizer.run_optimization(
+            query="What is the cardiology diagnosis?",
+            user_id=evo_test_user.id,
+            document_id="doc_cardio",
+            candidate_count=4,
+            parent_workflow_id="wf_v10_parent_test",
+            allowed_mutation_types=["refinement"],
+            db=db_session,
+        )
+
+        assert report.run_id.startswith("evo_")
+        assert report.baseline.candidate_id == "wf_v10_parent_test"
+
+        refinement_cands = [c for c in report.all_candidates if c.candidate_id != "wf_v10_parent_test"]
+        assert len(refinement_cands) >= 1
+        for c in refinement_cands:
+            assert c.mutation_metadata is not None
+            assert c.mutation_metadata.mutation_type == MutationType.REFINEMENT
+            assert c.mutation_metadata.parent_workflow_id == "wf_v10_parent_test"
+            assert "before_configuration" in c.mutation_metadata.generation_metadata
+            assert "after_configuration" in c.mutation_metadata.generation_metadata
+
+
+# --- 7. Version Comparison & Benchmark Tests ---
+
+@pytest.mark.asyncio
+async def test_benchmark_multiple_versions_and_pareto_classification(db_session, evo_test_user):
+    """
+    Test controlled multi-version benchmark evaluation across baseline and approved workflow versions.
+    Verifies metric collection, Pareto classification, and persistence.
+    """
+    # Create two approved workflow versions in DB
+    wf1 = get_baseline_workflow()
+    wf1.retrieval.top_k = 3
+    wf1.execution.context_compression = True
+    v1 = WorkflowVersion(
+        version_id="wf_v1_bench_test",
+        version_number=1,
+        name="V1 Compressed",
+        description="Top-K 3 with compression",
+        source_run_id="run_1",
+        source_candidate_id="cand_1",
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        configuration=wf1.to_dict(),
+        evaluation_snapshot={"groundedness": 1.0, "cost": 0.000045},
+        status="approved",
+        approved_by=evo_test_user.email,
+    )
+
+    wf2 = get_baseline_workflow()
+    wf2.retrieval.top_k = 10
+    v2 = WorkflowVersion(
+        version_id="wf_v2_bench_test",
+        version_number=2,
+        name="V2 High Top-K",
+        description="Top-K 10 without compression",
+        source_run_id="run_2",
+        source_candidate_id="cand_2",
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        configuration=wf2.to_dict(),
+        evaluation_snapshot={"groundedness": 0.8, "cost": 0.000090},
+        status="approved",
+        approved_by=evo_test_user.email,
+    )
+    db_session.add_all([v1, v2])
+    db_session.commit()
+
+    mock_retrieval = RAGSearchResponse(
+        query="What is the cardiology diagnosis?",
+        status="success",
+        total_results=1,
+        results=[
+            RetrievedChunk(
+                chunk_id="chk_1",
+                document_id="doc_cardio",
+                chunk_index=0,
+                content="Assessment: Coronary artery disease with stable angina pectoris.",
+                similarity_score=0.95,
+                distance=0.05,
+                relevance_score=0.95,
+            )
+        ],
+    )
+
+    mock_llm_response = LLMResponse(
+        model="Gemini 3.5 Flash-Lite",
+        provider="Google",
+        answer="Assessment: Coronary artery disease with stable angina pectoris.",
+        latency_ms=120.0,
+        success=True,
+    )
+
+    mock_adapter = MagicMock()
+    mock_adapter.name = "Gemini 3.5 Flash-Lite"
+    mock_adapter.generate = AsyncMock(return_value=mock_llm_response)
+    mock_router = MagicMock()
+    mock_router.get_adapter.return_value = mock_adapter
+
+    with patch("app.services.agent_evo.evaluator_adapter.execute_rag_retrieval", return_value=mock_retrieval), \
+         patch("app.services.agent_evo.evaluator_adapter.get_llm_router", return_value=mock_router):
+
+        report = await BenchmarkService.run_benchmark(
+            version_ids=["baseline", "wf_v1_bench_test", "wf_v2_bench_test"],
+            query="What is the cardiology diagnosis?",
+            user_id=evo_test_user.id,
+            user_email=evo_test_user.email,
+            document_id="doc_cardio",
+            expected_answer="Assessment: Coronary artery disease with stable angina pectoris.",
+            preset_name="clinical",
+            name="Clinical Diagnosis Benchmark",
+            db=db_session,
+        )
+
+        assert report.benchmark_id.startswith("bench_")
+        assert len(report.results) == 3
+        assert report.preset_name == "clinical"
+        assert report.selected_versions == ["baseline", "wf_v1_bench_test", "wf_v2_bench_test"]
+
+        # Verify each result has complete metrics and configuration
+        for res in report.results:
+            assert res.groundedness is not None
+            assert res.cost is not None
+            assert res.total_tokens is not None
+            assert res.llm_latency_ms is not None
+            assert res.model_id == "gemini-3.5-flash-lite"
+            assert res.provider == "Google"
+            assert res.pareto_status in ("Pareto-optimal", "Dominated", "Non-dominated")
+
+        # Verify DB persistence
+        db_bench = db_session.query(BenchmarkRun).filter(BenchmarkRun.benchmark_id == report.benchmark_id).first()
+        assert db_bench is not None
+        assert db_bench.name == "Clinical Diagnosis Benchmark"
+        assert len(db_bench.results) == 3
+
+
+@pytest.mark.asyncio
+async def test_benchmark_identical_inputs_across_versions(db_session, evo_test_user):
+    """
+    Ensure every selected workflow receives the EXACT same query, user_id, document_id, and expected_answer.
+    """
+    wf1 = get_baseline_workflow()
+    v1 = WorkflowVersion(
+        version_id="wf_v1_identical_test",
+        version_number=1,
+        name="V1 Test",
+        source_run_id="run_1",
+        source_candidate_id="cand_1",
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        configuration=wf1.to_dict(),
+        evaluation_snapshot={"groundedness": 1.0, "cost": 0.00005},
+        status="approved",
+        approved_by=evo_test_user.email,
+    )
+    db_session.add(v1)
+    db_session.commit()
+
+    captured_eval_calls = []
+
+    async def mock_evaluate_candidate(workflow, query, user_id, document_id, expected_answer, db):
+        captured_eval_calls.append({
+            "workflow_id": workflow.workflow_id,
+            "query": query,
+            "user_id": user_id,
+            "document_id": document_id,
+            "expected_answer": expected_answer,
+        })
+        m = CandidateMetrics(
+            workflow_id=workflow.workflow_id,
+            workflow_name=workflow.name,
+            performance=1.0,
+            cost=0.00005,
+            groundedness=1.0,
+            hallucination_rate=0.0,
+            total_tokens=500,
+            input_tokens=450,
+            output_tokens=50,
+            llm_latency_ms=150.0,
+            execution_time_ms=200.0,
+            status="success",
+        )
+        return EvaluatedCandidate(
+            candidate_id=workflow.workflow_id,
+            workflow=workflow,
+            metrics=m,
+            is_pareto_optimal=True,
+        )
+
+    with patch.object(EvaluatorAdapter, "evaluate_candidate", side_effect=mock_evaluate_candidate):
+        target_query = "What is the primary clinical diagnosis and assessment for this patient?"
+        target_doc = "doc_cardiology_01"
+        target_answer = "Exertional angina pectoris with CAD."
+
+        report = await BenchmarkService.run_benchmark(
+            version_ids=["baseline", "wf_v1_identical_test"],
+            query=target_query,
+            user_id=evo_test_user.id,
+            user_email=evo_test_user.email,
+            document_id=target_doc,
+            expected_answer=target_answer,
+            db=db_session,
+        )
+
+        assert len(captured_eval_calls) == 2
+        for call in captured_eval_calls:
+            assert call["query"] == target_query
+            assert call["document_id"] == target_doc
+            assert call["expected_answer"] == target_answer
+            assert call["user_id"] == evo_test_user.id
+
+
+def test_benchmark_immutable_configuration_preservation(db_session, evo_test_user):
+    """
+    Ensure workflow version configurations in the database are NOT mutated or altered by benchmarking.
+    """
+    wf = get_baseline_workflow()
+    wf.retrieval.top_k = 7
+    original_config = wf.to_dict()
+
+    v = WorkflowVersion(
+        version_id="wf_v1_immutable_test",
+        version_number=1,
+        name="V1 Immutable Check",
+        source_run_id="run_imm",
+        source_candidate_id="cand_imm",
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        configuration=original_config,
+        evaluation_snapshot={"groundedness": 1.0, "cost": 0.00006},
+        status="approved",
+        approved_by=evo_test_user.email,
+    )
+    db_session.add(v)
+    db_session.commit()
+
+    # Inspect before
+    inspect_before = BenchmarkService.inspect_version("wf_v1_immutable_test", db=db_session)
+    assert inspect_before.configuration["retrieval"]["top_k"] == 7
+
+    # DB record check
+    v_db = db_session.query(WorkflowVersion).filter(WorkflowVersion.version_id == "wf_v1_immutable_test").first()
+    assert v_db.configuration == original_config
+
+
+def test_lineage_graph_retrieval(db_session, evo_test_user):
+    """
+    Test that lineage extraction respects non-linear parent-child relationships and metadata.
+    """
+    # Baseline is root
+    # V1 derived from baseline
+    wf1 = get_baseline_workflow()
+    wf1.mutation_metadata = MutationMetadata(
+        mutation_type=MutationType.PROMPT,
+        parent_workflow_id="baseline",
+        mutation_description="Concise prompt mutation",
+    )
+    v1 = WorkflowVersion(
+        version_id="wf_v1_lineage",
+        version_number=1,
+        name="V1 Concise",
+        source_run_id="run_lin_1",
+        source_candidate_id="cand_lin_1",
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        configuration=wf1.to_dict(),
+        evaluation_snapshot={"groundedness": 1.0, "cost": 0.00005},
+        status="approved",
+        approved_by=evo_test_user.email,
+    )
+
+    # V2 derived from V1 (not baseline)
+    wf2 = get_baseline_workflow()
+    wf2.mutation_metadata = MutationMetadata(
+        mutation_type=MutationType.REFINEMENT,
+        parent_workflow_id="wf_v1_lineage",
+        mutation_description="Context compression refinement",
+        generation_metadata={
+            "refinement_operation": "context_compression",
+            "fields_changed": ["execution.context_compression"],
+            "before_configuration": {"context_compression": False},
+            "after_configuration": {"context_compression": True},
+        },
+    )
+    v2 = WorkflowVersion(
+        version_id="wf_v2_lineage",
+        version_number=2,
+        name="V2 Refined",
+        source_run_id="run_lin_2",
+        source_candidate_id="cand_lin_2",
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        configuration=wf2.to_dict(),
+        evaluation_snapshot={"groundedness": 1.0, "cost": 0.00004},
+        status="approved",
+        approved_by=evo_test_user.email,
+    )
+    db_session.add_all([v1, v2])
+    db_session.commit()
+
+    lineage = BenchmarkService.get_lineage(db=db_session)
+    assert lineage.total_versions >= 3  # baseline + v1 + v2
+    
+    # Check nodes
+    node_ids = [n.version_id for n in lineage.nodes]
+    assert "baseline" in node_ids
+    assert "wf_v1_lineage" in node_ids
+    assert "wf_v2_lineage" in node_ids
+
+    # Check edges
+    edge_pairs = [(e.source, e.target) for e in lineage.edges]
+    assert ("baseline", "wf_v1_lineage") in edge_pairs
+    assert ("wf_v1_lineage", "wf_v2_lineage") in edge_pairs
+
+
+def test_version_inspect_endpoint(db_session, evo_test_user):
+    """
+    Test inspecting a workflow version returns full diffs, lineage, and approval metadata.
+    """
+    wf = get_baseline_workflow()
+    wf.mutation_metadata = MutationMetadata(
+        mutation_type=MutationType.REFINEMENT,
+        parent_workflow_id="baseline",
+        mutation_description="Prompt simplification",
+        generation_metadata={
+            "refinement_operation": "prompt_simplification",
+            "fields_changed": ["prompt.template_name"],
+            "before_configuration": {"template_name": "default_medical"},
+            "after_configuration": {"template_name": "concise_medical"},
+        },
+    )
+    v = WorkflowVersion(
+        version_id="wf_v4_inspect_test",
+        version_number=4,
+        name="V4 Prompt Refined",
+        source_run_id="run_insp",
+        source_candidate_id="cand_insp",
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        configuration=wf.to_dict(),
+        evaluation_snapshot={"groundedness": 1.0, "cost": 0.000048},
+        status="approved",
+        approved_by=evo_test_user.email,
+    )
+    db_session.add(v)
+    db_session.commit()
+
+    inspect_data = BenchmarkService.inspect_version("wf_v4_inspect_test", db=db_session)
+    assert inspect_data.version_id == "wf_v4_inspect_test"
+    assert inspect_data.parent_workflow_id == "baseline"
+    assert inspect_data.refinement_operation == "prompt_simplification"
+    assert inspect_data.fields_changed == ["prompt.template_name"]
+    assert inspect_data.before_configuration == {"template_name": "default_medical"}
+    assert inspect_data.after_configuration == {"template_name": "concise_medical"}
+    assert inspect_data.approved_by == evo_test_user.email
+
+
+@pytest.mark.asyncio
+async def test_benchmark_invalid_version_handling(db_session, evo_test_user):
+    """
+    Test that requesting an invalid or nonexistent workflow version ID raises a 404 error.
+    """
+    with pytest.raises(Exception) as exc_info:
+        await BenchmarkService.run_benchmark(
+            version_ids=["baseline", "wf_nonexistent_9999"],
+            query="Test query",
+            user_id=evo_test_user.id,
+            user_email=evo_test_user.email,
+            db=db_session,
+        )
+    assert "404" in str(exc_info.value) or "not found" in str(exc_info.value).lower()
+
+
+def test_benchmark_api_endpoints_via_client(client, db_session, evo_test_user):
+    """
+    Test the FastAPI /api/agent-evo/lineage, /api/agent-evo/versions/{id}/inspect,
+    and /api/agent-evo/benchmarks endpoints.
+    """
+    # Create test version
+    wf = get_baseline_workflow()
+    v = WorkflowVersion(
+        version_id="wf_v1_api_bench",
+        version_number=1,
+        name="V1 API Bench",
+        source_run_id="run_api",
+        source_candidate_id="cand_api",
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        configuration=wf.to_dict(),
+        evaluation_snapshot={"groundedness": 1.0, "cost": 0.00005},
+        status="approved",
+        approved_by=evo_test_user.email,
+    )
+    db_session.add(v)
+    db_session.commit()
+
+    # Login user session
+    login_res = client.post(
+        "/api/auth/login",
+        json={"email": evo_test_user.email, "password": "testpassword123"},
+    )
+    assert login_res.status_code == 200
+
+    # Test lineage endpoint
+    lin_res = client.get("/api/agent-evo/lineage")
+    assert lin_res.status_code == 200
+    lin_data = lin_res.json()
+    assert "nodes" in lin_data
+    assert "edges" in lin_data
+    assert lin_data["total_versions"] >= 2
+
+    # Test inspect endpoint
+    insp_res = client.get(f"/api/agent-evo/versions/{v.version_id}/inspect")
+    assert insp_res.status_code == 200
+    insp_data = insp_res.json()
+    assert insp_data["version_id"] == v.version_id
+    assert insp_data["name"] == "V1 API Bench"
+
+    # Test inspect baseline
+    insp_base = client.get("/api/agent-evo/versions/baseline/inspect")
+    assert insp_base.status_code == 200
+    assert insp_base.json()["version_id"] == "baseline"
+
+    # Test list benchmarks
+    bench_list_res = client.get("/api/agent-evo/benchmarks")
+    assert bench_list_res.status_code == 200
+    assert "benchmarks" in bench_list_res.json()
+
+
+@pytest.mark.asyncio
+async def test_benchmark_multi_iteration_and_relative_calculations(db_session, evo_test_user, monkeypatch):
+    """
+    Test that BenchmarkService runs multiple iterations per workflow,
+    calculates means and per-run results, establishes baseline-relative deltas,
+    and classifies Pareto dominance.
+    """
+    # Create test version v1 (cheaper than baseline)
+    wf1 = get_baseline_workflow()
+    wf1.retrieval.top_k = 2
+    v1 = WorkflowVersion(
+        version_id="wf_v1_bench_delta",
+        version_number=1,
+        name="V1 Delta Test",
+        source_run_id="run_delta_1",
+        source_candidate_id="cand_delta_1",
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        configuration=wf1.to_dict(),
+        evaluation_snapshot={"groundedness": 1.0, "cost": 0.00004},
+        status="approved",
+        approved_by=evo_test_user.email,
+    )
+    db_session.add(v1)
+    db_session.commit()
+
+    # Mock EvaluatorAdapter to return deterministic metrics
+    eval_call_count = {"baseline": 0, "wf_v1_bench_delta": 0}
+
+    async def mock_evaluate(workflow, query, user_id, document_id=None, expected_answer=None, db=None):
+        w_id = workflow.workflow_id
+        if w_id == "baseline" or "baseline" in workflow.name.lower():
+            eval_call_count["baseline"] += 1
+            cost = 0.000100
+            groundedness = 0.90
+            tokens = 1000
+            latency = 4000.0
+        else:
+            eval_call_count["wf_v1_bench_delta"] += 1
+            cost = 0.000050
+            groundedness = 1.00
+            tokens = 500
+            latency = 2000.0
+
+        from app.services.agent_evo.objective import CandidateMetrics
+        from app.services.agent_evo.pareto import EvaluatedCandidate
+
+        metrics = CandidateMetrics(
+            workflow_id=w_id,
+            workflow_name=workflow.name,
+            performance=groundedness,
+            cost=cost,
+            groundedness=groundedness,
+            hallucination_rate=round(1.0 - groundedness, 2),
+            total_tokens=tokens,
+            input_tokens=tokens - 100,
+            output_tokens=100,
+            llm_latency_ms=latency,
+            execution_time_ms=latency + 500.0,
+            raw_details={"claim_breakdown": [{"claim": "test", "grounded": True}]},
+        )
+        return EvaluatedCandidate(
+            candidate_id=w_id,
+            workflow=workflow,
+            metrics=metrics,
+        )
+
+    monkeypatch.setattr("app.services.agent_evo.benchmark_service.EvaluatorAdapter.evaluate_candidate", mock_evaluate)
+
+    report = await BenchmarkService.run_benchmark(
+        version_ids=["baseline", "wf_v1_bench_delta"],
+        query="What is the primary diagnosis?",
+        user_id=evo_test_user.id,
+        user_email=evo_test_user.email,
+        iterations=2,
+        db=db_session,
+    )
+
+    # 1. Identical inputs & multi-iteration checks
+    assert report.status == "completed"
+    assert len(report.results) == 2
+    assert eval_call_count["baseline"] == 2
+    assert eval_call_count["wf_v1_bench_delta"] == 2
+
+    # 2. Check baseline item
+    base_item = next(r for r in report.results if r.version_id == "baseline")
+    assert base_item.iterations_count == 2
+    assert len(base_item.runs) == 2
+    assert base_item.groundedness == 0.90
+    assert base_item.cost == 0.000100
+    assert base_item.relative_changes["groundedness_delta"] == 0.0
+    assert base_item.relative_changes["cost_reduction_pct"] == 0.0
+    assert base_item.relative_changes["token_reduction_pct"] == 0.0
+
+    # 3. Check v1 item relative deltas
+    v1_item = next(r for r in report.results if r.version_id == "wf_v1_bench_delta")
+    assert v1_item.iterations_count == 2
+    assert len(v1_item.runs) == 2
+    assert v1_item.groundedness == 1.00
+    assert v1_item.cost == 0.000050
+    assert v1_item.relative_changes["groundedness_delta"] == 0.10
+    assert v1_item.relative_changes["cost_reduction_pct"] == 50.0
+    assert v1_item.relative_changes["token_reduction_pct"] == 50.0
+    assert v1_item.relative_changes["latency_reduction_pct"] == 50.0
+
+    # 4. Pareto classification (v1 has higher groundedness and lower cost, so it dominates baseline)
+    assert v1_item.is_pareto_optimal is True
+    assert v1_item.pareto_status == "Pareto-optimal"
+    assert "baseline" in v1_item.dominates
+    assert base_item.is_pareto_optimal is False
+    assert base_item.pareto_status == "Dominated"
+    assert "wf_v1_bench_delta" in base_item.dominated_by
+
+    # 5. Check Persistence
+    persisted = BenchmarkService.get_benchmark(report.benchmark_id, db=db_session)
+    assert persisted is not None
+    assert persisted.benchmark_id == report.benchmark_id
+    assert len(persisted.results) == 2
+
+
+def test_benchmark_canonical_field_mapping_data_contract():
+    """
+    Regression Test: Asserts that BenchmarkItemResult preserves exact explicit
+    named fields without positional or label shift bugs.
+    """
+    from app.schemas.agent_evo import BenchmarkItemResult
+
+    result = BenchmarkItemResult(
+        version_id="baseline",
+        version_number=0,
+        workflow_name="Production Baseline",
+        parent_workflow_id="None",
+        source_candidate_id=None,
+        source_run_id=None,
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        groundedness=1.0,
+        hallucination_rate=0.0,
+        cost=0.000039,
+        total_tokens=409,
+        input_tokens=371,
+        output_tokens=38,
+        llm_latency_ms=2401.0,
+        execution_time_ms=2600.0,
+        retrieval={"top_k": 5, "similarity_threshold": 0.35, "chunk_size": 1000, "chunk_overlap": 200, "reranking": True},
+        retrieval_config_summary="top_k=5, sim_thresh=0.35, chunk_size=1000, rerank=True",
+        prompt_template="default_medical",
+        prompt_strategy="default_medical",
+        context_compression=False,
+        is_pareto_optimal=False,
+        pareto_status="Dominated",
+        configuration={},
+    )
+
+    # 1. Verify exact canonical values
+    assert result.groundedness == 1.0
+    assert result.hallucination == 0.0
+    assert result.cost_per_query == 0.000039
+    assert result.total_tokens == 409
+    assert result.latency_ms == 2401.0
+    assert result.model == "gemini-3.5-flash-lite"
+    assert result.provider == "Google"
+    assert "top_k=5" in result.retrieval_config
+    assert result.version == "baseline"
+    assert result.workflow == "Production Baseline"
+
+    # 2. Strict anti-shift assertions: Latency is NOT tokens, Cost is NOT latency, Tokens is NOT model
+    assert result.latency_ms != result.total_tokens, "Field shift: latency_ms must not equal total_tokens"
+    assert result.total_tokens != result.model, "Field shift: total_tokens must not equal model"
+    assert result.cost_per_query != result.latency_ms, "Field shift: cost_per_query must not equal latency_ms"
+    assert result.hallucination != result.groundedness, "Field shift: hallucination must not equal groundedness"
+
+
+def test_benchmark_pareto_strictly_uses_groundedness_and_cost():
+    """
+    Asserts Pareto dominance strictly evaluates Groundedness ↑ and Cost ↓,
+    never using latency or tokens for dominance classification.
+    """
+    from app.schemas.agent_evo import BenchmarkItemResult
+    from app.services.agent_evo.benchmark_service import BenchmarkService
+
+    def make_item(v_id: str, g: float, c: float, lat: float, tok: int) -> BenchmarkItemResult:
+        return BenchmarkItemResult(
+            version_id=v_id,
+            workflow_name=f"Workflow {v_id}",
+            model_id="gemini-3.5-flash-lite",
+            provider="Google",
+            groundedness=g,
+            hallucination_rate=round(1.0 - g, 2),
+            cost=c,
+            total_tokens=tok,
+            input_tokens=tok - 50,
+            output_tokens=50,
+            llm_latency_ms=lat,
+            execution_time_ms=lat + 200,
+            retrieval={},
+            prompt_template="default",
+            context_compression=False,
+            is_pareto_optimal=False,
+            pareto_status="Non-dominated",
+            configuration={},
+        )
+
+    # Item A: High groundedness (1.0), low cost ($0.000030), HIGH latency (8000ms), LOW tokens (280)
+    item_a = make_item("v_a", g=1.0, c=0.000030, lat=8000.0, tok=280)
+    # Item B: Equal groundedness (1.0), higher cost ($0.000050), LOW latency (1000ms), HIGH tokens (600)
+    item_b = make_item("v_b", g=1.0, c=0.000050, lat=1000.0, tok=600)
+
+    # Item A must dominate Item B because Cost is lower and Groundedness is equal,
+    # EVEN THOUGH Item B has faster latency!
+    frontier, dominated = BenchmarkService._compute_pareto_dominance([item_a, item_b])
+
+    assert len(frontier) == 1
+    assert frontier[0].version_id == "v_a"
+    assert len(dominated) == 1
+    assert dominated[0].version_id == "v_b"
+    assert "v_b" in frontier[0].dominates
+    assert "v_a" in dominated[0].dominated_by
+
+
+
+
+
 

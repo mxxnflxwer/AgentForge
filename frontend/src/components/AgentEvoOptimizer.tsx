@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 
-export type MutationType = 'prompt' | 'retrieval' | 'model' | 'operator' | 'mixed'
+export type MutationType = 'prompt' | 'retrieval' | 'model' | 'operator' | 'mixed' | 'refinement'
 
 export interface MutationMetadata {
   mutation_type: MutationType
@@ -120,6 +120,161 @@ export interface WorkflowVersion {
   created_at: string
 }
 
+export interface BenchmarkItemResult {
+  version_id: string
+  version?: string
+  version_number?: number | null
+  workflow_name: string
+  workflow?: string
+  parent_workflow_id?: string | null
+  parent_workflow?: string | null
+  source_candidate_id?: string | null
+  source_run_id?: string | null
+  model_id: string
+  model?: string
+  provider: string
+  groundedness: number
+  hallucination_rate: number
+  hallucination?: number
+  cost: number
+  cost_per_query?: number
+  total_tokens: number
+  input_tokens: number
+  output_tokens: number
+  llm_latency_ms: number
+  latency_ms?: number
+  execution_time_ms: number
+  retrieval: Record<string, any>
+  retrieval_config_summary?: string | null
+  retrieval_config?: string | null
+  prompt_template: string
+  prompt_strategy?: string | null
+  context_compression: boolean
+  operator_config?: Record<string, any> | null
+  is_pareto_optimal: boolean
+  pareto_status: string
+  dominated_by: string[]
+  dominates: string[]
+  claim_breakdown?: Array<Record<string, any>> | null
+  raw_details?: Record<string, any> | null
+  configuration: Record<string, any>
+  iterations_count?: number
+  runs?: Array<{
+    iteration: number
+    groundedness: number
+    hallucination_rate: number
+    cost: number
+    total_tokens: number
+    input_tokens: number
+    output_tokens: number
+    llm_latency_ms: number
+    execution_time_ms: number
+  }> | null
+  relative_changes?: {
+    groundedness_delta?: number
+    groundedness_change?: number
+    cost_reduction_pct?: number
+    cost_change_pct?: number
+    latency_reduction_pct?: number
+    latency_change_pct?: number
+    token_reduction_pct?: number
+    token_change_pct?: number
+  } | null
+  std_dev?: {
+    groundedness?: number
+    hallucination?: number
+    cost?: number
+    cost_per_query?: number
+    tokens?: number
+    latency_ms?: number
+  } | null
+}
+
+export interface BenchmarkReport {
+  benchmark_id: string
+  name: string
+  description?: string | null
+  status: string
+  preset_name?: string | null
+  query: string
+  document_id?: string | null
+  document_ids?: string[] | null
+  expected_answer?: string | null
+  repetitions?: number | null
+  selected_versions: string[]
+  results: BenchmarkItemResult[]
+  pareto_frontier: BenchmarkItemResult[]
+  dominated_versions: BenchmarkItemResult[]
+  summary: string
+  created_by: string
+  created_at: string
+}
+
+export interface LineageNode {
+  version_id: string
+  version_number?: number | null
+  name: string
+  parent_workflow_id?: string | null
+  source_run_id?: string | null
+  source_candidate_id?: string | null
+  model_id: string
+  provider: string
+  mutation_type?: string | null
+  refinement_operation?: string | null
+  fields_changed?: string[] | null
+  rationale?: string | null
+  before_configuration?: Record<string, any> | null
+  after_configuration?: Record<string, any> | null
+  evaluation_snapshot?: Record<string, any> | null
+  approved_by?: string | null
+  approved_at?: string | null
+  status: string
+  configuration?: Record<string, any> | null
+}
+
+export interface LineageEdge {
+  source: string
+  target: string
+  label?: string | null
+}
+
+export interface LineageData {
+  total_versions: number
+  nodes: LineageNode[]
+  edges: LineageEdge[]
+}
+
+export interface VersionInspectData {
+  version_id: string
+  version_number?: number | null
+  name: string
+  description?: string | null
+  parent_workflow_id?: string | null
+  parent_version?: {
+    version_id: string
+    version_number: number
+    name: string
+    model_id: string
+    provider: string
+  } | null
+  source_run_id?: string | null
+  source_candidate_id?: string | null
+  model_id: string
+  provider: string
+  mutation_type?: string | null
+  refinement_operation?: string | null
+  fields_changed?: string[] | null
+  rationale?: string | null
+  before_configuration?: Record<string, any> | null
+  after_configuration?: Record<string, any> | null
+  configuration: Record<string, any>
+  evaluation_snapshot: Record<string, any>
+  status: string
+  approved_by: string
+  approved_at: string
+  created_at: string
+}
+
 interface DocumentItem {
   id: string
   filename?: string
@@ -162,27 +317,45 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   setSelectedDocId,
   isLoggedIn,
 }) => {
+  // Main Top-level Tab Navigation
+  const [activeMainTab, setActiveMainTab] = useState<'optimizer' | 'benchmark' | 'lineage'>('optimizer')
+
   // Optimization Setup State
   const [activePreset, setActivePreset] = useState<PresetType>('clinical')
   const [query, setQuery] = useState(PRESET_QUERIES.clinical.query)
   const [generatedCandidateCount, setGeneratedCandidateCount] = useState<number>(4)
+  const [selectedStrategy, setSelectedStrategy] = useState<string>('all')
+  const [selectedParentWorkflowId, setSelectedParentWorkflowId] = useState<string>('baseline')
 
   // Execution & Pipeline State
   const [running, setRunning] = useState(false)
   const [currentStageIndex, setCurrentStageIndex] = useState<number>(0)
   const [report, setReport] = useState<OptimizationReport | null>(null)
-  const [runs, setRuns] = useState<OptimizationReport[]>([])
+  const [, setRuns] = useState<OptimizationReport[]>([])
   const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersion[]>([])
   const [error, setError] = useState<string | null>(null)
 
   // Interactive Selection State
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
   const [inspectModalCandidate, setInspectModalCandidate] = useState<EvaluatedCandidate | null>(null)
-  const [inspectModalVersion, setInspectModalVersion] = useState<WorkflowVersion | null>(null)
+  const [inspectModalVersion, setInspectModalVersion] = useState<VersionInspectData | null>(null)
   const [confirmApprovalCandidate, setConfirmApprovalCandidate] = useState<EvaluatedCandidate | null>(null)
   const [approvingId, setApprovingId] = useState<string | null>(null)
-  const [hoveredPoint, setHoveredPoint] = useState<EvaluatedCandidate | null>(null)
   const [isReportCollapsed, setIsReportCollapsed] = useState<boolean>(false)
+
+  // Benchmarking State
+  const [selectedBenchmarkVersions, setSelectedBenchmarkVersions] = useState<string[]>(['baseline'])
+  const [benchPreset, setBenchPreset] = useState<PresetType>('clinical')
+  const [benchQuery, setBenchQuery] = useState<string>(PRESET_QUERIES.clinical.query)
+  const [benchDocId, setBenchDocId] = useState<string>(selectedDocId)
+  const [isBenchmarking, setIsBenchmarking] = useState<boolean>(false)
+  const [benchmarkReport, setBenchmarkReport] = useState<BenchmarkReport | null>(null)
+  const [benchmarkHistory, setBenchmarkHistory] = useState<BenchmarkReport[]>([])
+  const [hoveredBenchItem, setHoveredBenchItem] = useState<BenchmarkItemResult | null>(null)
+
+  // Lineage State
+  const [lineageData, setLineageData] = useState<LineageData | null>(null)
+  const [isLineageLoading, setIsLineageLoading] = useState<boolean>(false)
 
   // Modal accessibility ref
   const modalRef = useRef<HTMLDivElement>(null)
@@ -191,8 +364,17 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
     if (isLoggedIn) {
       fetchRuns()
       fetchVersions()
+      fetchBenchmarks()
+      fetchLineage()
     }
   }, [isLoggedIn])
+
+  // Sync selected doc with benchmark doc
+  useEffect(() => {
+    if (selectedDocId) {
+      setBenchDocId(selectedDocId)
+    }
+  }, [selectedDocId])
 
   // Handle ESC key for modal
   useEffect(() => {
@@ -242,6 +424,9 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
         const data = await res.json()
         if (data.versions && Array.isArray(data.versions)) {
           setWorkflowVersions(data.versions)
+          // Default benchmark versions to baseline + all approved
+          const allIds = ['baseline', ...data.versions.map((v: WorkflowVersion) => v.version_id)]
+          setSelectedBenchmarkVersions(allIds)
         }
       }
     } catch (err) {
@@ -249,10 +434,63 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
     }
   }
 
+  const fetchBenchmarks = async () => {
+    try {
+      const res = await fetch(`${apiBase}/api/agent-evo/benchmarks`, { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.benchmarks && Array.isArray(data.benchmarks)) {
+          setBenchmarkHistory(data.benchmarks)
+          if (data.benchmarks.length > 0 && !benchmarkReport) {
+            setBenchmarkReport(data.benchmarks[0])
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch benchmark history', err)
+    }
+  }
+
+  const fetchLineage = async () => {
+    setIsLineageLoading(true)
+    try {
+      const res = await fetch(`${apiBase}/api/agent-evo/lineage`, { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        setLineageData(data)
+      }
+    } catch (err) {
+      console.warn('Could not fetch lineage graph', err)
+    } finally {
+      setIsLineageLoading(false)
+    }
+  }
+
+  const handleInspectVersion = async (versionId: string) => {
+    try {
+      const res = await fetch(`${apiBase}/api/agent-evo/versions/${versionId}/inspect`, { credentials: 'include' })
+      if (res.ok) {
+        const data: VersionInspectData = await res.json()
+        setInspectModalVersion(data)
+      } else {
+        setError(`Failed to inspect version ${versionId}`)
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to inspect version')
+    }
+  }
+
   const handlePresetChange = (preset: PresetType) => {
     setActivePreset(preset)
     if (preset !== 'custom') {
       setQuery(PRESET_QUERIES[preset].query)
+    }
+  }
+
+  const handleBenchPresetChange = (preset: PresetType) => {
+    setBenchPreset(preset)
+    if (preset !== 'custom') {
+      setBenchQuery(PRESET_QUERIES[preset].query)
     }
   }
 
@@ -275,12 +513,22 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
         query: string
         document_id?: string
         candidate_count: number
+        parent_workflow_id?: string
+        allowed_mutation_types?: string[]
       } = {
         query: query.trim(),
         candidate_count: generatedCandidateCount,
       }
       if (selectedDocId) {
         payload.document_id = selectedDocId
+      }
+      if (selectedParentWorkflowId && selectedParentWorkflowId !== 'baseline') {
+        payload.parent_workflow_id = selectedParentWorkflowId
+      }
+      if (selectedStrategy === 'refinement') {
+        payload.allowed_mutation_types = ['refinement']
+      } else if (selectedStrategy !== 'all') {
+        payload.allowed_mutation_types = [selectedStrategy]
       }
 
       const res = await fetch(`${apiBase}/api/agent-evo/optimize`, {
@@ -300,12 +548,57 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       setReport(newReport)
       await fetchRuns()
       await fetchVersions()
+      await fetchLineage()
     } catch (err: any) {
       setError(err.message || 'The optimization run could not be completed.')
     } finally {
       clearTimeout(t1)
       clearTimeout(t2)
       setRunning(false)
+    }
+  }
+
+  const handleRunBenchmark = async () => {
+    if (selectedBenchmarkVersions.length === 0) {
+      setError('Select at least one workflow version to benchmark.')
+      return
+    }
+    if (!benchQuery.trim()) {
+      setError('Provide a benchmark query.')
+      return
+    }
+
+    setError(null)
+    setIsBenchmarking(true)
+
+    try {
+      const payload = {
+        version_ids: selectedBenchmarkVersions,
+        name: `Benchmark: ${PRESET_QUERIES[benchPreset].label} (${selectedBenchmarkVersions.length} versions)`,
+        preset_name: benchPreset,
+        query: benchQuery.trim(),
+        document_id: benchDocId || selectedDocId || undefined,
+      }
+
+      const res = await fetch(`${apiBase}/api/agent-evo/benchmark`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      })
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || `Benchmark failed with status ${res.status}`)
+      }
+
+      const reportData: BenchmarkReport = await res.json()
+      setBenchmarkReport(reportData)
+      await fetchBenchmarks()
+    } catch (err: any) {
+      setError(err.message || 'Benchmark execution failed.')
+    } finally {
+      setIsBenchmarking(false)
     }
   }
 
@@ -332,6 +625,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       setConfirmApprovalCandidate(null)
       await fetchVersions()
       await fetchRuns()
+      await fetchLineage()
     } catch (err: any) {
       setError(err.message || 'Failed to record developer approval')
     } finally {
@@ -339,944 +633,431 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
     }
   }
 
-  // Active selected candidate details
-  const activeCandidate = report?.all_candidates.find((c) => c.candidate_id === selectedCandidateId) || report?.baseline
-  const baselineCandidate = report?.baseline
-
-  // Dynamic Key Findings calculation
-  const generateDynamicFindings = (cand: EvaluatedCandidate, base: EvaluatedCandidate): string[] => {
-    const findings: string[] = []
-    if (base.metrics.status !== 'success') {
-      findings.push(
-        `Production baseline evaluation was unavailable (${base.metrics.error_message || base.metrics.status}). Direct metric comparisons against baseline are unavailable.`
-      )
-      return findings
-    }
-    if (cand.metrics.status !== 'success') {
-      findings.push(
-        `Candidate workflow evaluation failed (${cand.metrics.error_message || cand.metrics.status}).`
-      )
-      return findings
-    }
-
-    const candGroundedness = cand.metrics.groundedness ?? cand.metrics.performance
-    const baseGroundedness = base.metrics.groundedness ?? base.metrics.performance
-    const groundednessDiff = candGroundedness - baseGroundedness
-    const costDiff = cand.metrics.cost - base.metrics.cost
-    const latencyDiff = cand.metrics.llm_latency_ms - base.metrics.llm_latency_ms
-
-    if (Math.abs(groundednessDiff) < 0.001) {
-      if (costDiff < 0) {
-        findings.push('The candidate achieved the same measured groundedness as the baseline with lower measured cost.')
-      } else if (costDiff > 0) {
-        findings.push('The candidate achieved the same measured groundedness as the baseline at a higher measured cost.')
-      } else {
-        findings.push('The candidate recorded identical groundedness and cost metrics as the baseline.')
-      }
-    } else if (groundednessDiff > 0) {
-      if (costDiff <= 0) {
-        findings.push('The candidate achieved higher measured groundedness than the baseline with equal or lower measured cost.')
-      } else {
-        findings.push('The candidate achieved higher measured groundedness with a measurable cost increase.')
-      }
-    } else {
-      findings.push('The candidate recorded lower measured groundedness compared to the baseline.')
-    }
-
-    if (latencyDiff < 0) {
-      findings.push('The candidate also recorded lower measured latency in this evaluation run.')
-    } else if (latencyDiff > 0) {
-      findings.push('The candidate recorded higher measured latency in this evaluation run.')
-    }
-
-    return findings
+  const toggleBenchmarkVersion = (vId: string) => {
+    setSelectedBenchmarkVersions((prev) =>
+      prev.includes(vId) ? prev.filter((id) => id !== vId) : [...prev, vId]
+    )
   }
 
-  // Helper to render exploration mutation badge
+  const selectAllVersionsForBenchmark = () => {
+    const all = ['baseline', ...workflowVersions.map((v) => v.version_id)]
+    setSelectedBenchmarkVersions(all)
+    setActiveMainTab('benchmark')
+  }
+
+  const compareSelectedVersions = () => {
+    if (selectedBenchmarkVersions.length === 0) {
+      setSelectedBenchmarkVersions(['baseline', ...workflowVersions.map((v) => v.version_id)])
+    }
+    setActiveMainTab('benchmark')
+  }
+
   const renderMutationBadge = (cand: EvaluatedCandidate) => {
     const meta = cand.mutation_metadata || cand.workflow.mutation_metadata
-    if (!meta) return null
-    const typeMap: Record<string, { label: string; className: string }> = {
-      prompt: { label: 'Prompt', className: 'evo-mut-prompt' },
-      retrieval: { label: 'Retrieval', className: 'evo-mut-retrieval' },
-      model: { label: 'Model', className: 'evo-mut-model' },
-      operator: { label: 'Operator', className: 'evo-mut-operator' },
-      mixed: { label: 'Mixed', className: 'evo-mut-mixed' },
+    if (!meta) {
+      return <span className="evo-mut-tag mut-baseline">baseline</span>
     }
-    const info = typeMap[meta.mutation_type] || { label: meta.mutation_type, className: 'evo-mut-default' }
+    const type = meta.mutation_type || 'custom'
     return (
-      <span className={`evo-mutation-tag ${info.className}`} title={meta.mutation_description}>
-        {info.label}
+      <span className={`evo-mut-tag mut-${type} ${type === 'refinement' ? 'evo-mut-refinement' : ''}`}>
+        {type.toUpperCase()}
       </span>
     )
   }
 
-  // Pipeline stages definition
-  const pipelineStages = [
-    { label: 'Baseline', desc: 'Reference workflow' },
-    { label: 'Candidate Generation', desc: 'Mutating parameters' },
-    { label: 'Evaluation', desc: 'Phase 6 claim metrics' },
-    { label: 'Pareto Analysis', desc: 'Dominance evaluation' },
-    { label: 'Human Review', desc: 'Developer inspection' },
-  ]
-
-  // Render Scatter Plot
-  const renderScatterPlot = () => {
-    if (!report || !report.all_candidates || report.all_candidates.length === 0) return null
-
-    const candidates = report.all_candidates
-    const maxPerf = 1.0
-    const minPerf = 0.0
-
-    const costs = candidates.map((c) => c.metrics.cost)
-    const minCost = 0.0
-    const maxCost = Math.max(...costs, 0.00005) * 1.25 || 0.0001
-
-    const width = 680
-    const height = 280
-    const padding = { top: 25, right: 35, bottom: 45, left: 65 }
-    const plotWidth = width - padding.left - padding.right
-    const plotHeight = height - padding.top - padding.bottom
-
-    const getX = (cost: number) => padding.left + ((cost - minCost) / (maxCost - minCost)) * plotWidth
-    const getY = (perf: number) => padding.top + (1 - (perf - minPerf) / (maxPerf - minPerf)) * plotHeight
-
-    // Sorted Pareto points for frontier connection
-    const paretoPoints = [...report.pareto_frontier].sort((a, b) => a.metrics.cost - b.metrics.cost)
-
-    return (
-      <div className="evo-scatter-container">
-        <svg viewBox={`0 0 ${width} ${height}`} className="evo-scatter-svg" role="img" aria-label="Pareto Frontier Scatter Plot">
-          {/* Background Grid Lines (Performance / Y-Axis) */}
-          {[0, 0.25, 0.5, 0.75, 1.0].map((level, i) => {
-            const y = getY(level)
-            return (
-              <g key={`grid-y-${i}`}>
-                <line x1={padding.left} y1={y} x2={width - padding.right} y2={y} stroke="rgba(255,255,255,0.08)" strokeDasharray="3 3" />
-                <text x={padding.left - 10} y={y + 4} fill="#94a3b8" fontSize="10.5" textAnchor="end" fontFamily="system-ui, sans-serif">
-                  {(level * 100).toFixed(0)}%
-                </text>
-              </g>
-            )
-          })}
-
-          {/* Cost Ticks (X-Axis) */}
-          {[0, 0.33, 0.66, 1.0].map((ratio, i) => {
-            const costVal = minCost + ratio * (maxCost - minCost)
-            const x = getX(costVal)
-            return (
-              <g key={`grid-x-${i}`}>
-                <line x1={x} y1={padding.top} x2={x} y2={height - padding.bottom} stroke="rgba(255,255,255,0.06)" strokeDasharray="3 3" />
-                <text x={x} y={height - padding.bottom + 18} fill="#94a3b8" fontSize="10" textAnchor="middle" fontFamily="system-ui, sans-serif">
-                  ${costVal.toFixed(6)}
-                </text>
-              </g>
-            )
-          })}
-
-          {/* Axes Lines */}
-          <line x1={padding.left} y1={padding.top} x2={padding.left} y2={height - padding.bottom} stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" />
-          <line x1={padding.left} y1={height - padding.bottom} x2={width - padding.right} y2={height - padding.bottom} stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" />
-
-          {/* Axis Labels */}
-          <text x={width / 2} y={height - 8} fill="#cbd5e1" fontSize="11" fontWeight="600" textAnchor="middle">
-            Cost per Query (USD) → (Lower is better)
-          </text>
-          <text
-            x={-height / 2}
-            y={18}
-            fill="#cbd5e1"
-            fontSize="11"
-            fontWeight="600"
-            textAnchor="middle"
-            transform="rotate(-90)"
-          >
-            Groundedness / Performance ↑ (Higher is better)
-          </text>
-
-          {/* Pareto Frontier Connecting Line */}
-          {paretoPoints.length > 1 && (
-            <polyline
-              points={paretoPoints.map((p) => `${getX(p.metrics.cost)},${getY(p.metrics.groundedness ?? p.metrics.performance)}`).join(' ')}
-              fill="none"
-              stroke="#22c55e"
-              strokeWidth="2"
-              strokeDasharray="4 4"
-              opacity="0.75"
-            />
-          )}
-
-          {/* Candidate Points */}
-          {candidates.map((c) => {
-            const isBaseline = c.candidate_id === 'baseline'
-            const isPareto = c.is_pareto_optimal
-            const isSelected = selectedCandidateId === c.candidate_id
-            const cx = getX(c.metrics.cost)
-            const cy = getY(c.metrics.groundedness ?? c.metrics.performance)
-
-            return (
-              <g
-                key={c.candidate_id}
-                className="evo-scatter-point-group"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelectedCandidateId(c.candidate_id)}
-                onMouseEnter={() => setHoveredPoint(c)}
-                onMouseLeave={() => setHoveredPoint(null)}
-              >
-                {/* Selection Halo */}
-                {isSelected && (
-                  <circle cx={cx} cy={cy} r="13" fill="none" stroke="#3b82f6" strokeWidth="2.5" opacity="0.95" />
-                )}
-
-                {/* Baseline shape (Diamond) */}
-                {isBaseline && (
-                  <polygon
-                    points={`${cx},${cy - 8} ${cx + 8},${cy} ${cx},${cy + 8} ${cx - 8},${cy}`}
-                    fill="#38bdf8"
-                    stroke="#ffffff"
-                    strokeWidth="1.5"
-                  />
-                )}
-
-                {/* Pareto-optimal shape (Green solid circle) */}
-                {!isBaseline && isPareto && (
-                  <circle
-                    cx={cx}
-                    cy={cy}
-                    r="7.5"
-                    fill="#22c55e"
-                    stroke="#ffffff"
-                    strokeWidth="1.5"
-                  />
-                )}
-
-                {/* Dominated shape (Muted slate with subtle stroke) */}
-                {!isBaseline && !isPareto && (
-                  <circle
-                    cx={cx}
-                    cy={cy}
-                    r="6"
-                    fill="#475569"
-                    stroke="#94a3b8"
-                    strokeWidth="1.2"
-                    opacity="0.85"
-                  />
-                )}
-
-                {/* Point Label */}
-                <text
-                  x={cx}
-                  y={cy - 11}
-                  fill={isPareto ? '#4ade80' : isBaseline ? '#38bdf8' : '#94a3b8'}
-                  fontSize="9.5"
-                  fontWeight={isPareto || isBaseline ? '700' : '500'}
-                  textAnchor="middle"
-                >
-                  {isBaseline ? 'Baseline' : c.candidate_id}
-                </text>
-              </g>
-            )
-          })}
-        </svg>
-
-        {/* Dynamic Tooltip on Hover */}
-        {hoveredPoint && (
-          <div className="evo-scatter-tooltip">
-            <div className="evo-tt-header">
-              <span className={`evo-tt-badge ${hoveredPoint.candidate_id === 'baseline' ? 'evo-badge-baseline' : hoveredPoint.is_pareto_optimal ? 'evo-badge-pareto' : 'evo-badge-dominated'}`}>
-                {hoveredPoint.candidate_id === 'baseline' ? 'Baseline' : hoveredPoint.is_pareto_optimal ? 'Pareto-Optimal' : 'Dominated'}
-              </span>
-              <strong>{hoveredPoint.workflow.name}</strong>
-            </div>
-            <div className="evo-tt-body">
-              <div><strong>Candidate ID:</strong> {hoveredPoint.candidate_id}</div>
-              <div><strong>Model:</strong> {hoveredPoint.workflow.model.provider} / {hoveredPoint.workflow.model.model_id}</div>
-              <div><strong>Retrieval:</strong> Top-{hoveredPoint.workflow.retrieval.top_k} (θ={hoveredPoint.workflow.retrieval.similarity_threshold})</div>
-              <div><strong>Groundedness:</strong> {((hoveredPoint.metrics.groundedness ?? hoveredPoint.metrics.performance) * 100).toFixed(1)}%</div>
-              <div><strong>Hallucination:</strong> {((hoveredPoint.metrics.hallucination_rate ?? 0) * 100).toFixed(1)}%</div>
-              <div><strong>Cost / Query:</strong> ${hoveredPoint.metrics.cost.toFixed(6)}</div>
-              <div><strong>Latency:</strong> {hoveredPoint.metrics.llm_latency_ms.toFixed(0)} ms</div>
-            </div>
-          </div>
-        )}
-
-        {/* Legend */}
-        <div className="evo-scatter-legend">
-          <div className="evo-legend-items">
-            <div className="evo-legend-item">
-              <span className="evo-legend-symbol evo-symbol-baseline">◆</span>
-              <span>Baseline</span>
-            </div>
-            <div className="evo-legend-item">
-              <span className="evo-legend-symbol evo-symbol-pareto">●</span>
-              <span>Pareto-Optimal</span>
-            </div>
-            <div className="evo-legend-item">
-              <span className="evo-legend-symbol evo-symbol-dominated">○</span>
-              <span>Dominated</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const baselineCandidate = report?.baseline || null
 
   return (
-    <div className="agent-evo-dashboard">
-      {/* 1. AGENT EVO HEADER */}
-      <header className="evo-header">
-        <div className="evo-header-left">
-          <h1 className="evo-header-title">AgentEvo</h1>
-          <span className="evo-header-subtitle">Autonomous Workflow Optimization</span>
-          <p className="evo-header-description">
-            Evaluate and evolve RAG and LLM workflows using measurable performance and cost trade-offs.
+    <div className="evo-container">
+      {/* Top Header */}
+      <div className="evo-page-header">
+        <div>
+          <h1 className="evo-title">AgentEvo Optimization & Benchmarking Engine</h1>
+          <p className="evo-subtitle">
+            Autonomous multi-candidate evolution, Phase 6 claim-groundedness evaluation, Pareto trade-off optimization, and reproducible head-to-head benchmarking.
           </p>
         </div>
-        <div className="evo-header-right">
-          <div className="evo-badge-stack">
-            <span className="evo-phase-badge">PHASE 7.1</span>
-            <span className="evo-active-badge">
-              <span className="evo-status-dot"></span> ACTIVE
-            </span>
-          </div>
+        <div className="evo-header-meta">
+          <span className="evo-status-pill">
+            <span className="evo-dot" /> Autonomous Evolutionary RAG
+          </span>
         </div>
-      </header>
+      </div>
 
-      {/* 2. OPTIMIZATION SETUP */}
-      <section className="evo-section evo-setup-section" aria-labelledby="evo-setup-title">
-        <div className="evo-section-header">
-          <h2 id="evo-setup-title" className="evo-section-title">Optimization Setup</h2>
+      {/* Main Navigation Sub-Tabs */}
+      <div className="evo-nav-tabs">
+        <button
+          type="button"
+          className={`evo-nav-tab ${activeMainTab === 'optimizer' ? 'active' : ''}`}
+          onClick={() => setActiveMainTab('optimizer')}
+        >
+          <span>🧬</span> Live Evolutionary Optimizer
+        </button>
+        <button
+          type="button"
+          className={`evo-nav-tab ${activeMainTab === 'benchmark' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveMainTab('benchmark')
+            fetchBenchmarks()
+          }}
+        >
+          <span>⚖️</span> Version Benchmark & Comparison
+        </button>
+        <button
+          type="button"
+          className={`evo-nav-tab ${activeMainTab === 'lineage' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveMainTab('lineage')
+            fetchLineage()
+          }}
+        >
+          <span>🌳</span> Workflow Version Lineage
+        </button>
+      </div>
+
+      {error && (
+        <div className="evo-error-banner" role="alert">
+          <span className="evo-error-icon">⚠️</span>
+          <span>{error}</span>
+          <button type="button" onClick={() => setError(null)} className="evo-error-dismiss" aria-label="Dismiss error">✕</button>
         </div>
-
-        {error && (
-          <div className="evo-alert evo-alert-error" role="alert">
-            <div className="evo-alert-content">
-              <strong>Optimization Notice:</strong> {error}
-            </div>
-            <button
-              type="button"
-              onClick={() => setError(null)}
-              className="evo-btn-ghost-sm"
-              aria-label="Dismiss error"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-
-        <form onSubmit={handleRunOptimization} className="evo-setup-form">
-          {/* Exploration Mutation Strategies Bar */}
-          <div className="evo-strategy-badges">
-            <span className="evo-strategy-title">Mutation Strategies:</span>
-            <span className="evo-strategy-pill evo-strat-prompt">Prompt</span>
-            <span className="evo-strategy-pill evo-strat-retrieval">Retrieval</span>
-            <span className="evo-strategy-pill evo-strat-model">Model</span>
-            <span className="evo-strategy-pill evo-strat-operator">Logic / Operator</span>
-            <span className="evo-strategy-pill evo-strat-mixed">Mixed</span>
-          </div>
-
-          {/* Preset Selector */}
-          <div className="evo-form-group">
-            <label className="evo-label">Evaluation Preset</label>
-            <div className="evo-preset-group" role="tablist">
-              {(['clinical', 'medications', 'ood', 'custom'] as PresetType[]).map((presetKey) => (
-                <button
-                  key={presetKey}
-                  type="button"
-                  role="tab"
-                  aria-selected={activePreset === presetKey}
-                  className={`evo-preset-btn ${activePreset === presetKey ? 'evo-preset-btn-active' : ''}`}
-                  onClick={() => handlePresetChange(presetKey)}
-                >
-                  {PRESET_QUERIES[presetKey].label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Query Input */}
-          <div className="evo-form-group">
-            <label className="evo-label" htmlFor="evo-query-textarea">Query</label>
-            <textarea
-              id="evo-query-textarea"
-              rows={2}
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value)
-                setActivePreset('custom')
-              }}
-              placeholder="Enter benchmark question to optimize against..."
-              className="evo-textarea"
-              required
-            />
-          </div>
-
-          {/* Context & Candidate Controls */}
-          <div className="evo-form-row">
-            <div className="evo-form-group evo-col-half">
-              <label className="evo-label" htmlFor="evo-context-select">Target Context</label>
-              <select
-                id="evo-context-select"
-                value={selectedDocId}
-                onChange={(e) => setSelectedDocId(e.target.value)}
-                className="evo-select"
-              >
-                <option value="">All Documents (Global Knowledge Base)</option>
-                {documents.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    📄 {d.original_filename || d.filename || d.id}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="evo-form-group evo-col-half">
-              <label className="evo-label">Generated Candidates</label>
-              <div className="evo-candidate-selector" role="radiogroup" aria-label="Generated Candidates">
-                {[3, 4, 5].map((cnt) => (
-                  <button
-                    key={cnt}
-                    type="button"
-                    role="radio"
-                    aria-checked={generatedCandidateCount === cnt}
-                    className={`evo-candidate-option ${generatedCandidateCount === cnt ? 'evo-candidate-option-active' : ''}`}
-                    onClick={() => setGeneratedCandidateCount(cnt)}
-                  >
-                    [ {cnt} ]
-                  </button>
-                ))}
-              </div>
-              <span className="evo-field-caption">
-                Baseline is evaluated separately.
-              </span>
-            </div>
-          </div>
-
-          {/* Run Action */}
-          <div className="evo-setup-actions">
-            <button
-              type="submit"
-              disabled={running || !isLoggedIn}
-              className="evo-btn-primary"
-            >
-              {running ? 'Running Optimization...' : 'Run AgentEvo Optimization'}
-            </button>
-          </div>
-        </form>
-      </section>
-
-      {/* 3. OPTIMIZATION PIPELINE */}
-      <section className="evo-section evo-pipeline-section" aria-label="Optimization Pipeline">
-        <div className="evo-process-stepper">
-          {pipelineStages.map((st, idx) => {
-            const isCompleted = report ? true : currentStageIndex > idx
-            const isActive = running && currentStageIndex === idx
-            return (
-              <div
-                key={idx}
-                className={`evo-process-step ${isCompleted ? 'step-done' : ''} ${isActive ? 'step-running' : ''}`}
-              >
-                <div className="evo-step-indicator">
-                  {isCompleted ? '✓' : isActive ? '●' : '○'}
-                </div>
-                <div className="evo-step-details">
-                  <span className="evo-step-name">{st.label}</span>
-                  <span className="evo-step-sub">{st.desc}</span>
-                </div>
-                {idx < pipelineStages.length - 1 && <span className="evo-step-arrow">→</span>}
-              </div>
-            )
-          })}
-        </div>
-      </section>
-
-      {/* LOADING STATE */}
-      {running && (
-        <section className="evo-section evo-loading-section">
-          <div className="evo-loading-header">
-            <div className="rag-spinner"></div>
-            <div>
-              <h3 className="evo-loading-title">AgentEvo Optimization</h3>
-              <p className="evo-loading-desc">Executing baseline evaluation, candidate generation, Phase 6 metrics calculation, and Pareto dominance analysis...</p>
-            </div>
-          </div>
-        </section>
       )}
 
-      {/* EMPTY STATE */}
-      {!report && !running && !error && (
-        <section className="evo-section evo-empty-section">
-          <div className="evo-empty-icon">⚙️</div>
-          <h3 className="evo-empty-title">AgentEvo is ready</h3>
-          <p className="evo-empty-desc">
-            Configure an evaluation query and generate workflow candidates to begin optimization.
-          </p>
-          <button
-            type="button"
-            onClick={() => handleRunOptimization()}
-            disabled={!isLoggedIn}
-            className="evo-btn-primary"
-          >
-            Run AgentEvo Optimization
-          </button>
-        </section>
-      )}
-
-      {/* ERROR STATE */}
-      {error && !report && !running && (
-        <section className="evo-section evo-error-section">
-          <div className="evo-empty-icon">⚠</div>
-          <h3 className="evo-empty-title">Optimization could not be completed.</h3>
-          <p className="evo-empty-desc">No workflow changes were applied.</p>
-          <button
-            type="button"
-            onClick={() => handleRunOptimization()}
-            className="evo-btn-secondary"
-          >
-            Retry
-          </button>
-        </section>
-      )}
-
-      {/* OPTIMIZATION RESULTS */}
-      {report && !running && (
+      {/* ========================================================================= */}
+      {/* TAB 1: LIVE EVOLUTIONARY OPTIMIZER                                       */}
+      {/* ========================================================================= */}
+      {activeMainTab === 'optimizer' && (
         <>
-          {/* Runs Switcher if multiple runs exist */}
-          {runs.length > 1 && (
-            <div className="evo-runs-bar">
-              <span className="evo-runs-label">Completed Optimization Runs:</span>
-              <div className="evo-runs-chips">
-                {runs.map((r) => (
-                  <button
-                    key={r.run_id}
-                    onClick={() => setReport(r)}
-                    className={`evo-run-chip ${report?.run_id === r.run_id ? 'evo-run-chip-active' : ''}`}
-                  >
-                    <span>{r.run_id}</span>
-                    <span className="evo-chip-time">
-                      {new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                    <span className="evo-chip-badge">{r.pareto_frontier_count} Pareto</span>
-                  </button>
-                ))}
-              </div>
+          {/* Optimization Controls Section */}
+          <section className="evo-section evo-controls-card">
+            <div className="evo-section-header">
+              <h2 className="evo-section-title">Optimization Setup & Candidate Generation</h2>
+              <span className="evo-section-caption">Configure query preset, target document context, and evolutionary mutation strategy.</span>
             </div>
+
+            <form onSubmit={handleRunOptimization} className="evo-form">
+              {/* Preset Selector */}
+              <div className="evo-form-group">
+                <label className="evo-label">Evaluation Preset</label>
+                <div className="evo-preset-buttons">
+                  {(Object.keys(PRESET_QUERIES) as PresetType[]).map((presetKey) => (
+                    <button
+                      key={presetKey}
+                      type="button"
+                      onClick={() => handlePresetChange(presetKey)}
+                      className={`evo-preset-btn ${activePreset === presetKey ? 'active' : ''}`}
+                      disabled={running}
+                    >
+                      {PRESET_QUERIES[presetKey].label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Evaluation Query Input */}
+              <div className="evo-form-group">
+                <label htmlFor="evo-query-input" className="evo-label">Target Evaluation Query</label>
+                <textarea
+                  id="evo-query-input"
+                  className="evo-textarea"
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value)
+                    setActivePreset('custom')
+                  }}
+                  rows={2}
+                  placeholder="Enter medical query to evaluate candidates against..."
+                  disabled={running}
+                />
+              </div>
+
+              {/* Document Selection, Candidate Count & Mutation Strategy */}
+              <div className="evo-form-row">
+                <div className="evo-form-group evo-col-third">
+                  <label htmlFor="evo-doc-select" className="evo-label">Target Document Context</label>
+                  <select
+                    id="evo-doc-select"
+                    className="evo-select"
+                    value={selectedDocId}
+                    onChange={(e) => setSelectedDocId(e.target.value)}
+                    disabled={running}
+                  >
+                    <option value="">All Uploaded Documents (Global)</option>
+                    {documents.map((doc) => (
+                      <option key={doc.id} value={doc.id}>
+                        {doc.filename || doc.original_filename || doc.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="evo-form-group evo-col-third">
+                  <label htmlFor="evo-parent-select" className="evo-label">Parent Workflow (Baseline / Approved)</label>
+                  <select
+                    id="evo-parent-select"
+                    className="evo-select"
+                    value={selectedParentWorkflowId}
+                    onChange={(e) => setSelectedParentWorkflowId(e.target.value)}
+                    disabled={running}
+                  >
+                    <option value="baseline">Production Baseline (Default)</option>
+                    {workflowVersions.map((v) => (
+                      <option key={v.version_id} value={v.version_id}>
+                        v{v.version_number}: {v.name} ({v.model_id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="evo-form-group evo-col-third">
+                  <label htmlFor="evo-count-input" className="evo-label">Candidate Mutations ({generatedCandidateCount})</label>
+                  <input
+                    id="evo-count-input"
+                    type="range"
+                    min={2}
+                    max={8}
+                    value={generatedCandidateCount}
+                    onChange={(e) => setGeneratedCandidateCount(Number(e.target.value))}
+                    className="evo-slider"
+                    disabled={running}
+                  />
+                </div>
+              </div>
+
+              {/* Strategy Selector Pills */}
+              <div className="evo-form-group">
+                <label className="evo-label">Mutation & Refinement Strategy</label>
+                <div className="evo-strategy-pills-wrap">
+                  {[
+                    { id: 'all', label: 'All Dimensions', desc: 'Diverse Phase 7.1/7.2 exploration' },
+                    { id: 'refinement', label: 'Refinement Only', desc: 'Phase 7.3 simplification & cost optimization' },
+                    { id: 'prompt', label: 'Prompt Mutations', desc: 'Prompt template & detail variations' },
+                    { id: 'retrieval', label: 'Retrieval Mutations', desc: 'Top-K & threshold tuning' },
+                    { id: 'model', label: 'Model Mutations', desc: 'Model provider switches' },
+                    { id: 'operator', label: 'Operator Mutations', desc: 'Execution & compression nodes' },
+                    { id: 'mixed', label: 'Composite Mixed', desc: 'Multi-parameter exploration' },
+                  ].map((strat) => (
+                    <button
+                      key={strat.id}
+                      type="button"
+                      onClick={() => setSelectedStrategy(strat.id)}
+                      className={`evo-strategy-pill ${selectedStrategy === strat.id ? 'evo-strat-active' : ''} evo-strat-${strat.id}`}
+                      disabled={running}
+                    >
+                      <span className="evo-strat-title">
+                        {selectedStrategy === strat.id ? '✓ ' : ''}{strat.label}
+                      </span>
+                      <span className="evo-strat-desc">{strat.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="evo-form-actions">
+                <button
+                  type="submit"
+                  className="evo-btn-primary"
+                  disabled={running || !query.trim()}
+                >
+                  {running ? (
+                    <>
+                      <span className="evo-spinner" /> Running Optimization...
+                    </>
+                  ) : (
+                    <>
+                      <span>🧬</span> Run Evolutionary Optimization
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </section>
+
+          {/* Stepper Pipeline */}
+          {running && (
+            <section className="evo-section evo-pipeline-section" aria-live="polite">
+              <div className="evo-process-stepper">
+                {[
+                  { step: 1, name: 'Reference Workflow', desc: 'Evaluating Baseline/Parent' },
+                  { step: 2, name: 'Candidate Generation', desc: `${selectedStrategy.toUpperCase()} mutations` },
+                  { step: 3, name: 'Phase 6 Evaluation', desc: 'Decomposing claims & calculating cost' },
+                  { step: 4, name: 'Pareto Optimization', desc: 'Groundedness ↑ vs Cost ↓ Frontier' },
+                ].map((s) => {
+                  const isDone = currentStageIndex > s.step
+                  const isCurrent = currentStageIndex === s.step
+                  return (
+                    <div key={s.step} className={`evo-process-step ${isDone ? 'step-done' : ''} ${isCurrent ? 'step-running' : ''}`}>
+                      <div className="evo-step-indicator">
+                        {isDone ? '✓' : s.step}
+                      </div>
+                      <div className="evo-step-details">
+                        <span className="evo-step-name">{s.name}</span>
+                        <span className="evo-step-caption">{s.desc}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
           )}
 
-          {/* 4. OPTIMIZATION SUMMARY */}
-          <section className="evo-section evo-summary-section" aria-labelledby="evo-summary-title">
-            <div className="evo-section-header">
-              <h2 id="evo-summary-title" className="evo-section-title">Optimization Summary</h2>
-              <span className="evo-run-id-pill">Run ID: <code>{report.run_id}</code></span>
-            </div>
-
-            <div className="evo-summary-grid">
-              <div className="evo-summary-cell">
-                <span className="evo-sum-label">Run ID</span>
-                <span className="evo-sum-val-code">{report.run_id}</span>
-              </div>
-
-              <div className="evo-summary-cell">
-                <span className="evo-sum-label">Total Workflows Evaluated</span>
-                <span className="evo-sum-val">{report.total_candidates_evaluated}</span>
-                <span className="evo-sum-breakdown">
-                  1 Baseline + {report.total_candidates_evaluated - 1} Generated candidates
-                </span>
-              </div>
-
-              <div className="evo-summary-cell">
-                <span className="evo-sum-label">Generated Candidates</span>
-                <span className="evo-sum-val">{report.total_candidates_evaluated - 1}</span>
-                <span className="evo-sum-breakdown">Mutated parameter sets</span>
-              </div>
-
-              <div className="evo-summary-cell evo-cell-highlight">
-                <span className="evo-sum-label">Pareto-Optimal Workflows</span>
-                <span className="evo-sum-val evo-val-pareto">{report.pareto_frontier_count}</span>
-                <span className="evo-sum-breakdown">Non-dominated workflows</span>
-              </div>
-
-              <div className="evo-summary-cell">
-                <span className="evo-sum-label">Governance</span>
-                <span className={`evo-gov-tag ${report.approved_workflow_id ? 'gov-tag-approved' : 'gov-tag-pending'}`}>
-                  {report.approved_workflow_id ? 'Approved' : 'Pending Review'}
-                </span>
-                <span className="evo-sum-breakdown">
-                  {report.approved_workflow_id ? `Authorized: ${report.approved_workflow_id}` : 'Human review required'}
-                </span>
-              </div>
-            </div>
-          </section>
-
-          {/* 5. PARETO ANALYSIS */}
-          <section className="evo-section evo-pareto-section" aria-labelledby="evo-pareto-title">
-            <div className="evo-section-header">
-              <h2 id="evo-pareto-title" className="evo-section-title">Pareto Analysis</h2>
-            </div>
-
-            <div className="evo-pareto-layout">
-              <div className="evo-pareto-chart-col">
-                {renderScatterPlot()}
-
-                {/* Pareto Objective Explanation */}
-                <div className="evo-objective-box">
-                  <div className="evo-objective-grid">
-                    <div className="evo-obj-item">
-                      <span className="evo-obj-label">Performance Objective</span>
-                      <span className="evo-obj-val evo-obj-up">Groundedness ↑</span>
-                    </div>
-                    <div className="evo-obj-item">
-                      <span className="evo-obj-label">Cost Objective</span>
-                      <span className="evo-obj-val evo-obj-down">Cost / Query ↓</span>
-                    </div>
-                  </div>
-                  <p className="evo-objective-note">
-                    Pareto optimization currently balances Groundedness against Cost / Query. Latency and token usage are reported as secondary evaluation metrics.
-                  </p>
+          {/* Optimization Report / Pareto Frontier */}
+          {report && (
+            <section className="evo-section evo-report-section">
+              <div className="evo-section-header">
+                <div className="evo-header-with-badge">
+                  <h2 className="evo-section-title">Pareto Optimization Report</h2>
+                  <span className="evo-frontier-badge">{report.pareto_frontier_count} Pareto-Optimal Workflows</span>
+                </div>
+                <div className="evo-report-actions">
+                  <button
+                    type="button"
+                    onClick={() => setIsReportCollapsed(!isReportCollapsed)}
+                    className="evo-btn-secondary evo-btn-sm"
+                  >
+                    {isReportCollapsed ? 'Expand Report' : 'Collapse'}
+                  </button>
                 </div>
               </div>
 
-              {/* 6. SELECTED WORKFLOW PANEL */}
-              {activeCandidate && (
-                <div className="evo-selected-panel">
-                  <div className="evo-selected-header">
-                    <div>
-                      <span className="evo-panel-title">Selected Workflow</span>
-                      <h3 className="evo-selected-name">{activeCandidate.workflow.name}</h3>
-                      <span className="evo-selected-id">Candidate ID: <code>{activeCandidate.candidate_id}</code></span>
-                    </div>
-                    <span className={`evo-status-pill ${activeCandidate.candidate_id === 'baseline' ? 'pill-baseline' : activeCandidate.is_pareto_optimal ? 'pill-pareto' : 'pill-dominated'}`}>
-                      {activeCandidate.candidate_id === 'baseline' ? 'Baseline' : activeCandidate.is_pareto_optimal ? 'Pareto-Optimal' : 'Dominated'}
-                    </span>
+              {!isReportCollapsed && (
+                <div className="evo-report-body">
+                  {/* Candidates Comparison Table */}
+                  <div className="evo-table-container">
+                    <table className="evo-table">
+                      <thead>
+                        <tr>
+                          <th>Status</th>
+                          <th>Workflow Candidate</th>
+                          <th>Strategy</th>
+                          <th>Model</th>
+                          <th>Groundedness ↑</th>
+                          <th>Cost / Query ↓</th>
+                          <th>Latency</th>
+                          <th>Pareto Dominance</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {report.all_candidates.map((cand) => {
+                          const isBaseline = cand.candidate_id === 'baseline' || cand.candidate_id === report.baseline.candidate_id
+                          const isPareto = cand.is_pareto_optimal
+                          const groundedness = cand.metrics.groundedness ?? cand.metrics.performance
+                          const isApproved = report.approved_workflow_id === cand.candidate_id
+
+                          return (
+                            <tr
+                              key={cand.candidate_id}
+                              className={`evo-table-row ${selectedCandidateId === cand.candidate_id ? 'row-selected' : ''} ${isPareto ? 'row-pareto' : ''}`}
+                              onClick={() => setSelectedCandidateId(cand.candidate_id)}
+                            >
+                              <td>
+                                {isBaseline ? (
+                                  <span className="evo-status-tag tag-baseline">Baseline</span>
+                                ) : isPareto ? (
+                                  <span className="evo-status-tag tag-pareto">Pareto</span>
+                                ) : (
+                                  <span className="evo-status-tag tag-dominated">Dominated</span>
+                                )}
+                              </td>
+                              <td>
+                                <strong>{cand.workflow.name}</strong>
+                                <div className="evo-cell-sub"><code>{cand.candidate_id}</code></div>
+                              </td>
+                              <td>{renderMutationBadge(cand)}</td>
+                              <td>
+                                <div className="evo-model-cell">
+                                  <span className="evo-provider-name">{cand.workflow.model.provider}</span>
+                                  <span className="evo-model-id">{cand.workflow.model.model_id}</span>
+                                </div>
+                              </td>
+                              <td>
+                                <span className="evo-perf-val">{(groundedness * 100).toFixed(1)}%</span>
+                              </td>
+                              <td>
+                                <span className="evo-cost-val">${cand.metrics.cost.toFixed(6)}</span>
+                              </td>
+                              <td>
+                                <span className="evo-latency-val">{cand.metrics.llm_latency_ms.toFixed(0)} ms</span>
+                              </td>
+                              <td>
+                                {isPareto ? (
+                                  <span className="evo-pareto-optimal-badge">✓ Non-dominated</span>
+                                ) : (
+                                  <span className="evo-dominated-badge">Dominated by {cand.dominated_by?.length || 1}</span>
+                                )}
+                              </td>
+                              <td>
+                                <div className="evo-action-buttons">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setInspectModalCandidate(cand)
+                                    }}
+                                    className="evo-btn-inspect"
+                                  >
+                                    Inspect
+                                  </button>
+                                  {isPareto && !isBaseline && !isApproved && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setConfirmApprovalCandidate(cand)
+                                      }}
+                                      className="evo-btn-approve"
+                                      disabled={approvingId === cand.candidate_id}
+                                    >
+                                      {approvingId === cand.candidate_id ? 'Approving...' : 'Approve'}
+                                    </button>
+                                  )}
+                                  {isApproved && (
+                                    <span className="evo-approved-tag">✓ Approved</span>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-
-                  <div className="evo-metrics-grid">
-                    <div className="evo-metric-card">
-                      <span className="evo-metric-label">Groundedness</span>
-                      <span className="evo-metric-number evo-num-green">
-                        {activeCandidate.metrics.status !== 'success'
-                          ? 'Unavailable'
-                          : `${((activeCandidate.metrics.groundedness ?? activeCandidate.metrics.performance) * 100).toFixed(1)}%`}
-                      </span>
-                    </div>
-
-                    <div className="evo-metric-card">
-                      <span className="evo-metric-label">Hallucination</span>
-                      <span className="evo-metric-number evo-num-cyan">
-                        {activeCandidate.metrics.status !== 'success'
-                          ? 'Unavailable'
-                          : `${((activeCandidate.metrics.hallucination_rate ?? 0) * 100).toFixed(1)}%`}
-                      </span>
-                    </div>
-
-                    <div className="evo-metric-card">
-                      <span className="evo-metric-label">Cost / Query</span>
-                      <span className="evo-metric-number evo-num-amber">
-                        ${activeCandidate.metrics.cost.toFixed(6)}
-                      </span>
-                    </div>
-
-                    <div className="evo-metric-card">
-                      <span className="evo-metric-label">Total Tokens</span>
-                      <span className="evo-metric-number">
-                        {activeCandidate.metrics.total_tokens}
-                      </span>
-                    </div>
-
-                    <div className="evo-metric-card">
-                      <span className="evo-metric-label">Latency</span>
-                      <span className="evo-metric-number evo-num-purple">
-                        {activeCandidate.metrics.llm_latency_ms.toFixed(0)} ms
-                      </span>
-                    </div>
-
-                    <div className="evo-metric-card">
-                      <span className="evo-metric-label">Model</span>
-                      <span className="evo-metric-text">
-                        <strong>{activeCandidate.workflow.model.provider}</strong>
-                        <span className="evo-model-id-sub">{activeCandidate.workflow.model.model_id}</span>
-                      </span>
-                    </div>
-
-                    <div className="evo-metric-card evo-metric-card-span">
-                      <span className="evo-metric-label">Retrieval Configuration</span>
-                      <span className="evo-metric-text">
-                        Top-K: <strong>{activeCandidate.workflow.retrieval.top_k}</strong> &nbsp;|&nbsp;
-                        Threshold: <strong>{activeCandidate.workflow.retrieval.similarity_threshold}</strong>
-                      </span>
-                    </div>
-
-                    {/* Exploration Mutation Strategy Card */}
-                    {(activeCandidate.mutation_metadata || activeCandidate.workflow.mutation_metadata) && (
-                      <div className="evo-metric-card evo-metric-card-span evo-mutation-card">
-                        <span className="evo-metric-label">Exploration Mutation Strategy</span>
-                        <div className="evo-mutation-card-content">
-                          {renderMutationBadge(activeCandidate)}
-                          <span className="evo-mutation-card-desc">
-                            {(activeCandidate.mutation_metadata || activeCandidate.workflow.mutation_metadata)?.mutation_description}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Baseline Comparison (if not baseline) */}
-                  {baselineCandidate && activeCandidate.candidate_id !== 'baseline' && (
-                    <div className="evo-baseline-comparison">
-                      <h4 className="evo-comp-title">Compared with Production Baseline</h4>
-                      {baselineCandidate.metrics.status !== 'success' ? (
-                        <div className="evo-confirm-notice" style={{ marginTop: '8px' }}>
-                          <p>
-                            <strong>Baseline Unavailable:</strong> The production baseline evaluation failed (<code>{baselineCandidate.metrics.error_message || baselineCandidate.metrics.status}</code>).
-                          </p>
-                          <p>
-                            Direct percentage comparison deltas cannot be computed against an unavailable baseline.
-                          </p>
-                        </div>
-                      ) : activeCandidate.metrics.status !== 'success' ? (
-                        <div className="evo-confirm-notice" style={{ marginTop: '8px' }}>
-                          <p>
-                            <strong>Candidate Evaluation Failed:</strong> <code>{activeCandidate.metrics.error_message || activeCandidate.metrics.status}</code>.
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="evo-comp-grid">
-                          <div className="evo-comp-row">
-                            <span className="evo-comp-label">Groundedness</span>
-                            <span className="evo-comp-values">
-                              {((baselineCandidate.metrics.groundedness ?? baselineCandidate.metrics.performance) * 100).toFixed(1)}% → {((activeCandidate.metrics.groundedness ?? activeCandidate.metrics.performance) * 100).toFixed(1)}%
-                            </span>
-                          </div>
-
-                          <div className="evo-comp-row">
-                            <span className="evo-comp-label">Cost</span>
-                            <span className="evo-comp-values">
-                              ${baselineCandidate.metrics.cost.toFixed(6)} → ${activeCandidate.metrics.cost.toFixed(6)}
-                            </span>
-                            <span className={`evo-delta-tag ${activeCandidate.metrics.cost <= baselineCandidate.metrics.cost ? 'delta-good' : 'delta-bad'}`}>
-                              {baselineCandidate.metrics.cost > 0
-                                ? `${((activeCandidate.metrics.cost - baselineCandidate.metrics.cost) / baselineCandidate.metrics.cost * 100).toFixed(1)}%`
-                                : '0.0%'}
-                            </span>
-                          </div>
-
-                          <div className="evo-comp-row">
-                            <span className="evo-comp-label">Latency</span>
-                            <span className="evo-comp-values">
-                              {baselineCandidate.metrics.llm_latency_ms.toFixed(0)} ms → {activeCandidate.metrics.llm_latency_ms.toFixed(0)} ms
-                            </span>
-                            <span className={`evo-delta-tag ${activeCandidate.metrics.llm_latency_ms <= baselineCandidate.metrics.llm_latency_ms ? 'delta-good' : 'delta-bad'}`}>
-                              {baselineCandidate.metrics.llm_latency_ms > 0
-                                ? `${((activeCandidate.metrics.llm_latency_ms - baselineCandidate.metrics.llm_latency_ms) / baselineCandidate.metrics.llm_latency_ms * 100).toFixed(1)}%`
-                                : '0.0%'}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Key Findings */}
-                      <div className="evo-findings-box">
-                        <span className="evo-findings-header">Key Findings:</span>
-                        <ul className="evo-findings-list">
-                          {generateDynamicFindings(activeCandidate, baselineCandidate).map((finding, fIdx) => (
-                            <li key={fIdx}>{finding}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
-            </div>
-          </section>
+            </section>
+          )}
 
-          {/* 7. CANDIDATE COMPARISON */}
-          <section className="evo-section evo-comparison-section" aria-labelledby="evo-comparison-title">
-            <div className="evo-section-header">
-              <h2 id="evo-comparison-title" className="evo-section-title">Candidate Comparison</h2>
-            </div>
-
-            <div className="evo-table-container">
-              <table className="evo-table">
-                <thead>
-                  <tr>
-                    <th>Status</th>
-                    <th>Workflow</th>
-                    <th>Model</th>
-                    <th>Groundedness</th>
-                    <th>Cost</th>
-                    <th>Latency</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.all_candidates.map((cand) => {
-                    const isBaseline = cand.candidate_id === 'baseline'
-                    const isPareto = cand.is_pareto_optimal
-                    const isApproved = report.approved_workflow_id === cand.candidate_id
-                    const isSelected = selectedCandidateId === cand.candidate_id
-                    const isFailed = cand.metrics.status !== 'success'
-
-                    return (
-                      <tr
-                        key={cand.candidate_id}
-                        className={`evo-table-row ${isPareto ? 'row-pareto' : 'row-dominated'} ${isSelected ? 'row-selected' : ''}`}
-                        onClick={() => setSelectedCandidateId(cand.candidate_id)}
-                      >
-                        <td>
-                          {isBaseline ? (
-                            <span className={`evo-status-tag ${isFailed ? 'tag-dominated' : 'tag-baseline'}`}>
-                              {isFailed ? 'Baseline (Error)' : 'Baseline'}
-                            </span>
-                          ) : isFailed ? (
-                            <span className="evo-status-tag tag-dominated">Failed</span>
-                          ) : isPareto ? (
-                            <span className="evo-status-tag tag-pareto">Pareto</span>
-                          ) : (
-                            <span className="evo-status-tag tag-dominated">Dominated</span>
-                          )}
-                        </td>
-                        <td>
-                          <div className="evo-wf-cell-header">
-                            <strong>{cand.workflow.name}</strong>
-                            {renderMutationBadge(cand)}
-                          </div>
-                          <div className="evo-cell-sub">
-                            <code>{cand.candidate_id}</code>
-                            {(cand.mutation_metadata || cand.workflow.mutation_metadata) && (
-                              <span className="evo-mut-desc-sub">
-                                {(cand.mutation_metadata || cand.workflow.mutation_metadata)?.mutation_description}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td>
-                          <div className="evo-model-cell">
-                            <span className="evo-provider-name">{cand.workflow.model.provider}</span>
-                            <span className="evo-model-id">{cand.workflow.model.model_id}</span>
-                          </div>
-                        </td>
-                        <td>
-                          <span className="evo-perf-val">
-                            {isFailed
-                              ? 'Unavailable'
-                              : `${((cand.metrics.groundedness ?? cand.metrics.performance) * 100).toFixed(1)}%`}
-                          </span>
-                        </td>
-                        <td>
-                          <span className="evo-cost-val">
-                            ${cand.metrics.cost.toFixed(6)}
-                          </span>
-                        </td>
-                        <td>
-                          <span className="evo-lat-val">
-                            {cand.metrics.llm_latency_ms.toFixed(0)} ms
-                          </span>
-                        </td>
-                        <td>
-                          <div className="evo-actions-cell" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              type="button"
-                              onClick={() => setInspectModalCandidate(cand)}
-                              className="evo-btn-inspect"
-                            >
-                              Inspect
-                            </button>
-
-                            {isBaseline ? (
-                              <span className="evo-current-tag">Current Baseline</span>
-                            ) : isPareto ? (
-                              <button
-                                type="button"
-                                disabled={approvingId === cand.candidate_id || isApproved}
-                                onClick={() => setConfirmApprovalCandidate(cand)}
-                                className={`evo-btn-approve ${isApproved ? 'evo-btn-approved' : ''}`}
-                              >
-                                {approvingId === cand.candidate_id ? '...' : isApproved ? '✓ Approved' : 'Approve'}
-                              </button>
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          {/* 8. HUMAN GOVERNANCE */}
-          <section className="evo-section evo-governance-section" aria-labelledby="evo-gov-title">
-            <div className="evo-gov-banner">
-              <div className="evo-gov-icon-wrap">🛡️</div>
-              <div className="evo-gov-text">
-                <h3 id="evo-gov-title" className="evo-gov-title">Human Review Required</h3>
-                <p className="evo-gov-description">
-                  AgentEvo does not automatically replace the current workflow. A developer must inspect and approve an optimization candidate before it can be applied.
-                </p>
-              </div>
-              <div className="evo-gov-status-wrap">
-                <span className={`evo-gov-state-pill ${report.approved_workflow_id ? 'gov-approved' : 'gov-pending'}`}>
-                  {report.approved_workflow_id ? 'Approved' : 'Pending Review'}
-                </span>
-              </div>
-            </div>
-          </section>
-
-          {/* 9. OPTIMIZATION REPORT */}
-          <section className="evo-section evo-report-section" aria-labelledby="evo-report-title">
-            <div
-              className="evo-section-header evo-collapsible-header"
-              onClick={() => setIsReportCollapsed(!isReportCollapsed)}
-            >
-              <h2 id="evo-report-title" className="evo-section-title">Optimization Report</h2>
-              <button
-                type="button"
-                className="evo-collapse-toggle"
-                aria-expanded={!isReportCollapsed}
-              >
-                {isReportCollapsed ? '▶ Expand' : '▼ Collapse'}
-              </button>
-            </div>
-
-            {!isReportCollapsed && (
-              <div className="evo-report-content">
-                <div className="evo-report-dynamic-text">
-                  <p>
-                    Optimization run <code>{report.run_id}</code> evaluated {report.total_candidates_evaluated} workflows: 1 baseline + {report.total_candidates_evaluated - 1} generated candidates.
-                  </p>
-                  <p>
-                    {report.pareto_frontier_count === 1
-                      ? '1 workflow forms the Pareto-optimal frontier.'
-                      : `${report.pareto_frontier_count} workflows form the Pareto-optimal frontier.`}
-                  </p>
-                  <p>
-                    Developer review is required before an optimization candidate can be applied.
-                  </p>
-                </div>
-
-                <div className="evo-report-meta-grid">
-                  <div><strong>Run ID:</strong> <code>{report.run_id}</code></div>
-                  <div><strong>Baseline:</strong> {report.baseline.workflow.name}</div>
-                  <div><strong>Total Workflows Evaluated:</strong> {report.total_candidates_evaluated}</div>
-                  <div><strong>Pareto-Optimal Workflows:</strong> {report.pareto_frontier_count}</div>
-                  <div><strong>Performance Objective:</strong> Groundedness ↑</div>
-                  <div><strong>Cost Objective:</strong> Cost / Query ↓</div>
-                </div>
-              </div>
-            )}
-          </section>
-
-          {/* 10. WORKFLOW VERSIONS */}
-          <section className="evo-section evo-versions-section" aria-labelledby="evo-versions-title">
+          {/* Approved Workflow Versions Section */}
+          <section className="evo-section evo-versions-section">
             <div className="evo-section-header">
               <div className="evo-header-with-badge">
-                <h2 id="evo-versions-title" className="evo-section-title">Approved Workflow Versions</h2>
+                <h2 className="evo-section-title">Approved Workflow Versions</h2>
                 <span className="evo-count-badge">{workflowVersions.length} Available</span>
               </div>
-              <span className="evo-section-caption">
-                Immutable versioned workflow configurations created via explicit developer approval. Baseline remains intact.
-              </span>
+              <div className="evo-bench-actions">
+                <button
+                  type="button"
+                  onClick={compareSelectedVersions}
+                  className="evo-btn-secondary evo-btn-sm"
+                >
+                  ⚖️ Compare Selected ({selectedBenchmarkVersions.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={selectAllVersionsForBenchmark}
+                  className="evo-btn-primary evo-btn-sm"
+                >
+                  🚀 Benchmark All Versions
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveMainTab('lineage')}
+                  className="evo-btn-secondary evo-btn-sm"
+                >
+                  🌳 View Lineage Graph
+                </button>
+              </div>
             </div>
 
             {workflowVersions.length === 0 ? (
@@ -1288,6 +1069,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                 <table className="evo-table">
                   <thead>
                     <tr>
+                      <th style={{ width: 40 }}>Select</th>
                       <th>Version</th>
                       <th>Workflow Name</th>
                       <th>Source Candidate</th>
@@ -1300,14 +1082,55 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     </tr>
                   </thead>
                   <tbody>
+                    {/* Baseline row */}
+                    <tr className="evo-table-row">
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedBenchmarkVersions.includes('baseline')}
+                          onChange={() => toggleBenchmarkVersion('baseline')}
+                          aria-label="Select baseline for benchmark"
+                        />
+                      </td>
+                      <td>
+                        <span className="evo-version-tag" style={{ background: '#0284c7' }}>Base</span>
+                        <div className="evo-cell-sub"><code>baseline</code></div>
+                      </td>
+                      <td><strong>Production Baseline</strong></td>
+                      <td><span className="evo-cell-sub">Reference System</span></td>
+                      <td><span className="evo-model-id">gemini-3.5-flash-lite</span></td>
+                      <td><span className="evo-perf-val">100.0%</span></td>
+                      <td><span className="evo-cost-val">$0.000057</span></td>
+                      <td><span className="evo-cell-sub">Immutable Baseline</span></td>
+                      <td><span className="evo-gov-state-pill gov-approved">ACTIVE</span></td>
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => handleInspectVersion('baseline')}
+                          className="evo-btn-inspect"
+                        >
+                          Inspect
+                        </button>
+                      </td>
+                    </tr>
+
                     {workflowVersions.map((ver) => {
                       const snap = ver.evaluation_snapshot || {}
                       const groundedness = snap.groundedness ?? snap.performance ?? null
                       const cost = snap.cost ?? null
                       const formattedDate = ver.approved_at ? new Date(ver.approved_at).toLocaleString() : 'N/A'
+                      const isChecked = selectedBenchmarkVersions.includes(ver.version_id)
 
                       return (
                         <tr key={ver.id || ver.version_id} className="evo-table-row">
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleBenchmarkVersion(ver.version_id)}
+                              aria-label={`Select version ${ver.version_id} for benchmark`}
+                            />
+                          </td>
                           <td>
                             <span className="evo-version-tag">v{ver.version_number}</span>
                             <div className="evo-cell-sub"><code>{ver.version_id}</code></div>
@@ -1348,14 +1171,14 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                           <td>
                             <button
                               type="button"
-                              onClick={() => setInspectModalVersion(ver)}
+                              onClick={() => handleInspectVersion(ver.version_id)}
                               className="evo-btn-inspect"
                             >
-                              Inspect Version
+                              Inspect
                             </button>
                           </td>
                         </tr>
-                      );
+                      )
                     })}
                   </tbody>
                 </table>
@@ -1365,375 +1188,687 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
         </>
       )}
 
-      {/* INSPECT WORKFLOW MODAL / DRAWER */}
-      {inspectModalCandidate && baselineCandidate && (
-        <div
-          className="evo-modal-backdrop"
-          onClick={() => setInspectModalCandidate(null)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div
-            className="evo-modal-panel"
-            onClick={(e) => e.stopPropagation()}
-            ref={modalRef}
-          >
-            <div className="evo-modal-head">
+      {/* ========================================================================= */}
+      {/* TAB 2: VERSION BENCHMARK & COMPARISON                                     */}
+      {/* ========================================================================= */}
+      {activeMainTab === 'benchmark' && (
+        <>
+          <section className="evo-section evo-controls-card">
+            <div className="evo-section-header">
               <div>
-                <div className="evo-modal-badges">
-                  <span className={`evo-status-tag ${inspectModalCandidate.candidate_id === 'baseline' ? 'tag-baseline' : inspectModalCandidate.is_pareto_optimal ? 'tag-pareto' : 'tag-dominated'}`}>
-                    {inspectModalCandidate.candidate_id === 'baseline' ? 'Baseline' : inspectModalCandidate.is_pareto_optimal ? 'Pareto-Optimal' : 'Dominated'}
-                  </span>
-                  {renderMutationBadge(inspectModalCandidate)}
-                  {report?.approved_workflow_id === inspectModalCandidate.candidate_id && (
-                    <span className="evo-status-tag tag-pareto">✓ Approved</span>
-                  )}
-                </div>
-                <h3 className="evo-modal-heading">{inspectModalCandidate.workflow.name}</h3>
-                <span className="evo-modal-subheading">Candidate ID: <code>{inspectModalCandidate.candidate_id}</code></span>
+                <h2 className="evo-section-title">Controlled Version Benchmark Runner</h2>
+                <span className="evo-section-caption">
+                  Evaluate selected workflow versions (baseline & approved) under the EXACT SAME query, document, and Phase 6 metrics.
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={() => setInspectModalCandidate(null)}
-                className="evo-modal-close"
-                aria-label="Close modal"
-              >
-                ✕
-              </button>
             </div>
 
-            <div className="evo-modal-content">
-              {/* Evolutionary Mutation Details */}
-              {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata) && (
-                <div className="evo-modal-block">
-                  <h4 className="evo-modal-block-title">Evolutionary Exploration Mutation</h4>
-                  <div className="evo-modal-grid">
-                    <div className="evo-modal-field">
-                      <span className="evo-field-key">Mutation Category</span>
-                      <span className="evo-field-value">
-                        {renderMutationBadge(inspectModalCandidate)}
-                      </span>
-                    </div>
-                    <div className="evo-modal-field">
-                      <span className="evo-field-key">Parent Workflow</span>
-                      <span className="evo-field-value">
-                        <code>{(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.parent_workflow_id}</code>
-                      </span>
-                    </div>
-                    <div className="evo-modal-field evo-metric-card-span">
-                      <span className="evo-field-key">Mutation Rationale & Description</span>
-                      <span className="evo-field-value">
-                        {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.mutation_description}
-                      </span>
-                    </div>
-                  </div>
+            {/* Benchmark Setup Form */}
+            <div className="evo-form">
+              <div className="evo-form-group">
+                <label className="evo-label">Evaluation Preset</label>
+                <div className="evo-preset-buttons">
+                  {(Object.keys(PRESET_QUERIES) as PresetType[]).map((presetKey) => (
+                    <button
+                      key={presetKey}
+                      type="button"
+                      onClick={() => handleBenchPresetChange(presetKey)}
+                      className={`evo-preset-btn ${benchPreset === presetKey ? 'active' : ''}`}
+                      disabled={isBenchmarking}
+                    >
+                      {PRESET_QUERIES[presetKey].label}
+                    </button>
+                  ))}
                 </div>
-              )}
+              </div>
 
-              {/* Configuration Section */}
-              <div className="evo-modal-block">
-                <h4 className="evo-modal-block-title">Configuration</h4>
-                <div className="evo-modal-grid">
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Provider</span>
-                    <span className="evo-field-value">{inspectModalCandidate.workflow.model.provider}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Model ID</span>
-                    <span className="evo-field-value"><code>{inspectModalCandidate.workflow.model.model_id}</code></span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Top-K</span>
-                    <span className="evo-field-value">{inspectModalCandidate.workflow.retrieval.top_k}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Similarity Threshold</span>
-                    <span className="evo-field-value">{inspectModalCandidate.workflow.retrieval.similarity_threshold}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Reranking</span>
-                    <span className="evo-field-value">{inspectModalCandidate.workflow.retrieval.enable_rerank ? 'Enabled' : 'Disabled'}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Prompt Template</span>
-                    <span className="evo-field-value">{inspectModalCandidate.workflow.prompt.template_name}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Chunk Size</span>
-                    <span className="evo-field-value">{inspectModalCandidate.workflow.retrieval.chunk_size} tokens</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Chunk Overlap</span>
-                    <span className="evo-field-value">{inspectModalCandidate.workflow.retrieval.chunk_overlap} tokens</span>
+              <div className="evo-form-group">
+                <label className="evo-label">Identical Benchmark Query</label>
+                <textarea
+                  className="evo-textarea"
+                  value={benchQuery}
+                  onChange={(e) => {
+                    setBenchQuery(e.target.value)
+                    setBenchPreset('custom')
+                  }}
+                  rows={2}
+                  disabled={isBenchmarking}
+                />
+              </div>
+
+              <div className="evo-form-row">
+                <div className="evo-form-group evo-col-half">
+                  <label className="evo-label">Target Document Context</label>
+                  <select
+                    className="evo-select"
+                    value={benchDocId}
+                    onChange={(e) => setBenchDocId(e.target.value)}
+                    disabled={isBenchmarking}
+                  >
+                    <option value="">All Uploaded Documents (Global)</option>
+                    {documents.map((doc) => (
+                      <option key={doc.id} value={doc.id}>
+                        {doc.filename || doc.original_filename || doc.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="evo-form-group evo-col-half">
+                  <label className="evo-label">Selected Versions for Benchmark ({selectedBenchmarkVersions.length})</label>
+                  <div className="evo-bench-pills-wrap">
+                    <span
+                      className={`evo-ver-pill ${selectedBenchmarkVersions.includes('baseline') ? 'selected' : ''}`}
+                      onClick={() => toggleBenchmarkVersion('baseline')}
+                    >
+                      {selectedBenchmarkVersions.includes('baseline') ? '✓ ' : ''}Baseline
+                    </span>
+                    {workflowVersions.map((v) => (
+                      <span
+                        key={v.version_id}
+                        className={`evo-ver-pill ${selectedBenchmarkVersions.includes(v.version_id) ? 'selected' : ''}`}
+                        onClick={() => toggleBenchmarkVersion(v.version_id)}
+                      >
+                        {selectedBenchmarkVersions.includes(v.version_id) ? '✓ ' : ''}v{v.version_number} ({v.name.slice(0, 18)})
+                      </span>
+                    ))}
                   </div>
                 </div>
               </div>
 
-              {/* Evaluation Metrics Section */}
-              <div className="evo-modal-block">
-                <h4 className="evo-modal-block-title">Evaluation</h4>
-                {inspectModalCandidate.metrics.status !== 'success' && (
-                  <div className="evo-confirm-notice" style={{ marginBottom: '10px' }}>
-                    <p>
-                      <strong>Evaluation Failed:</strong> <code>{inspectModalCandidate.metrics.error_message || inspectModalCandidate.metrics.status}</code>
-                    </p>
-                  </div>
-                )}
-                <div className="evo-modal-grid">
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Groundedness</span>
-                    <span className="evo-field-value evo-val-green">
-                      {inspectModalCandidate.metrics.status !== 'success'
-                        ? 'Unavailable'
-                        : inspectModalCandidate.metrics.groundedness !== null && inspectModalCandidate.metrics.groundedness !== undefined
-                        ? `${(inspectModalCandidate.metrics.groundedness * 100).toFixed(1)}%`
-                        : `${(inspectModalCandidate.metrics.performance * 100).toFixed(1)}%`}
-                    </span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Hallucination</span>
-                    <span className="evo-field-value evo-val-cyan">
-                      {inspectModalCandidate.metrics.status !== 'success'
-                        ? 'Unavailable'
-                        : inspectModalCandidate.metrics.hallucination_rate !== null && inspectModalCandidate.metrics.hallucination_rate !== undefined
-                        ? `${(inspectModalCandidate.metrics.hallucination_rate * 100).toFixed(1)}%`
-                        : '0.0%'}
-                    </span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Accuracy</span>
-                    <span className="evo-field-value">
-                      {inspectModalCandidate.metrics.accuracy !== null && inspectModalCandidate.metrics.accuracy !== undefined
-                        ? `${(inspectModalCandidate.metrics.accuracy * 100).toFixed(1)}%`
-                        : 'N/A (Reference required)'}
-                    </span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Cost</span>
-                    <span className="evo-field-value evo-val-amber">${inspectModalCandidate.metrics.cost.toFixed(6)}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">LLM Latency</span>
-                    <span className="evo-field-value evo-val-purple">{inspectModalCandidate.metrics.llm_latency_ms.toFixed(0)} ms</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Execution Time</span>
-                    <span className="evo-field-value">{inspectModalCandidate.metrics.execution_time_ms.toFixed(0)} ms</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Input Tokens</span>
-                    <span className="evo-field-value">{inspectModalCandidate.metrics.input_tokens}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Output Tokens</span>
-                    <span className="evo-field-value">{inspectModalCandidate.metrics.output_tokens}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Total Tokens</span>
-                    <span className="evo-field-value">{inspectModalCandidate.metrics.total_tokens}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Changes from Baseline Section */}
-              <div className="evo-modal-block">
-                <h4 className="evo-modal-block-title">Changes from Baseline</h4>
-                <div className="evo-diff-table-wrap">
-                  <table className="evo-diff-table">
-                    <thead>
-                      <tr>
-                        <th>Parameter</th>
-                        <th>Baseline</th>
-                        <th>Candidate</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[
-                        {
-                          param: 'Model ID',
-                          base: baselineCandidate.workflow.model.model_id,
-                          cand: inspectModalCandidate.workflow.model.model_id,
-                        },
-                        {
-                          param: 'Provider',
-                          base: baselineCandidate.workflow.model.provider,
-                          cand: inspectModalCandidate.workflow.model.provider,
-                        },
-                        {
-                          param: 'Top-K Retrieval',
-                          base: baselineCandidate.workflow.retrieval.top_k,
-                          cand: inspectModalCandidate.workflow.retrieval.top_k,
-                        },
-                        {
-                          param: 'Similarity Threshold',
-                          base: baselineCandidate.workflow.retrieval.similarity_threshold,
-                          cand: inspectModalCandidate.workflow.retrieval.similarity_threshold,
-                        },
-                        {
-                          param: 'Prompt Template',
-                          base: baselineCandidate.workflow.prompt.template_name,
-                          cand: inspectModalCandidate.workflow.prompt.template_name,
-                        },
-                        {
-                          param: 'Reranking',
-                          base: baselineCandidate.workflow.retrieval.enable_rerank ? 'Enabled' : 'Disabled',
-                          cand: inspectModalCandidate.workflow.retrieval.enable_rerank ? 'Enabled' : 'Disabled',
-                        },
-                      ].map((row, idx) => {
-                        const isChanged = String(row.base) !== String(row.cand)
-                        return (
-                          <tr key={idx} className={isChanged ? 'row-mutated' : ''}>
-                            <td><strong>{row.param}</strong></td>
-                            <td><code>{String(row.base)}</code></td>
-                            <td><code>{String(row.cand)}</code></td>
-                            <td>
-                              {isChanged ? (
-                                <span className="evo-tag-mutated">Mutated</span>
-                              ) : (
-                                <span className="evo-tag-same">Same</span>
-                              )}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Claim Level Verification if available */}
-              {inspectModalCandidate.metrics.raw_details?.claim_breakdown &&
-                Array.isArray(inspectModalCandidate.metrics.raw_details.claim_breakdown) &&
-                inspectModalCandidate.metrics.raw_details.claim_breakdown.length > 0 && (
-                  <details className="evo-details-block">
-                    <summary className="evo-details-summary">
-                      Claim-Level Verification Details ({inspectModalCandidate.metrics.raw_details.claim_breakdown.length} claims)
-                    </summary>
-                    <div className="evo-claims-list">
-                      {inspectModalCandidate.metrics.raw_details.claim_breakdown.map((claimObj: any, cIdx: number) => {
-                        const isSupp = claimObj.is_supported ?? claimObj.supported
-                        return (
-                          <div key={cIdx} className={`evo-claim-card ${isSupp ? 'claim-supported' : 'claim-unsupported'}`}>
-                            <div className="evo-claim-head">
-                              <span className="evo-claim-badge">{isSupp ? '✓ Supported' : '⚠ Unsupported'}</span>
-                              <span className="evo-claim-text">"{claimObj.claim_text || claimObj.claim}"</span>
-                            </div>
-                            {claimObj.matched_evidence && (
-                              <div className="evo-claim-evidence">
-                                <strong>Evidence:</strong> "{claimObj.matched_evidence}"
-                              </div>
-                            )}
-                            {!isSupp && claimObj.reason && (
-                              <div className="evo-claim-reason">
-                                <strong>Reason:</strong> {claimObj.reason}
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </details>
-                )}
-
-              {/* Raw JSON Spec */}
-              <details className="evo-details-block">
-                <summary className="evo-details-summary">Raw Workflow Configuration (JSON)</summary>
-                <pre className="evo-json-pre">{JSON.stringify(inspectModalCandidate.workflow, null, 2)}</pre>
-              </details>
-            </div>
-
-            <div className="evo-modal-foot">
-              <button
-                type="button"
-                onClick={() => setInspectModalCandidate(null)}
-                className="evo-btn-secondary"
-              >
-                Close
-              </button>
-
-              {inspectModalCandidate.is_pareto_optimal && inspectModalCandidate.candidate_id !== 'baseline' && (
+              <div className="evo-form-actions">
                 <button
                   type="button"
-                  disabled={approvingId === inspectModalCandidate.candidate_id || report?.approved_workflow_id === inspectModalCandidate.candidate_id}
-                  onClick={() => setConfirmApprovalCandidate(inspectModalCandidate)}
-                  className={`evo-btn-primary ${report?.approved_workflow_id === inspectModalCandidate.candidate_id ? 'evo-btn-approved' : ''}`}
+                  onClick={handleRunBenchmark}
+                  className="evo-btn-benchmark"
+                  disabled={isBenchmarking || selectedBenchmarkVersions.length === 0}
                 >
-                  {report?.approved_workflow_id === inspectModalCandidate.candidate_id ? '✓ Approved' : 'Approve Workflow Candidate'}
+                  {isBenchmarking ? (
+                    <>
+                      <span className="evo-spinner" /> Running Multi-Version Benchmark...
+                    </>
+                  ) : (
+                    <>
+                      <span>⚖️</span> Run Reproducible Benchmark
+                    </>
+                  )}
                 </button>
-              )}
+              </div>
             </div>
-          </div>
-        </div>
+          </section>
+
+          {/* Benchmark Results Section */}
+          {benchmarkReport && (
+            <section className="evo-section">
+              <div className="evo-section-header">
+                <div>
+                  <div className="evo-header-with-badge">
+                    <h2 className="evo-section-title">{benchmarkReport.name}</h2>
+                    <span className="evo-count-badge">ID: {benchmarkReport.benchmark_id}</span>
+                  </div>
+                  <span className="evo-section-caption">
+                    Evaluated by {benchmarkReport.created_by} on {new Date(benchmarkReport.created_at).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Benchmark Metadata Card */}
+              <div className="evo-summary-box" style={{ marginBottom: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '8px' }}>
+                  <div><strong>Benchmark ID:</strong> <code>{benchmarkReport.benchmark_id}</code></div>
+                  <div><strong>Timestamp:</strong> <span>{new Date(benchmarkReport.created_at).toLocaleString()}</span></div>
+                  <div><strong>Evaluation Preset:</strong> <span>{benchmarkReport.preset_name || 'clinical'}</span></div>
+                  <div><strong>Versions Evaluated:</strong> <span>{benchmarkReport.selected_versions?.length || benchmarkReport.results?.length || 0}</span></div>
+                  <div><strong>Repetitions:</strong> <span>{benchmarkReport.repetitions || benchmarkReport.results[0]?.iterations_count || 1} per version</span></div>
+                  <div><strong>Documents:</strong> <span>{benchmarkReport.document_ids?.join(', ') || benchmarkReport.document_id || 'Global Ingested Knowledge Base'}</span></div>
+                </div>
+                <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '8px' }}>
+                  <strong>Query:</strong> <em>"{benchmarkReport.query}"</em>
+                </div>
+                <div style={{ marginTop: '4px' }}>
+                  <strong>Summary:</strong> {benchmarkReport.summary}
+                </div>
+              </div>
+
+              {/* Pareto Scatter Plot Visualization */}
+              <div className="evo-bench-scatter-container">
+                <div className="evo-bench-scatter-head">
+                  <div className="evo-bench-scatter-title">
+                    <span>📊</span> Pareto Trade-off Frontier (Groundedness ↑ vs Cost / Query ↓)
+                  </div>
+                  <div className="evo-bench-legend">
+                    <div className="evo-legend-item">
+                      <span className="evo-legend-dot baseline" /> Production Baseline
+                    </div>
+                    <div className="evo-legend-item">
+                      <span className="evo-legend-dot pareto" /> Pareto-Optimal (Non-dominated)
+                    </div>
+                    <div className="evo-legend-item">
+                      <span className="evo-legend-dot dominated" /> Dominated
+                    </div>
+                  </div>
+                </div>
+
+                {/* SVG Scatter Plot */}
+                <div className="evo-bench-svg-wrap">
+                  <svg width="100%" height="100%" viewBox="0 0 800 240" preserveAspectRatio="none">
+                    {/* Grid lines */}
+                    <line x1="60" y1="20" x2="760" y2="20" stroke="rgba(255,255,255,0.06)" strokeDasharray="4" />
+                    <line x1="60" y1="75" x2="760" y2="75" stroke="rgba(255,255,255,0.06)" strokeDasharray="4" />
+                    <line x1="60" y1="130" x2="760" y2="130" stroke="rgba(255,255,255,0.06)" strokeDasharray="4" />
+                    <line x1="60" y1="185" x2="760" y2="185" stroke="rgba(255,255,255,0.06)" strokeDasharray="4" />
+                    <line x1="60" y1="200" x2="760" y2="200" stroke="rgba(255,255,255,0.2)" />
+                    <line x1="60" y1="20" x2="60" y2="200" stroke="rgba(255,255,255,0.2)" />
+
+                    {/* Y-axis Labels (Groundedness %) */}
+                    <text x="15" y="25" fill="#94a3b8" fontSize="10">100%</text>
+                    <text x="20" y="80" fill="#94a3b8" fontSize="10">75%</text>
+                    <text x="20" y="135" fill="#94a3b8" fontSize="10">50%</text>
+                    <text x="20" y="190" fill="#94a3b8" fontSize="10">25%</text>
+
+                    {/* X-axis Label */}
+                    <text x="400" y="228" fill="#94a3b8" fontSize="11" textAnchor="middle">Cost per Query ($) →</text>
+                    <text x="20" y="110" fill="#94a3b8" fontSize="11" transform="rotate(-90 20,110)" textAnchor="middle">Groundedness ↑</text>
+
+                    {/* Data Points */}
+                    {benchmarkReport.results.map((item) => {
+                      const itemCost = item.cost_per_query ?? item.cost
+                      const maxCost = Math.max(...benchmarkReport.results.map((r) => r.cost_per_query ?? r.cost), 0.0001)
+                      const minCost = Math.min(...benchmarkReport.results.map((r) => r.cost_per_query ?? r.cost), 0.0)
+                      const costRange = maxCost - minCost || 0.0001
+
+                      // X scale from 90 to 730
+                      const cx = 90 + ((itemCost - minCost) / costRange) * 620
+                      // Y scale from 200 (0%) to 30 (100%)
+                      const cy = 200 - item.groundedness * 170
+
+                      const isBaseline = item.version_id === 'baseline' || item.version === 'baseline'
+                      const isPareto = item.is_pareto_optimal
+
+                      return (
+                        <g
+                          key={item.version_id}
+                          onMouseEnter={() => setHoveredBenchItem(item)}
+                          onMouseLeave={() => setHoveredBenchItem(null)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          {isBaseline ? (
+                            <rect
+                              x={cx - 7}
+                              y={cy - 7}
+                              width={14}
+                              height={14}
+                              fill="#38bdf8"
+                              stroke="#ffffff"
+                              strokeWidth={2}
+                              rx={2}
+                            />
+                          ) : (
+                            <circle
+                              cx={cx}
+                              cy={cy}
+                              r={isPareto ? 8 : 6}
+                              fill={isPareto ? '#10b981' : '#64748b'}
+                              stroke={isPareto ? '#34d399' : '#94a3b8'}
+                              strokeWidth={isPareto ? 2.5 : 1}
+                            />
+                          )}
+                          <text
+                            x={cx}
+                            y={cy - 12}
+                            fill="#f8fafc"
+                            fontSize="10"
+                            fontWeight="bold"
+                            textAnchor="middle"
+                          >
+                            {isBaseline ? 'Base' : `v${item.version_number}`}
+                          </text>
+                        </g>
+                      )
+                    })}
+                  </svg>
+
+                  {/* Tooltip */}
+                  {hoveredBenchItem && (
+                    <div className="evo-bench-tooltip" style={{ top: 10, right: 10 }}>
+                      <div className="evo-bench-tooltip-title">
+                        {hoveredBenchItem.version_id === 'baseline' ? 'Production Baseline' : `v${hoveredBenchItem.version_number}: ${hoveredBenchItem.workflow || hoveredBenchItem.workflow_name}`}
+                      </div>
+                      <div className="evo-bench-tooltip-row">
+                        <span>Pareto Status:</span>
+                        <strong style={{ color: hoveredBenchItem.is_pareto_optimal ? '#34d399' : '#94a3b8' }}>
+                          {hoveredBenchItem.pareto_status}
+                        </strong>
+                      </div>
+                      <div className="evo-bench-tooltip-row">
+                        <span>Groundedness:</span>
+                        <strong>{(hoveredBenchItem.groundedness * 100).toFixed(1)}%</strong>
+                      </div>
+                      <div className="evo-bench-tooltip-row">
+                        <span>Hallucination Rate:</span>
+                        <strong>{((hoveredBenchItem.hallucination ?? hoveredBenchItem.hallucination_rate) * 100).toFixed(1)}%</strong>
+                      </div>
+                      <div className="evo-bench-tooltip-row">
+                        <span>Cost / Query:</span>
+                        <strong>${(hoveredBenchItem.cost_per_query ?? hoveredBenchItem.cost).toFixed(6)}</strong>
+                      </div>
+                      <div className="evo-bench-tooltip-row">
+                        <span>LLM Latency:</span>
+                        <span>{(hoveredBenchItem.latency_ms ?? hoveredBenchItem.llm_latency_ms).toFixed(0)} ms</span>
+                      </div>
+                      <div className="evo-bench-tooltip-row">
+                        <span>Total Tokens:</span>
+                        <span>{hoveredBenchItem.total_tokens}</span>
+                      </div>
+                      <div className="evo-bench-tooltip-row">
+                        <span>Model:</span>
+                        <span>{hoveredBenchItem.model || hoveredBenchItem.model_id}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 1. Canonical Aggregate Results Table */}
+              <div className="evo-table-container" style={{ marginTop: 20 }}>
+                <h3 className="evo-section-title" style={{ padding: '8px 12px', margin: 0, fontSize: '1rem' }}>
+                  📋 Fresh Cross-Version Benchmark Results (Aggregate Mean)
+                </h3>
+                <table className="evo-table">
+                  <thead>
+                    <tr>
+                      <th>Version</th>
+                      <th>Workflow</th>
+                      <th>Groundedness</th>
+                      <th>Hallucination</th>
+                      <th>Cost/Query</th>
+                      <th>Tokens</th>
+                      <th>Latency</th>
+                      <th>Model</th>
+                      <th>Provider</th>
+                      <th>Retrieval</th>
+                      <th>Prompt</th>
+                      <th>Operators</th>
+                      <th>Pareto</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {benchmarkReport.results.map((res) => {
+                      const isBaseline = res.version_id === 'baseline' || res.version === 'baseline'
+                      const isPareto = res.is_pareto_optimal
+                      const versionLabel = isBaseline ? 'Base' : `v${res.version_number ?? '?'}`
+                      const workflowName = res.workflow || res.workflow_name
+                      const groundedness = res.groundedness
+                      const hallucination = res.hallucination ?? res.hallucination_rate
+                      const cost = res.cost_per_query ?? res.cost
+                      const tokens = res.total_tokens
+                      const latency = res.latency_ms ?? res.llm_latency_ms
+                      const model = res.model || res.model_id
+                      const provider = res.provider
+                      const retrievalStr = res.retrieval_config || res.retrieval_config_summary || `top_k=${res.retrieval?.top_k ?? 5}`
+                      const promptStr = res.prompt_strategy || res.prompt_template
+                      const operatorStr = `compress=${res.context_compression ? 'True' : 'False'}`
+
+                      return (
+                        <tr
+                          key={res.version_id}
+                          className={`evo-table-row ${isPareto ? 'row-pareto' : ''}`}
+                        >
+                          <td>
+                            <span className="evo-version-tag" style={{ background: isBaseline ? '#0284c7' : undefined }}>
+                              {versionLabel}
+                            </span>
+                            <div className="evo-cell-sub"><code>{res.version_id}</code></div>
+                          </td>
+                          <td>
+                            <strong>{workflowName}</strong>
+                          </td>
+                          <td>
+                            <span className="evo-perf-val">{(groundedness * 100).toFixed(1)}%</span>
+                          </td>
+                          <td>
+                            <span className="evo-val-cyan">{(hallucination * 100).toFixed(1)}%</span>
+                          </td>
+                          <td>
+                            <span className="evo-cost-val">${cost.toFixed(6)}</span>
+                          </td>
+                          <td>
+                            <span className="evo-cell-sub">{tokens}</span>
+                          </td>
+                          <td>
+                            <span className="evo-latency-val">{latency.toFixed(0)} ms</span>
+                          </td>
+                          <td>
+                            <span className="evo-model-id">{model}</span>
+                          </td>
+                          <td>
+                            <span className="evo-provider-name">{provider}</span>
+                          </td>
+                          <td>
+                            <span className="evo-cell-sub">{retrievalStr}</span>
+                          </td>
+                          <td>
+                            <span className="evo-cell-sub">{promptStr}</span>
+                          </td>
+                          <td>
+                            <span className="evo-cell-sub">{operatorStr}</span>
+                          </td>
+                          <td>
+                            {isPareto ? (
+                              <span className="evo-pareto-optimal-badge">✓ Pareto-optimal</span>
+                            ) : (
+                              <span className="evo-dominated-badge">Dominated</span>
+                            )}
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              onClick={() => handleInspectVersion(res.version_id)}
+                              className="evo-btn-inspect"
+                            >
+                              Inspect
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* 2. Relative to Production Baseline Table */}
+              <div className="evo-table-container" style={{ marginTop: 20 }}>
+                <h3 className="evo-section-title" style={{ padding: '8px 12px', margin: 0, fontSize: '1rem' }}>
+                  📈 Performance & Efficiency Relative to Production Baseline
+                </h3>
+                <table className="evo-table">
+                  <thead>
+                    <tr>
+                      <th>Version</th>
+                      <th>Workflow</th>
+                      <th>Groundedness Δ</th>
+                      <th>Cost Δ%</th>
+                      <th>Latency Δ%</th>
+                      <th>Tokens Δ%</th>
+                      <th>Pareto Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {benchmarkReport.results.map((res) => {
+                      const isBaseline = res.version_id === 'baseline' || res.version === 'baseline'
+                      const gDelta = res.relative_changes?.groundedness_delta ?? res.relative_changes?.groundedness_change ?? 0
+                      const cChange = res.relative_changes?.cost_change_pct ?? -(res.relative_changes?.cost_reduction_pct ?? 0)
+                      const lChange = res.relative_changes?.latency_change_pct ?? -(res.relative_changes?.latency_reduction_pct ?? 0)
+                      const tChange = res.relative_changes?.token_change_pct ?? -(res.relative_changes?.token_reduction_pct ?? 0)
+
+                      return (
+                        <tr key={res.version_id} className="evo-table-row">
+                          <td>
+                            <span className="evo-version-tag" style={{ background: isBaseline ? '#0284c7' : undefined }}>
+                              {isBaseline ? 'Base' : `v${res.version_number}`}
+                            </span>
+                          </td>
+                          <td><strong>{res.workflow || res.workflow_name}</strong></td>
+                          <td>
+                            <span className={gDelta >= 0 ? 'evo-perf-val' : 'evo-cost-val'}>
+                              {gDelta >= 0 ? '+' : ''}{gDelta.toFixed(4)}
+                            </span>
+                          </td>
+                          <td>
+                            <span className={cChange <= 0 ? 'evo-perf-val' : 'evo-cost-val'}>
+                              {cChange > 0 ? '+' : ''}{cChange.toFixed(2)}%
+                            </span>
+                          </td>
+                          <td>
+                            <span className={lChange <= 0 ? 'evo-perf-val' : 'evo-cost-val'}>
+                              {lChange > 0 ? '+' : ''}{lChange.toFixed(2)}%
+                            </span>
+                          </td>
+                          <td>
+                            <span className={tChange <= 0 ? 'evo-perf-val' : 'evo-cost-val'}>
+                              {tChange > 0 ? '+' : ''}{tChange.toFixed(2)}%
+                            </span>
+                          </td>
+                          <td>
+                            {res.is_pareto_optimal ? (
+                              <span className="evo-pareto-optimal-badge">✓ Pareto-optimal</span>
+                            ) : (
+                              <span className="evo-dominated-badge">Dominated</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* 3. Repetition Details Table (R1, R2, R3, Mean, Std Dev) */}
+              <div className="evo-table-container" style={{ marginTop: 20 }}>
+                <h3 className="evo-section-title" style={{ padding: '8px 12px', margin: 0, fontSize: '1rem' }}>
+                  🔬 Repetition Breakdown & Variance (R1, R2, R3, Mean, Std Dev)
+                </h3>
+                <table className="evo-table">
+                  <thead>
+                    <tr>
+                      <th>Version</th>
+                      <th>Workflow / Run</th>
+                      <th>Groundedness</th>
+                      <th>Hallucination</th>
+                      <th>Cost / Query</th>
+                      <th>Tokens</th>
+                      <th>Latency</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {benchmarkReport.results.flatMap((res) => {
+                      const runs = res.runs || []
+                      const rows = runs.map((r) => (
+                        <tr key={`${res.version_id}-r${r.iteration}`} className="evo-table-row">
+                          <td><code>{res.version_id}</code></td>
+                          <td><span className="evo-count-badge">Repetition {r.iteration}</span></td>
+                          <td>{(r.groundedness * 100).toFixed(1)}%</td>
+                          <td>{(r.hallucination_rate * 100).toFixed(1)}%</td>
+                          <td>${r.cost.toFixed(6)}</td>
+                          <td>{r.total_tokens}</td>
+                          <td>{r.llm_latency_ms.toFixed(0)} ms</td>
+                        </tr>
+                      ))
+                      if (runs.length > 0) {
+                        rows.push(
+                          <tr key={`${res.version_id}-mean`} style={{ background: 'rgba(59, 130, 246, 0.08)', fontWeight: 'bold' }}>
+                            <td><code>{res.version_id}</code></td>
+                            <td><span className="evo-status-tag tag-pareto">Mean ± Std Dev</span></td>
+                            <td>{(res.groundedness * 100).toFixed(1)}% ± {((res.std_dev?.groundedness ?? 0) * 100).toFixed(2)}%</td>
+                            <td>{((res.hallucination ?? res.hallucination_rate) * 100).toFixed(1)}% ± {((res.std_dev?.hallucination ?? 0) * 100).toFixed(2)}%</td>
+                            <td>${(res.cost_per_query ?? res.cost).toFixed(6)} ± ${(res.std_dev?.cost ?? 0).toFixed(6)}</td>
+                            <td>{res.total_tokens} ± {(res.std_dev?.tokens ?? 0).toFixed(1)}</td>
+                            <td>{(res.latency_ms ?? res.llm_latency_ms).toFixed(0)} ms ± {(res.std_dev?.latency_ms ?? 0).toFixed(0)} ms</td>
+                          </tr>
+                        )
+                      }
+                      return rows
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* Past Benchmark History */}
+          {benchmarkHistory.length > 0 && (
+            <section className="evo-section">
+              <div className="evo-section-header">
+                <h3 className="evo-section-title">Benchmark History</h3>
+                <span className="evo-section-caption">Prior reproducible benchmark executions</span>
+              </div>
+              <div className="evo-table-container">
+                <table className="evo-table">
+                  <thead>
+                    <tr>
+                      <th>Benchmark ID</th>
+                      <th>Benchmark Name</th>
+                      <th>Preset</th>
+                      <th>Versions Evaluated</th>
+                      <th>Created By</th>
+                      <th>Timestamp</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {benchmarkHistory.map((b) => (
+                      <tr key={b.benchmark_id} className="evo-table-row">
+                        <td><code>{b.benchmark_id}</code></td>
+                        <td><strong>{b.name}</strong></td>
+                        <td><span className="evo-cell-sub">{b.preset_name || 'custom'}</span></td>
+                        <td><span className="evo-count-badge">{b.selected_versions?.length || 0} Versions</span></td>
+                        <td><span className="evo-cell-sub">{b.created_by}</span></td>
+                        <td><span className="evo-cell-sub">{new Date(b.created_at).toLocaleString()}</span></td>
+                        <td>
+                          <button
+                            type="button"
+                            onClick={() => setBenchmarkReport(b)}
+                            className="evo-btn-secondary evo-btn-sm"
+                          >
+                            Load Report
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+        </>
       )}
 
-      {/* APPROVAL CONFIRMATION MODAL */}
+      {/* ========================================================================= */}
+      {/* TAB 3: WORKFLOW VERSION LINEAGE GRAPH                                     */}
+      {/* ========================================================================= */}
+      {activeMainTab === 'lineage' && (
+        <section className="evo-section evo-lineage-container">
+          <div className="evo-section-header">
+            <div>
+              <h2 className="evo-section-title">Workflow Lineage & Derivation Tree</h2>
+              <span className="evo-section-caption">
+                Visualizing true parent-to-child relationships from database metadata. Baseline remains immutable reference root.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={fetchLineage}
+              className="evo-btn-secondary evo-btn-sm"
+              disabled={isLineageLoading}
+            >
+              🔄 Refresh Lineage
+            </button>
+          </div>
+
+          {isLineageLoading ? (
+            <div className="evo-versions-empty">
+              <span className="evo-spinner" /> Loading lineage graph...
+            </div>
+          ) : !lineageData || lineageData.nodes.length === 0 ? (
+            <div className="evo-versions-empty">
+              <p>No workflow version lineage found.</p>
+            </div>
+          ) : (
+            <div className="evo-lineage-flow">
+              {/* Root node: Baseline */}
+              <div className="evo-lineage-level">
+                {lineageData.nodes
+                  .filter((n) => n.version_id === 'baseline')
+                  .map((rootNode) => (
+                    <div key={rootNode.version_id} className="evo-lineage-card is-baseline">
+                      <div className="evo-lineage-card-head">
+                        <span className="evo-lineage-tag" style={{ background: '#0284c7' }}>ROOT BASELINE</span>
+                        <span className="evo-gov-state-pill gov-approved">IMMUTABLE</span>
+                      </div>
+                      <div className="evo-lineage-name">{rootNode.name}</div>
+                      <div className="evo-lineage-meta">
+                        <span>Model: <code>{rootNode.model_id}</code></span>
+                        <span>Provider: {rootNode.provider}</span>
+                        <span>{rootNode.rationale}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleInspectVersion('baseline')}
+                        className="evo-btn-inspect"
+                      >
+                        Inspect Baseline
+                      </button>
+                    </div>
+                  ))}
+              </div>
+
+              {/* Child Nodes */}
+              <div className="evo-lineage-level">
+                {lineageData.nodes
+                  .filter((n) => n.version_id !== 'baseline')
+                  .map((node) => {
+                    const edge = lineageData.edges.find((e) => e.target === node.version_id)
+                    const parentLabel = edge?.source === 'baseline' ? 'baseline' : edge?.source
+
+                    return (
+                      <div
+                        key={node.version_id}
+                        className={`evo-lineage-card ${node.mutation_type === 'refinement' ? 'is-refined' : ''}`}
+                      >
+                        <div className="evo-lineage-card-head">
+                          <span className="evo-lineage-tag">v{node.version_number}</span>
+                          <span className="evo-lineage-arrow-tag">
+                            ↓ from <code>{parentLabel}</code> ({edge?.label || 'mutation'})
+                          </span>
+                        </div>
+                        <div className="evo-lineage-name">{node.name}</div>
+                        <div className="evo-lineage-meta">
+                          <span>Version ID: <code>{node.version_id}</code></span>
+                          <span>Candidate: <code>{node.source_candidate_id}</code></span>
+                          <span>Strategy: <strong>{node.mutation_type?.toUpperCase()}</strong> {node.refinement_operation ? `(${node.refinement_operation})` : ''}</span>
+                          {node.fields_changed && node.fields_changed.length > 0 && (
+                            <span>Fields: {node.fields_changed.join(', ')}</span>
+                          )}
+                          {node.rationale && <span>Rationale: {node.rationale}</span>}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleInspectVersion(node.version_id)}
+                          className="evo-btn-inspect"
+                        >
+                          Inspect v{node.version_number}
+                        </button>
+                      </div>
+                    )
+                  })}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ========================================================================= */}
+      {/* CONFIRM APPROVAL MODAL                                                    */}
+      {/* ========================================================================= */}
       {confirmApprovalCandidate && (
-        <div
-          className="evo-modal-backdrop"
-          onClick={() => setConfirmApprovalCandidate(null)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div
-            className="evo-confirm-panel"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="evo-confirm-head">
-              <span className="evo-confirm-icon">🛡️</span>
-              <div>
-                <h3 className="evo-confirm-title">Approve Workflow Candidate?</h3>
-                <span className="evo-confirm-sub">Explicit Governance & Versioning Action</span>
+        <div className="evo-modal-backdrop" onClick={() => setConfirmApprovalCandidate(null)} role="dialog" aria-modal="true">
+          <div className="evo-modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="evo-modal-head">
+              <h3>Confirm Workflow Approval</h3>
+              <button type="button" onClick={() => setConfirmApprovalCandidate(null)} className="evo-modal-close">✕</button>
+            </div>
+            <div className="evo-modal-content">
+              <p>Are you sure you want to approve this candidate workflow and persist it as an immutable version?</p>
+              <div className="evo-summary-box" style={{ marginTop: 12 }}>
+                <strong>Workflow:</strong> {confirmApprovalCandidate.workflow.name} (<code>{confirmApprovalCandidate.candidate_id}</code>)<br />
+                <strong>Groundedness:</strong> {((confirmApprovalCandidate.metrics.groundedness ?? confirmApprovalCandidate.metrics.performance) * 100).toFixed(1)}%<br />
+                <strong>Cost / Query:</strong> ${confirmApprovalCandidate.metrics.cost.toFixed(6)}<br />
+                <strong>Model:</strong> {confirmApprovalCandidate.workflow.model.model_id}
               </div>
             </div>
-
-            <div className="evo-confirm-body">
-              <div className="evo-confirm-meta">
-                <div className="evo-confirm-row">
-                  <span className="evo-confirm-label">Candidate:</span>
-                  <span className="evo-confirm-value"><strong>{confirmApprovalCandidate.workflow.name}</strong> <code>({confirmApprovalCandidate.candidate_id})</code></span>
-                </div>
-                <div className="evo-confirm-row">
-                  <span className="evo-confirm-label">Model:</span>
-                  <span className="evo-confirm-value">{confirmApprovalCandidate.workflow.model.provider} / <code>{confirmApprovalCandidate.workflow.model.model_id}</code></span>
-                </div>
-                <div className="evo-confirm-row">
-                  <span className="evo-confirm-label">Groundedness:</span>
-                  <span className="evo-confirm-value evo-val-green">
-                    {((confirmApprovalCandidate.metrics.groundedness ?? confirmApprovalCandidate.metrics.performance) * 100).toFixed(1)}%
-                  </span>
-                </div>
-                <div className="evo-confirm-row">
-                  <span className="evo-confirm-label">Cost / Query:</span>
-                  <span className="evo-confirm-value evo-val-amber">
-                    ${confirmApprovalCandidate.metrics.cost.toFixed(6)}
-                  </span>
-                </div>
-                <div className="evo-confirm-row">
-                  <span className="evo-confirm-label">Retrieval:</span>
-                  <span className="evo-confirm-value">
-                    Top-K: {confirmApprovalCandidate.workflow.retrieval.top_k} | Threshold: {confirmApprovalCandidate.workflow.retrieval.similarity_threshold}
-                  </span>
-                </div>
-              </div>
-
-              <div className="evo-confirm-notice">
-                <p>
-                  <strong>Governance Policy:</strong> Approving creates a new immutable workflow version for future reference.
-                </p>
-                <p>
-                  The current production baseline will <strong>not</strong> be replaced or automatically deployed.
-                </p>
-              </div>
-            </div>
-
-            <div className="evo-confirm-actions">
-              <button
-                type="button"
-                onClick={() => setConfirmApprovalCandidate(null)}
-                className="evo-btn-secondary"
-                disabled={approvingId === confirmApprovalCandidate.candidate_id}
-              >
+            <div className="evo-modal-foot">
+              <button type="button" onClick={() => setConfirmApprovalCandidate(null)} className="evo-btn-secondary">
                 Cancel
               </button>
               <button
@@ -1742,112 +1877,225 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                 className="evo-btn-primary"
                 disabled={approvingId === confirmApprovalCandidate.candidate_id}
               >
-                {approvingId === confirmApprovalCandidate.candidate_id ? 'Approving...' : 'Approve Workflow'}
+                {approvingId === confirmApprovalCandidate.candidate_id ? 'Approving...' : 'Confirm Approval'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* INSPECT WORKFLOW VERSION MODAL */}
-      {inspectModalVersion && (
-        <div
-          className="evo-modal-backdrop"
-          onClick={() => setInspectModalVersion(null)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div
-            className="evo-modal-panel"
-            onClick={(e) => e.stopPropagation()}
-          >
+      {/* ========================================================================= */}
+      {/* INSPECT WORKFLOW CANDIDATE MODAL                                          */}
+      {/* ========================================================================= */}
+      {inspectModalCandidate && baselineCandidate && (
+        <div className="evo-modal-backdrop" onClick={() => setInspectModalCandidate(null)} role="dialog" aria-modal="true">
+          <div className="evo-modal-panel" onClick={(e) => e.stopPropagation()} ref={modalRef}>
             <div className="evo-modal-head">
               <div>
                 <div className="evo-modal-badges">
-                  <span className="evo-version-tag">v{inspectModalVersion.version_number}</span>
-                  <span className="evo-status-tag tag-pareto">✓ {inspectModalVersion.status.toUpperCase()}</span>
+                  <span className={`evo-status-tag ${inspectModalCandidate.candidate_id === 'baseline' ? 'tag-baseline' : inspectModalCandidate.is_pareto_optimal ? 'tag-pareto' : 'tag-dominated'}`}>
+                    {inspectModalCandidate.candidate_id === 'baseline' ? 'Baseline' : inspectModalCandidate.is_pareto_optimal ? 'Pareto-Optimal' : 'Dominated'}
+                  </span>
+                  {renderMutationBadge(inspectModalCandidate)}
+                </div>
+                <h3 className="evo-modal-heading">{inspectModalCandidate.workflow.name}</h3>
+                <span className="evo-modal-subheading">Candidate ID: <code>{inspectModalCandidate.candidate_id}</code></span>
+              </div>
+              <button type="button" onClick={() => setInspectModalCandidate(null)} className="evo-modal-close">✕</button>
+            </div>
+
+            <div className="evo-modal-content">
+              {/* Mutation Metadata */}
+              {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata) && (
+                <div className="evo-modal-block">
+                  <h4 className="evo-modal-block-title">Mutation & Lineage Details</h4>
+                  <div className="evo-modal-grid">
+                    <div className="evo-modal-field">
+                      <span className="evo-field-key">Parent Workflow</span>
+                      <span className="evo-field-value">
+                        <code>{(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.parent_workflow_id}</code>
+                      </span>
+                    </div>
+                    <div className="evo-modal-field">
+                      <span className="evo-field-key">Mutation Category</span>
+                      <span className="evo-field-value">
+                        {renderMutationBadge(inspectModalCandidate)}
+                      </span>
+                    </div>
+                    {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.refinement_operation && (
+                      <div className="evo-modal-field">
+                        <span className="evo-field-key">Refinement Operation</span>
+                        <span className="evo-field-value">
+                          <code className="evo-refine-op-tag">
+                            {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.refinement_operation}
+                          </code>
+                        </span>
+                      </div>
+                    )}
+                    {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.fields_changed && (
+                      <div className="evo-modal-field">
+                        <span className="evo-field-key">Fields Changed</span>
+                        <span className="evo-field-value">
+                          {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.fields_changed?.join(', ')}
+                        </span>
+                      </div>
+                    )}
+                    <div className="evo-modal-field evo-metric-card-span">
+                      <span className="evo-field-key">Rationale</span>
+                      <span className="evo-field-value">
+                        {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.mutation_description}
+                      </span>
+                    </div>
+
+                    {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.before_configuration && (
+                      <div className="evo-modal-field evo-metric-card-span evo-refine-diff-box">
+                        <div className="evo-refine-diff-col">
+                          <span className="evo-field-key">Before Configuration (Parent)</span>
+                          <pre className="evo-refine-cfg-pre">
+                            {JSON.stringify((inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.before_configuration, null, 2)}
+                          </pre>
+                        </div>
+                        <div className="evo-refine-arrow">→</div>
+                        <div className="evo-refine-diff-col">
+                          <span className="evo-field-key">After Configuration (Refined)</span>
+                          <pre className="evo-refine-cfg-pre">
+                            {JSON.stringify((inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.after_configuration, null, 2)}
+                          </pre>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Evaluation Metrics */}
+              <div className="evo-modal-block">
+                <h4 className="evo-modal-block-title">Phase 6 Evaluation Metrics</h4>
+                <div className="evo-modal-grid">
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Groundedness</span>
+                    <span className="evo-field-value evo-val-green">
+                      {((inspectModalCandidate.metrics.groundedness ?? inspectModalCandidate.metrics.performance) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Hallucination Rate</span>
+                    <span className="evo-field-value evo-val-cyan">
+                      {((inspectModalCandidate.metrics.hallucination_rate ?? 0) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">Cost / Query</span>
+                    <span className="evo-field-value evo-val-amber">
+                      ${inspectModalCandidate.metrics.cost.toFixed(6)}
+                    </span>
+                  </div>
+                  <div className="evo-modal-field">
+                    <span className="evo-field-key">LLM Latency</span>
+                    <span className="evo-field-value evo-val-purple">
+                      {inspectModalCandidate.metrics.llm_latency_ms.toFixed(0)} ms
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="evo-modal-foot">
+              <button type="button" onClick={() => setInspectModalCandidate(null)} className="evo-btn-secondary">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* INSPECT APPROVED WORKFLOW VERSION MODAL                                    */}
+      {/* ========================================================================= */}
+      {inspectModalVersion && (
+        <div className="evo-modal-backdrop" onClick={() => setInspectModalVersion(null)} role="dialog" aria-modal="true">
+          <div className="evo-modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="evo-modal-head">
+              <div>
+                <div className="evo-modal-badges">
+                  <span className="evo-version-tag">v{inspectModalVersion.version_number ?? 0}</span>
+                  <span className="evo-gov-state-pill gov-approved">{inspectModalVersion.status.toUpperCase()}</span>
                 </div>
                 <h3 className="evo-modal-heading">{inspectModalVersion.name}</h3>
                 <span className="evo-modal-subheading">Version ID: <code>{inspectModalVersion.version_id}</code></span>
               </div>
-              <button
-                type="button"
-                onClick={() => setInspectModalVersion(null)}
-                className="evo-modal-close"
-                aria-label="Close modal"
-              >
-                ✕
-              </button>
+              <button type="button" onClick={() => setInspectModalVersion(null)} className="evo-modal-close">✕</button>
             </div>
 
             <div className="evo-modal-content">
-              {/* Governance & Provenance */}
+              {/* Lineage & Derivation */}
               <div className="evo-modal-block">
-                <h4 className="evo-modal-block-title">Governance & Provenance</h4>
+                <h4 className="evo-modal-block-title">Workflow Lineage & Strategy</h4>
                 <div className="evo-modal-grid">
                   <div className="evo-modal-field">
-                    <span className="evo-field-key">Approved By</span>
-                    <span className="evo-field-value">{inspectModalVersion.approved_by || 'Developer'}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Approved At</span>
-                    <span className="evo-field-value" style={{ fontSize: '12px' }}>
-                      {inspectModalVersion.approved_at ? new Date(inspectModalVersion.approved_at).toLocaleString() : 'N/A'}
+                    <span className="evo-field-key">Parent Workflow</span>
+                    <span className="evo-field-value">
+                      <code>{inspectModalVersion.parent_workflow_id || 'Production Baseline'}</code>
+                      {inspectModalVersion.parent_version && (
+                        <span className="evo-cell-sub"> (v{inspectModalVersion.parent_version.version_number}: {inspectModalVersion.parent_version.name})</span>
+                      )}
                     </span>
                   </div>
                   <div className="evo-modal-field">
-                    <span className="evo-field-key">Source Candidate</span>
-                    <span className="evo-field-value"><code>{inspectModalVersion.source_candidate_id}</code></span>
+                    <span className="evo-field-key">Strategy</span>
+                    <span className="evo-field-value">
+                      <strong>{inspectModalVersion.mutation_type?.toUpperCase() || 'BASELINE'}</strong>
+                      {inspectModalVersion.refinement_operation ? ` (${inspectModalVersion.refinement_operation})` : ''}
+                    </span>
                   </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Source Run</span>
-                    <span className="evo-field-value"><code>{inspectModalVersion.source_run_id}</code></span>
-                  </div>
+                  {inspectModalVersion.source_candidate_id && (
+                    <div className="evo-modal-field">
+                      <span className="evo-field-key">Source Candidate / Run</span>
+                      <span className="evo-field-value">
+                        <code>{inspectModalVersion.source_candidate_id}</code> in <code>{inspectModalVersion.source_run_id}</code>
+                      </span>
+                    </div>
+                  )}
+                  {inspectModalVersion.fields_changed && inspectModalVersion.fields_changed.length > 0 && (
+                    <div className="evo-modal-field">
+                      <span className="evo-field-key">Fields Changed</span>
+                      <span className="evo-field-value">{inspectModalVersion.fields_changed.join(', ')}</span>
+                    </div>
+                  )}
+                  {inspectModalVersion.rationale && (
+                    <div className="evo-modal-field evo-metric-card-span">
+                      <span className="evo-field-key">Rationale</span>
+                      <span className="evo-field-value">{inspectModalVersion.rationale}</span>
+                    </div>
+                  )}
                 </div>
-              </div>
 
-              {/* Workflow Configuration */}
-              <div className="evo-modal-block">
-                <h4 className="evo-modal-block-title">Workflow Configuration</h4>
-                <div className="evo-modal-grid">
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Provider</span>
-                    <span className="evo-field-value">{inspectModalVersion.provider}</span>
+                {/* Before vs After Diffs */}
+                {inspectModalVersion.before_configuration && inspectModalVersion.after_configuration && (
+                  <div className="evo-inspect-diff-grid">
+                    <div className="evo-diff-pane">
+                      <div className="evo-diff-pane-title">
+                        <span>Before (Parent Configuration)</span>
+                      </div>
+                      <pre className="evo-refine-cfg-pre">
+                        {JSON.stringify(inspectModalVersion.before_configuration, null, 2)}
+                      </pre>
+                    </div>
+                    <div className="evo-diff-pane">
+                      <div className="evo-diff-pane-title">
+                        <span>After (Refined Configuration)</span>
+                      </div>
+                      <pre className="evo-refine-cfg-pre">
+                        {JSON.stringify(inspectModalVersion.after_configuration, null, 2)}
+                      </pre>
+                    </div>
                   </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Model ID</span>
-                    <span className="evo-field-value"><code>{inspectModalVersion.model_id}</code></span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Top-K</span>
-                    <span className="evo-field-value">{inspectModalVersion.configuration?.retrieval?.top_k ?? 'N/A'}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Similarity Threshold</span>
-                    <span className="evo-field-value">{inspectModalVersion.configuration?.retrieval?.similarity_threshold ?? 'N/A'}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Reranking</span>
-                    <span className="evo-field-value">{inspectModalVersion.configuration?.retrieval?.enable_rerank ? 'Enabled' : 'Disabled'}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Prompt Template</span>
-                    <span className="evo-field-value">{inspectModalVersion.configuration?.prompt?.template_name ?? 'N/A'}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Chunk Size</span>
-                    <span className="evo-field-value">{inspectModalVersion.configuration?.retrieval?.chunk_size ?? 'N/A'} tokens</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Chunk Overlap</span>
-                    <span className="evo-field-value">{inspectModalVersion.configuration?.retrieval?.chunk_overlap ?? 'N/A'} tokens</span>
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* Evaluation Snapshot */}
               <div className="evo-modal-block">
-                <h4 className="evo-modal-block-title">Evaluation Snapshot (At Time of Approval)</h4>
+                <h4 className="evo-modal-block-title">Evaluation Snapshot (At Approval)</h4>
                 <div className="evo-modal-grid">
                   <div className="evo-modal-field">
                     <span className="evo-field-key">Groundedness</span>
@@ -1860,7 +2108,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     </span>
                   </div>
                   <div className="evo-modal-field">
-                    <span className="evo-field-key">Hallucination</span>
+                    <span className="evo-field-key">Hallucination Rate</span>
                     <span className="evo-field-value evo-val-cyan">
                       {inspectModalVersion.evaluation_snapshot?.hallucination_rate !== null && inspectModalVersion.evaluation_snapshot?.hallucination_rate !== undefined
                         ? `${(inspectModalVersion.evaluation_snapshot.hallucination_rate * 100).toFixed(1)}%`
@@ -1879,34 +2127,33 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                       {Number(inspectModalVersion.evaluation_snapshot?.llm_latency_ms || 0).toFixed(0)} ms
                     </span>
                   </div>
+                </div>
+              </div>
+
+              {/* Approval Info */}
+              <div className="evo-modal-block">
+                <h4 className="evo-modal-block-title">Governance & Approval Record</h4>
+                <div className="evo-modal-grid">
                   <div className="evo-modal-field">
-                    <span className="evo-field-key">Execution Time</span>
-                    <span className="evo-field-value">
-                      {Number(inspectModalVersion.evaluation_snapshot?.execution_time_ms || 0).toFixed(0)} ms
-                    </span>
+                    <span className="evo-field-key">Approved By</span>
+                    <span className="evo-field-value">{inspectModalVersion.approved_by}</span>
                   </div>
                   <div className="evo-modal-field">
-                    <span className="evo-field-key">Total Tokens</span>
-                    <span className="evo-field-value">
-                      {inspectModalVersion.evaluation_snapshot?.total_tokens ?? 'N/A'}
-                    </span>
+                    <span className="evo-field-key">Approved At</span>
+                    <span className="evo-field-value">{new Date(inspectModalVersion.approved_at).toLocaleString()}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Raw JSON Spec */}
+              {/* Raw JSON */}
               <details className="evo-details-block">
-                <summary className="evo-details-summary">Raw Configuration Spec (JSON)</summary>
+                <summary className="evo-details-summary">Immutable Configuration Spec (JSON)</summary>
                 <pre className="evo-json-pre">{JSON.stringify(inspectModalVersion.configuration, null, 2)}</pre>
               </details>
             </div>
 
             <div className="evo-modal-foot">
-              <button
-                type="button"
-                onClick={() => setInspectModalVersion(null)}
-                className="evo-btn-secondary"
-              >
+              <button type="button" onClick={() => setInspectModalVersion(null)} className="evo-btn-secondary">
                 Close
               </button>
             </div>

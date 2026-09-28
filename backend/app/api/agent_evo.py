@@ -11,8 +11,13 @@ from app.models.workflow_version import WorkflowVersion
 from app.schemas.agent_evo import (
     ApproveWorkflowRequest,
     ApproveWorkflowResponse,
+    BenchmarkReportResponse,
+    BenchmarkRunListResponse,
+    BenchmarkRunRequest,
     OptimizationRunListResponse,
     OptimizationRunRequest,
+    VersionInspectResponse,
+    VersionLineageResponse,
     WorkflowVersionListResponse,
     WorkflowVersionResponse,
 )
@@ -21,6 +26,7 @@ from app.services.agent_evo import (
     OptimizationReport,
     get_agent_evo_optimizer,
 )
+from app.services.agent_evo.benchmark_service import BenchmarkService
 
 logger = logging.getLogger("agentforge.api.agent_evo")
 
@@ -87,6 +93,7 @@ async def optimize_workflow(
         expected_answer=request.expected_answer,
         candidate_count=request.candidate_count,
         seed=request.seed,
+        parent_workflow_id=request.parent_workflow_id,
         allowed_mutation_types=request.allowed_mutation_types,
         db=db,
     )
@@ -284,6 +291,114 @@ def get_workflow_version(
             detail=f"Workflow version '{version_id}' not found.",
         )
     return format_version_response(version)
+
+
+# ---------------------------------------------------------------------------
+# Phase 7.3+ Controlled Benchmarking, Lineage & Inspection Endpoints
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/benchmark",
+    response_model=BenchmarkReportResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Execute controlled multi-version benchmark comparison",
+)
+async def run_version_benchmark(
+    request: BenchmarkRunRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BenchmarkReportResponse:
+    """
+    Execute controlled head-to-head benchmarking across selected workflow versions.
+    Evaluates each version against the EXACT SAME queries, documents, and Phase 6 evaluation rules.
+    Calculates objective Pareto dominance and persists benchmark run for reproducibility.
+    """
+    report = await BenchmarkService.run_benchmark(
+        version_ids=request.version_ids,
+        query=request.query,
+        user_id=current_user.id,
+        user_email=current_user.email,
+        document_id=request.document_id,
+        document_ids=request.document_ids,
+        expected_answer=request.expected_answer,
+        preset_name=request.preset_name,
+        name=request.name or "Version Benchmark Comparison",
+        description=request.description,
+        iterations=request.iterations,
+        repetitions=request.repetitions,
+        db=db,
+    )
+    return report
+
+
+@router.get(
+    "/benchmarks",
+    response_model=BenchmarkRunListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List all past reproducible benchmark runs",
+)
+def list_version_benchmarks(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BenchmarkRunListResponse:
+    """Retrieve all past multi-version benchmark runs, newest first."""
+    return BenchmarkService.list_benchmarks(db=db)
+
+
+@router.get(
+    "/benchmarks/{benchmark_id}",
+    response_model=BenchmarkReportResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Retrieve a specific benchmark run report",
+)
+def get_version_benchmark(
+    benchmark_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BenchmarkReportResponse:
+    """Retrieve benchmark run details by benchmark_id."""
+    report = BenchmarkService.get_benchmark(benchmark_id=benchmark_id, db=db)
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Benchmark run '{benchmark_id}' not found.",
+        )
+    return report
+
+
+@router.get(
+    "/lineage",
+    response_model=VersionLineageResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Retrieve complete workflow version lineage graph",
+)
+def get_workflow_lineage(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VersionLineageResponse:
+    """
+    Retrieve directed lineage graph showing actual parent-to-child relationships
+    and configuration mutations across all approved versions from the database.
+    """
+    return BenchmarkService.get_lineage(db=db)
+
+
+@router.get(
+    "/versions/{version_id}/inspect",
+    response_model=VersionInspectResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Inspect complete metadata and configuration diffs for a version",
+)
+def inspect_workflow_version(
+    version_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VersionInspectResponse:
+    """
+    Retrieve comprehensive metadata, parent linkage, before/after diffs,
+    evaluation snapshot, and governance approval details for a specific workflow version.
+    """
+    return BenchmarkService.inspect_version(version_id=version_id, db=db)
 
 
 # Workflows router alias endpoints for /api/workflows/versions

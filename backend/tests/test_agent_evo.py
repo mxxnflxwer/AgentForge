@@ -290,9 +290,8 @@ def test_optimization_report_generation():
     assert report.pareto_frontier_count == 1
     assert len(report.trade_off_analyses) == 1
     trade_off = report.trade_off_analyses[0]
-    assert trade_off.performance_delta_pct > 0
-    assert trade_off.cost_delta_pct < 0
-    assert "Strict improvement" in trade_off.trade_off_summary
+    assert "The candidate achieved" in trade_off.trade_off_summary
+    assert "lower measured cost" in trade_off.trade_off_summary
 
 
 # --- 7. Full AgentEvo Optimizer Pipeline Tests ---

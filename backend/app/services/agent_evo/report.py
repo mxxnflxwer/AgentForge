@@ -77,7 +77,10 @@ def generate_optimization_report(
             perf_denom = max(0.0001, base_perf)
             cost_denom = max(0.000001, base_cost)
             lat_denom = max(1.0, base_lat)
-            perf_delta = round(((p.metrics.performance - base_perf) / perf_denom) * 100, 2)
+            
+            # Groundedness difference in percentage points
+            groundedness_diff_pp = round((p.metrics.performance - base_perf) * 100, 2)
+            perf_delta = groundedness_diff_pp
             cost_delta = round(((p.metrics.cost - base_cost) / cost_denom) * 100, 2)
             lat_delta = round(((p.metrics.llm_latency_ms - base_lat) / lat_denom) * 100, 2)
 
@@ -85,14 +88,26 @@ def generate_optimization_report(
             if p.candidate_id == baseline.candidate_id:
                 summary_parts.append("Baseline configuration is Pareto-optimal.")
             else:
-                if perf_delta > 0 and cost_delta <= 0:
-                    summary_parts.append(f"Strict improvement: +{perf_delta}% groundedness at {abs(cost_delta)}% lower cost.")
-                elif perf_delta >= 0 and cost_delta < 0:
-                    summary_parts.append(f"Cost reduction: {abs(cost_delta)}% cheaper with equal groundedness.")
-                elif perf_delta > 0 and cost_delta > 0:
-                    summary_parts.append(f"Performance trade-off: +{perf_delta}% groundedness with +{cost_delta}% cost increase.")
+                # Factual objective-specific descriptions using actual measured values
+                if abs(groundedness_diff_pp) < 0.01:
+                    perf_desc = "the same measured groundedness as the baseline"
+                elif groundedness_diff_pp > 0:
+                    perf_desc = f"{groundedness_diff_pp:+.2f} percentage points higher measured groundedness"
                 else:
-                    summary_parts.append(f"Alternative trade-off point: Groundedness {p.metrics.performance * 100:.1f}%, Cost ${p.metrics.cost:.6f}.")
+                    perf_desc = f"{abs(groundedness_diff_pp):.2f} percentage points lower measured groundedness"
+
+                if abs(cost_delta) < 0.01:
+                    cost_desc = "identical measured cost"
+                elif cost_delta < 0:
+                    cost_desc = f"{abs(cost_delta):.2f}% lower measured cost"
+                else:
+                    cost_desc = f"{cost_delta:.2f}% higher measured cost"
+
+                summary_parts.append(f"The candidate achieved {perf_desc} with {cost_desc}.")
+
+                if abs(lat_delta) >= 0.1:
+                    lat_dir = "lower" if lat_delta < 0 else "higher"
+                    summary_parts.append(f"It recorded {abs(lat_delta):.1f}% {lat_dir} measured latency in this evaluation run.")
         else:
             perf_delta = 0.0
             cost_delta = 0.0
@@ -117,10 +132,21 @@ def generate_optimization_report(
             )
         )
 
+    total_workflows = len(all_candidates)
+    baseline_count = 1 if baseline else 0
+    generated_count = max(0, total_workflows - baseline_count)
+    pareto_count = len(pareto_candidates)
+
+    wf_word = "workflow" if total_workflows == 1 else "workflows"
+    base_word = "baseline" if baseline_count == 1 else "baselines"
+    cand_word = "generated candidate" if generated_count == 1 else "generated candidates"
+    pareto_wf_str = "workflow forms" if pareto_count == 1 else "workflows form"
+
     exec_summary = (
-        f"Optimization run '{run_id}' evaluated {len(all_candidates)} total candidates. "
-        f"{len(pareto_candidates)} candidates form the Pareto-optimal frontier. "
-        f"Developer review and approval required before applying workflow changes."
+        f"Optimization run {run_id} evaluated {total_workflows} {wf_word}:\n"
+        f"{baseline_count} {base_word} + {generated_count} {cand_word}.\n\n"
+        f"{pareto_count} {pareto_wf_str} the Pareto-optimal frontier.\n\n"
+        f"Developer review and approval are required before applying workflow changes."
     )
 
     return OptimizationReport(
@@ -139,3 +165,4 @@ def generate_optimization_report(
         human_approval_required=True,
         approved_workflow_id=None,
     )
+

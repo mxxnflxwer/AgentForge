@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 
-export type MutationType = 'prompt' | 'retrieval' | 'model' | 'operator' | 'mixed' | 'refinement'
+export type MutationType = 'prompt' | 'retrieval' | 'model' | 'operator' | 'mixed' | 'refinement' | 'crossover'
 
 export interface MutationMetadata {
   mutation_type: MutationType
@@ -117,6 +117,56 @@ export interface WorkflowVersion {
   status: string
   approved_by: string
   approved_at: string
+  activated_at?: string | null
+  created_at: string
+}
+
+export interface ActiveWorkflowInfo {
+  version_id: string
+  version_number?: number | null
+  name: string
+  status: string
+  activated_at?: string | null
+  configuration: Record<string, any>
+  evaluation_snapshot?: Record<string, any> | null
+  model_id: string
+  provider: string
+}
+
+export interface WorkflowExecution {
+  execution_id: string
+  workflow_version_id: string
+  query: string
+  model_id: string
+  provider: string
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  cost: number
+  llm_latency_ms: number
+  total_execution_time_ms: number
+  response: string
+  retrieved_doc_ids?: string[] | null
+  created_at: string
+}
+
+export interface WorkflowFeedback {
+  feedback_id: string
+  execution_id: string
+  workflow_version_id: string
+  user_id: string
+  rating: number
+  feedback_text?: string | null
+  created_at: string
+}
+
+export interface WorkflowAuditEvent {
+  event_id: string
+  event_type: string
+  workflow_version_id?: string | null
+  previous_version_id?: string | null
+  triggered_by: string
+  details?: Record<string, any> | null
   created_at: string
 }
 
@@ -215,6 +265,11 @@ export interface LineageNode {
   version_number?: number | null
   name: string
   parent_workflow_id?: string | null
+  parent_a_version_id?: string | null
+  parent_b_version_id?: string | null
+  candidate_type?: string | null
+  crossover_strategy?: string | null
+  crossover_map?: Record<string, string> | null
   source_run_id?: string | null
   source_candidate_id?: string | null
   model_id: string
@@ -250,7 +305,26 @@ export interface VersionInspectData {
   name: string
   description?: string | null
   parent_workflow_id?: string | null
+  parent_a_version_id?: string | null
+  parent_b_version_id?: string | null
+  candidate_type?: string | null
+  crossover_strategy?: string | null
+  crossover_map?: Record<string, string> | null
   parent_version?: {
+    version_id: string
+    version_number: number
+    name: string
+    model_id: string
+    provider: string
+  } | null
+  parent_a_version?: {
+    version_id: string
+    version_number: number
+    name: string
+    model_id: string
+    provider: string
+  } | null
+  parent_b_version?: {
     version_id: string
     version_number: number
     name: string
@@ -273,6 +347,33 @@ export interface VersionInspectData {
   approved_by: string
   approved_at: string
   created_at: string
+}
+
+export interface CrossoverInheritanceItem {
+  component: string
+  source_parent: 'parent_a' | 'parent_b'
+  source_version_id: string
+  value: any
+}
+
+export interface CrossoverPreviewResponse {
+  is_valid: boolean
+  validation_errors: string[]
+  parent_a: {
+    version_id: string
+    name: string
+    configuration: Record<string, any>
+  }
+  parent_b: {
+    version_id: string
+    name: string
+    configuration: Record<string, any>
+  }
+  crossover_strategy: string
+  crossover_map: Record<string, string>
+  inheritance_breakdown: CrossoverInheritanceItem[]
+  resulting_configuration: Record<string, any>
+  post_crossover_mutation: string
 }
 
 interface DocumentItem {
@@ -317,15 +418,33 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   setSelectedDocId,
   isLoggedIn,
 }) => {
-  // Main Top-level Tab Navigation
-  const [activeMainTab, setActiveMainTab] = useState<'optimizer' | 'benchmark' | 'lineage'>('optimizer')
+  // Top-level Navigation Sub-Tabs
+  const [activeMainTab, setActiveMainTab] = useState<'optimizer' | 'lifecycle' | 'benchmark' | 'lineage'>('optimizer')
+
+  // Candidate Generation Strategy Selector inside Optimizer: Mutation, Refinement, Crossover
+  const [candidateStrategy, setCandidateStrategy] = useState<'mutation' | 'refinement' | 'crossover'>('mutation')
 
   // Optimization Setup State
   const [activePreset, setActivePreset] = useState<PresetType>('clinical')
   const [query, setQuery] = useState(PRESET_QUERIES.clinical.query)
   const [generatedCandidateCount, setGeneratedCandidateCount] = useState<number>(4)
-  const [selectedStrategy, setSelectedStrategy] = useState<string>('all')
+  const [selectedMutationType, setSelectedMutationType] = useState<string>('all')
+  const [selectedRefinementType, setSelectedRefinementType] = useState<string>('all')
   const [selectedParentWorkflowId, setSelectedParentWorkflowId] = useState<string>('baseline')
+
+  // Crossover Specific Controls
+  const [crossoverParentA, setCrossoverParentA] = useState<string>('baseline')
+  const [crossoverParentB, setCrossoverParentB] = useState<string>('wf_v1_60e5af')
+  const [crossoverMap, setCrossoverMap] = useState<Record<string, 'parent_a' | 'parent_b'>>({
+    retrieval: 'parent_a',
+    prompt: 'parent_b',
+    model: 'parent_a',
+    generation: 'parent_a',
+    operators: 'parent_b',
+  })
+  const [postCrossoverMutation, setPostCrossoverMutation] = useState<string>('none')
+  const [crossoverPreview, setCrossoverPreview] = useState<CrossoverPreviewResponse | null>(null)
+  const [isPreviewLoading, setIsPreviewLoading] = useState<boolean>(false)
 
   // Execution & Pipeline State
   const [running, setRunning] = useState(false)
@@ -333,15 +452,29 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   const [report, setReport] = useState<OptimizationReport | null>(null)
   const [, setRuns] = useState<OptimizationReport[]>([])
   const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersion[]>([])
+  const [activeWorkflow, setActiveWorkflow] = useState<ActiveWorkflowInfo | null>(null)
+  const [executions, setExecutions] = useState<WorkflowExecution[]>([])
+  const [auditEvents, setAuditEvents] = useState<WorkflowAuditEvent[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // Interactive Selection State
+  // Interactive Modals & Governance State
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
   const [inspectModalCandidate, setInspectModalCandidate] = useState<EvaluatedCandidate | null>(null)
   const [inspectModalVersion, setInspectModalVersion] = useState<VersionInspectData | null>(null)
   const [confirmApprovalCandidate, setConfirmApprovalCandidate] = useState<EvaluatedCandidate | null>(null)
   const [approvingId, setApprovingId] = useState<string | null>(null)
   const [isReportCollapsed, setIsReportCollapsed] = useState<boolean>(false)
+
+  // Activation & Rollback Modal State
+  const [actionModalVersion, setActionModalVersion] = useState<{ version: WorkflowVersion; type: 'activate' | 'rollback' } | null>(null)
+  const [actionReason, setActionReason] = useState<string>('')
+  const [isActionSubmitting, setIsActionSubmitting] = useState<boolean>(false)
+
+  // Feedback Modal State
+  const [feedbackModalExecution, setFeedbackModalExecution] = useState<WorkflowExecution | null>(null)
+  const [feedbackRating, setFeedbackRating] = useState<number>(5)
+  const [feedbackText, setFeedbackText] = useState<string>('')
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState<boolean>(false)
 
   // Benchmarking State
   const [selectedBenchmarkVersions, setSelectedBenchmarkVersions] = useState<string[]>(['baseline'])
@@ -350,12 +483,11 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   const [benchDocId, setBenchDocId] = useState<string>(selectedDocId)
   const [isBenchmarking, setIsBenchmarking] = useState<boolean>(false)
   const [benchmarkReport, setBenchmarkReport] = useState<BenchmarkReport | null>(null)
-  const [benchmarkHistory, setBenchmarkHistory] = useState<BenchmarkReport[]>([])
-  const [hoveredBenchItem, setHoveredBenchItem] = useState<BenchmarkItemResult | null>(null)
+  const [, setBenchmarkHistory] = useState<BenchmarkReport[]>([])
 
   // Lineage State
   const [lineageData, setLineageData] = useState<LineageData | null>(null)
-  const [isLineageLoading, setIsLineageLoading] = useState<boolean>(false)
+  const [, setIsLineageLoading] = useState<boolean>(false)
 
   // Modal accessibility ref
   const modalRef = useRef<HTMLDivElement>(null)
@@ -364,12 +496,15 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
     if (isLoggedIn) {
       fetchRuns()
       fetchVersions()
+      fetchActiveWorkflow()
+      fetchExecutions()
+      fetchAuditEvents()
       fetchBenchmarks()
       fetchLineage()
     }
   }, [isLoggedIn])
 
-  // Sync selected doc with benchmark doc
+  // Sync selected doc with benchmark
   useEffect(() => {
     if (selectedDocId) {
       setBenchDocId(selectedDocId)
@@ -383,11 +518,13 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
         if (confirmApprovalCandidate) setConfirmApprovalCandidate(null)
         else if (inspectModalVersion) setInspectModalVersion(null)
         else if (inspectModalCandidate) setInspectModalCandidate(null)
+        else if (actionModalVersion) setActionModalVersion(null)
+        else if (feedbackModalExecution) setFeedbackModalExecution(null)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [inspectModalCandidate, inspectModalVersion, confirmApprovalCandidate])
+  }, [inspectModalCandidate, inspectModalVersion, confirmApprovalCandidate, actionModalVersion, feedbackModalExecution])
 
   // Select initial Pareto candidate when report loads
   useEffect(() => {
@@ -424,13 +561,58 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
         const data = await res.json()
         if (data.versions && Array.isArray(data.versions)) {
           setWorkflowVersions(data.versions)
-          // Default benchmark versions to baseline + all approved
           const allIds = ['baseline', ...data.versions.map((v: WorkflowVersion) => v.version_id)]
           setSelectedBenchmarkVersions(allIds)
+          if (data.versions.length > 0 && crossoverParentB === 'wf_v1_60e5af') {
+            const firstVer = data.versions[0].version_id
+            if (firstVer !== crossoverParentA) {
+              setCrossoverParentB(firstVer)
+            }
+          }
         }
       }
     } catch (err) {
       console.warn('Could not fetch workflow versions', err)
+    }
+  }
+
+  const fetchActiveWorkflow = async () => {
+    try {
+      const res = await fetch(`${apiBase}/api/agent-evo/active`, { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        setActiveWorkflow(data)
+      }
+    } catch (err) {
+      console.warn('Could not fetch active workflow', err)
+    }
+  }
+
+  const fetchExecutions = async () => {
+    try {
+      const res = await fetch(`${apiBase}/api/agent-evo/executions?limit=30`, { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.executions && Array.isArray(data.executions)) {
+          setExecutions(data.executions)
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch executions', err)
+    }
+  }
+
+  const fetchAuditEvents = async () => {
+    try {
+      const res = await fetch(`${apiBase}/api/agent-evo/audit?limit=30`, { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.audit_events && Array.isArray(data.audit_events)) {
+          setAuditEvents(data.audit_events)
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch audit events', err)
     }
   }
 
@@ -494,10 +676,47 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
     }
   }
 
+  const handlePreviewCrossover = async () => {
+    if (crossoverParentA === crossoverParentB) {
+      setError('Parent A and Parent B cannot be the same workflow version. Please choose two distinct parents.')
+      return
+    }
+    setError(null)
+    setIsPreviewLoading(true)
+    try {
+      const res = await fetch(`${apiBase}/api/agent-evo/crossover/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          parent_a_version_id: crossoverParentA,
+          parent_b_version_id: crossoverParentB,
+          crossover_map: crossoverMap,
+          post_crossover_mutation: postCrossoverMutation,
+        }),
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || 'Failed to preview crossover configuration.')
+      }
+      const data: CrossoverPreviewResponse = await res.json()
+      setCrossoverPreview(data)
+    } catch (err: any) {
+      setError(err.message || 'Crossover preview failed.')
+    } finally {
+      setIsPreviewLoading(false)
+    }
+  }
+
   const handleRunOptimization = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     if (!query.trim()) {
       setError('Please provide an evaluation query.')
+      return
+    }
+
+    if (candidateStrategy === 'crossover' && crossoverParentA === crossoverParentB) {
+      setError('Parent A and Parent B cannot be the same workflow version for Crossover. Please choose two distinct parents.')
       return
     }
 
@@ -509,26 +728,34 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
     const t2 = setTimeout(() => setCurrentStageIndex(3), 2800) // Pareto Analysis
 
     try {
-      const payload: {
-        query: string
-        document_id?: string
-        candidate_count: number
-        parent_workflow_id?: string
-        allowed_mutation_types?: string[]
-      } = {
+      const payload: Record<string, any> = {
         query: query.trim(),
-        candidate_count: generatedCandidateCount,
+        strategy: candidateStrategy,
       }
       if (selectedDocId) {
         payload.document_id = selectedDocId
       }
-      if (selectedParentWorkflowId && selectedParentWorkflowId !== 'baseline') {
-        payload.parent_workflow_id = selectedParentWorkflowId
-      }
-      if (selectedStrategy === 'refinement') {
-        payload.allowed_mutation_types = ['refinement']
-      } else if (selectedStrategy !== 'all') {
-        payload.allowed_mutation_types = [selectedStrategy]
+
+      if (candidateStrategy === 'mutation') {
+        payload.candidate_count = generatedCandidateCount
+        if (selectedParentWorkflowId && selectedParentWorkflowId !== 'baseline') {
+          payload.parent_workflow_id = selectedParentWorkflowId
+        }
+        if (selectedMutationType !== 'all') {
+          payload.allowed_mutation_types = [selectedMutationType]
+        }
+      } else if (candidateStrategy === 'refinement') {
+        payload.candidate_count = generatedCandidateCount
+        if (selectedParentWorkflowId && selectedParentWorkflowId !== 'baseline') {
+          payload.parent_workflow_id = selectedParentWorkflowId
+        }
+        payload.refinement_strategy = selectedRefinementType
+      } else if (candidateStrategy === 'crossover') {
+        payload.candidate_count = 1
+        payload.parent_workflow_id = crossoverParentA
+        payload.parent_b_workflow_id = crossoverParentB
+        payload.crossover_map = crossoverMap
+        payload.post_crossover_mutation = postCrossoverMutation
       }
 
       const res = await fetch(`${apiBase}/api/agent-evo/optimize`, {
@@ -626,11 +853,88 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       await fetchVersions()
       await fetchRuns()
       await fetchLineage()
+      await fetchAuditEvents()
     } catch (err: any) {
       setError(err.message || 'Failed to record developer approval')
     } finally {
       setApprovingId(null)
     }
+  }
+
+  const handleExecuteAction = async () => {
+    if (!actionModalVersion) return
+    const { version, type } = actionModalVersion
+    setIsActionSubmitting(true)
+    setError(null)
+    try {
+      const endpoint = type === 'activate'
+        ? `${apiBase}/api/agent-evo/versions/${version.version_id}/activate`
+        : `${apiBase}/api/agent-evo/versions/${version.version_id}/rollback`
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ reason: actionReason.trim() || undefined }),
+      })
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || `Failed to ${type} workflow`)
+      }
+
+      setActionModalVersion(null)
+      setActionReason('')
+      await fetchVersions()
+      await fetchActiveWorkflow()
+      await fetchAuditEvents()
+    } catch (err: any) {
+      setError(err.message || `Failed to ${type} workflow`)
+    } finally {
+      setIsActionSubmitting(false)
+    }
+  }
+
+  const handleSubmitFeedback = async () => {
+    if (!feedbackModalExecution) return
+    setIsSubmittingFeedback(true)
+    setError(null)
+    try {
+      const res = await fetch(`${apiBase}/api/agent-evo/executions/${feedbackModalExecution.execution_id}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          rating: feedbackRating,
+          feedback_text: feedbackText.trim() || undefined,
+        }),
+      })
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || 'Failed to submit feedback')
+      }
+
+      setFeedbackModalExecution(null)
+      setFeedbackText('')
+      setFeedbackRating(5)
+      await fetchExecutions()
+    } catch (err: any) {
+      setError(err.message || 'Failed to submit feedback')
+    } finally {
+      setIsSubmittingFeedback(false)
+    }
+  }
+
+  const handleTriggerReoptimize = (parentVerId?: string) => {
+    if (parentVerId) {
+      setSelectedParentWorkflowId(parentVerId)
+      setCrossoverParentA(parentVerId)
+    } else if (activeWorkflow?.version_id) {
+      setSelectedParentWorkflowId(activeWorkflow.version_id)
+      setCrossoverParentA(activeWorkflow.version_id)
+    }
+    setActiveMainTab('optimizer')
   }
 
   const toggleBenchmarkVersion = (vId: string) => {
@@ -645,13 +949,6 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
     setActiveMainTab('benchmark')
   }
 
-  const compareSelectedVersions = () => {
-    if (selectedBenchmarkVersions.length === 0) {
-      setSelectedBenchmarkVersions(['baseline', ...workflowVersions.map((v) => v.version_id)])
-    }
-    setActiveMainTab('benchmark')
-  }
-
   const renderMutationBadge = (cand: EvaluatedCandidate) => {
     const meta = cand.mutation_metadata || cand.workflow.mutation_metadata
     if (!meta) {
@@ -659,7 +956,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
     }
     const type = meta.mutation_type || 'custom'
     return (
-      <span className={`evo-mut-tag mut-${type} ${type === 'refinement' ? 'evo-mut-refinement' : ''}`}>
+      <span className={`evo-mut-tag mut-${type} ${type === 'refinement' ? 'evo-mut-refinement' : type === 'crossover' ? 'evo-mut-crossover' : ''}`}>
         {type.toUpperCase()}
       </span>
     )
@@ -672,15 +969,21 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       {/* Top Header */}
       <div className="evo-page-header">
         <div>
-          <h1 className="evo-title">AgentEvo Optimization & Benchmarking Engine</h1>
+          <h1 className="evo-title">AgentEvo Optimization & Workflow Lifecycle</h1>
           <p className="evo-subtitle">
-            Autonomous multi-candidate evolution, Phase 6 claim-groundedness evaluation, Pareto trade-off optimization, and reproducible head-to-head benchmarking.
+            Autonomous multi-candidate evolution, crossover recombination, Phase 6 claim-groundedness evaluation, Pareto optimization, and production lifecycle governance.
           </p>
         </div>
         <div className="evo-header-meta">
-          <span className="evo-status-pill">
-            <span className="evo-dot" /> Autonomous Evolutionary RAG
-          </span>
+          {activeWorkflow ? (
+            <span className="evo-status-pill" style={{ background: 'rgba(16, 185, 129, 0.15)', borderColor: '#10b981', color: '#10b981' }}>
+              <span className="evo-dot" style={{ background: '#10b981' }} /> Active: {activeWorkflow.version_id === 'baseline' ? 'Baseline' : `v${activeWorkflow.version_number}`}
+            </span>
+          ) : (
+            <span className="evo-status-pill">
+              <span className="evo-dot" /> Autonomous Evolutionary RAG
+            </span>
+          )}
         </div>
       </div>
 
@@ -692,6 +995,19 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
           onClick={() => setActiveMainTab('optimizer')}
         >
           <span>🧬</span> Live Evolutionary Optimizer
+        </button>
+        <button
+          type="button"
+          className={`evo-nav-tab ${activeMainTab === 'lifecycle' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveMainTab('lifecycle')
+            fetchVersions()
+            fetchActiveWorkflow()
+            fetchExecutions()
+            fetchAuditEvents()
+          }}
+        >
+          <span>🚀</span> Production Versions & Lifecycle
         </button>
         <button
           type="button"
@@ -724,15 +1040,14 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 1: LIVE EVOLUTIONARY OPTIMIZER                                       */}
+      {/* TAB 1: LIVE EVOLUTIONARY OPTIMIZER (Mutation, Refinement, Crossover)       */}
       {/* ========================================================================= */}
       {activeMainTab === 'optimizer' && (
         <>
-          {/* Optimization Controls Section */}
           <section className="evo-section evo-controls-card">
             <div className="evo-section-header">
               <h2 className="evo-section-title">Optimization Setup & Candidate Generation</h2>
-              <span className="evo-section-caption">Configure query preset, target document context, and evolutionary mutation strategy.</span>
+              <span className="evo-section-caption">Configure evaluation preset, target context, and evolutionary candidate generation strategy.</span>
             </div>
 
             <form onSubmit={handleRunOptimization} className="evo-form">
@@ -771,101 +1086,381 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                 />
               </div>
 
-              {/* Document Selection, Candidate Count & Mutation Strategy */}
-              <div className="evo-form-row">
-                <div className="evo-form-group evo-col-third">
-                  <label htmlFor="evo-doc-select" className="evo-label">Target Document Context</label>
-                  <select
-                    id="evo-doc-select"
-                    className="evo-select"
-                    value={selectedDocId}
-                    onChange={(e) => setSelectedDocId(e.target.value)}
-                    disabled={running}
-                  >
-                    <option value="">All Uploaded Documents (Global)</option>
-                    {documents.map((doc) => (
-                      <option key={doc.id} value={doc.id}>
-                        {doc.filename || doc.original_filename || doc.id}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="evo-form-group evo-col-third">
-                  <label htmlFor="evo-parent-select" className="evo-label">Parent Workflow (Baseline / Approved)</label>
-                  <select
-                    id="evo-parent-select"
-                    className="evo-select"
-                    value={selectedParentWorkflowId}
-                    onChange={(e) => setSelectedParentWorkflowId(e.target.value)}
-                    disabled={running}
-                  >
-                    <option value="baseline">Production Baseline (Default)</option>
-                    {workflowVersions.map((v) => (
-                      <option key={v.version_id} value={v.version_id}>
-                        v{v.version_number}: {v.name} ({v.model_id})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="evo-form-group evo-col-third">
-                  <label htmlFor="evo-count-input" className="evo-label">Candidate Mutations ({generatedCandidateCount})</label>
-                  <input
-                    id="evo-count-input"
-                    type="range"
-                    min={2}
-                    max={8}
-                    value={generatedCandidateCount}
-                    onChange={(e) => setGeneratedCandidateCount(Number(e.target.value))}
-                    className="evo-slider"
-                    disabled={running}
-                  />
-                </div>
-              </div>
-
-              {/* Strategy Selector Pills */}
+              {/* Document Selection */}
               <div className="evo-form-group">
-                <label className="evo-label">Mutation & Refinement Strategy</label>
-                <div className="evo-strategy-pills-wrap">
-                  {[
-                    { id: 'all', label: 'All Dimensions', desc: 'Diverse Phase 7.1/7.2 exploration' },
-                    { id: 'refinement', label: 'Refinement Only', desc: 'Phase 7.3 simplification & cost optimization' },
-                    { id: 'prompt', label: 'Prompt Mutations', desc: 'Prompt template & detail variations' },
-                    { id: 'retrieval', label: 'Retrieval Mutations', desc: 'Top-K & threshold tuning' },
-                    { id: 'model', label: 'Model Mutations', desc: 'Model provider switches' },
-                    { id: 'operator', label: 'Operator Mutations', desc: 'Execution & compression nodes' },
-                    { id: 'mixed', label: 'Composite Mixed', desc: 'Multi-parameter exploration' },
-                  ].map((strat) => (
-                    <button
-                      key={strat.id}
-                      type="button"
-                      onClick={() => setSelectedStrategy(strat.id)}
-                      className={`evo-strategy-pill ${selectedStrategy === strat.id ? 'evo-strat-active' : ''} evo-strat-${strat.id}`}
-                      disabled={running}
-                    >
-                      <span className="evo-strat-title">
-                        {selectedStrategy === strat.id ? '✓ ' : ''}{strat.label}
-                      </span>
-                      <span className="evo-strat-desc">{strat.desc}</span>
-                    </button>
+                <label htmlFor="evo-doc-select" className="evo-label">Target Document Context</label>
+                <select
+                  id="evo-doc-select"
+                  className="evo-select"
+                  value={selectedDocId}
+                  onChange={(e) => setSelectedDocId(e.target.value)}
+                  disabled={running}
+                >
+                  <option value="">All Uploaded Documents (Global Knowledge Base)</option>
+                  {documents.map((doc) => (
+                    <option key={doc.id} value={doc.id}>
+                      {doc.filename || doc.original_filename || doc.id}
+                    </option>
                   ))}
+                </select>
+              </div>
+
+              {/* Strategy Selector: Mutation / Exploration | Refinement | Crossover / Recombination */}
+              <div className="evo-form-group" style={{ marginTop: 16 }}>
+                <label className="evo-label">Candidate Generation Strategy</label>
+                <div className="evo-strat-tabs">
+                  <button
+                    type="button"
+                    className={`evo-strat-tab-btn ${candidateStrategy === 'mutation' ? 'active' : ''}`}
+                    onClick={() => setCandidateStrategy('mutation')}
+                    disabled={running}
+                  >
+                    <span>🧬</span>
+                    <div>
+                      <strong>Mutation / Exploration</strong>
+                      <div className="evo-cell-sub">Stochastic parameter & prompt search</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className={`evo-strat-tab-btn ${candidateStrategy === 'refinement' ? 'active' : ''}`}
+                    onClick={() => setCandidateStrategy('refinement')}
+                    disabled={running}
+                  >
+                    <span>🎯</span>
+                    <div>
+                      <strong>Targeted Refinement</strong>
+                      <div className="evo-cell-sub">Deterministic simplification & compression</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className={`evo-strat-tab-btn ${candidateStrategy === 'crossover' ? 'active' : ''}`}
+                    onClick={() => setCandidateStrategy('crossover')}
+                    disabled={running}
+                  >
+                    <span>🔀</span>
+                    <div>
+                      <strong>Crossover / Recombination</strong>
+                      <div className="evo-cell-sub">Inherit components from two parent workflows</div>
+                    </div>
+                  </button>
                 </div>
               </div>
 
-              <div className="evo-form-actions">
+              {/* STRATEGY 1: MUTATION / EXPLORATION CONFIGURATION */}
+              {candidateStrategy === 'mutation' && (
+                <div className="evo-strategy-config-box">
+                  <div className="evo-form-row">
+                    <div className="evo-form-group evo-col-half">
+                      <label htmlFor="evo-parent-select" className="evo-label">Parent Workflow</label>
+                      <select
+                        id="evo-parent-select"
+                        className="evo-select"
+                        value={selectedParentWorkflowId}
+                        onChange={(e) => setSelectedParentWorkflowId(e.target.value)}
+                        disabled={running}
+                      >
+                        <option value="baseline">Production Baseline (Default Reference)</option>
+                        {workflowVersions.map((v) => (
+                          <option key={v.version_id} value={v.version_id}>
+                            v{v.version_number}: {v.name} ({v.model_id}) [{v.status}]
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="evo-form-group evo-col-half">
+                      <label htmlFor="evo-count-input" className="evo-label">Candidate Count ({generatedCandidateCount})</label>
+                      <input
+                        id="evo-count-input"
+                        type="range"
+                        min={2}
+                        max={8}
+                        value={generatedCandidateCount}
+                        onChange={(e) => setGeneratedCandidateCount(Number(e.target.value))}
+                        className="evo-slider"
+                        disabled={running}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="evo-form-group">
+                    <label className="evo-label">Mutation Dimension</label>
+                    <div className="evo-strategy-pills-wrap">
+                      {[
+                        { id: 'all', label: 'All Dimensions', desc: 'Broad parameter & prompt exploration' },
+                        { id: 'prompt', label: 'Prompt Only', desc: 'Template & disclaimer tuning' },
+                        { id: 'retrieval', label: 'Retrieval Only', desc: 'Top-K & similarity variations' },
+                        { id: 'model', label: 'Model Only', desc: 'Provider & temperature exploration' },
+                        { id: 'operator', label: 'Operators Only', desc: 'Context compression toggle' },
+                        { id: 'composite', label: 'Composite Mutation', desc: 'Multi-parameter exploration' },
+                      ].map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => setSelectedMutationType(s.id)}
+                          className={`evo-strat-btn ${selectedMutationType === s.id ? 'active' : ''}`}
+                          disabled={running}
+                        >
+                          <span className="evo-strat-btn-title">{s.label}</span>
+                          <span className="evo-strat-btn-desc">{s.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* STRATEGY 2: REFINEMENT CONFIGURATION */}
+              {candidateStrategy === 'refinement' && (
+                <div className="evo-strategy-config-box">
+                  <div className="evo-form-row">
+                    <div className="evo-form-group evo-col-half">
+                      <label className="evo-label">Parent Workflow</label>
+                      <select
+                        className="evo-select"
+                        value={selectedParentWorkflowId}
+                        onChange={(e) => setSelectedParentWorkflowId(e.target.value)}
+                        disabled={running}
+                      >
+                        <option value="baseline">Production Baseline (Default Reference)</option>
+                        {workflowVersions.map((v) => (
+                          <option key={v.version_id} value={v.version_id}>
+                            v{v.version_number}: {v.name} ({v.model_id}) [{v.status}]
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="evo-form-group evo-col-half">
+                      <label className="evo-label">Candidate Count ({generatedCandidateCount})</label>
+                      <input
+                        type="range"
+                        min={2}
+                        max={6}
+                        value={generatedCandidateCount}
+                        onChange={(e) => setGeneratedCandidateCount(Number(e.target.value))}
+                        className="evo-slider"
+                        disabled={running}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="evo-form-group">
+                    <label className="evo-label">Refinement Operation</label>
+                    <div className="evo-strategy-pills-wrap">
+                      {[
+                        { id: 'all', label: 'All Refinements', desc: 'Comprehensive targeted simplification' },
+                        { id: 'simplify', label: 'Top-K Simplification', desc: 'Reduce retrieval overhead' },
+                        { id: 'context_compress', label: 'Context Compression', desc: 'Enable semantic token compression' },
+                        { id: 'rerank_disable', label: 'Disable Rerank', desc: 'Latency and compute reduction' },
+                        { id: 'composite_refine', label: 'Composite Refinement', desc: 'Multi-aspect cost & latency reduction' },
+                      ].map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => setSelectedRefinementType(s.id)}
+                          className={`evo-strat-btn ${selectedRefinementType === s.id ? 'active' : ''}`}
+                          disabled={running}
+                        >
+                          <span className="evo-strat-btn-title">{s.label}</span>
+                          <span className="evo-strat-btn-desc">{s.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* STRATEGY 3: CROSSOVER / RECOMBINATION CONFIGURATION */}
+              {candidateStrategy === 'crossover' && (
+                <div className="evo-strategy-config-box">
+                  <div className="evo-form-row">
+                    <div className="evo-form-group evo-col-half">
+                      <label className="evo-label" style={{ color: '#60a5fa' }}>Parent A (Primary / Scaffold)</label>
+                      <select
+                        value={crossoverParentA}
+                        onChange={(e) => setCrossoverParentA(e.target.value)}
+                        className="evo-select"
+                        disabled={running}
+                      >
+                        <option value="baseline">Production Baseline (Gemini 3.5 Flash-Lite, k=5)</option>
+                        {workflowVersions.map((v) => (
+                          <option key={v.version_id} value={v.version_id}>
+                            v{v.version_number}: {v.name} ({v.model_id}) [{v.status}]
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="evo-form-group evo-col-half">
+                      <label className="evo-label" style={{ color: '#a78bfa' }}>Parent B (Secondary / Donor)</label>
+                      <select
+                        value={crossoverParentB}
+                        onChange={(e) => setCrossoverParentB(e.target.value)}
+                        className="evo-select"
+                        disabled={running}
+                      >
+                        <option value="baseline">Production Baseline (Gemini 3.5 Flash-Lite, k=5)</option>
+                        {workflowVersions.map((v) => (
+                          <option key={v.version_id} value={v.version_id}>
+                            v{v.version_number}: {v.name} ({v.model_id}) [{v.status}]
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {crossoverParentA === crossoverParentB && (
+                    <div className="evo-error-banner" style={{ marginTop: 8, marginBottom: 12 }}>
+                      <span>⚠️ Parent A and Parent B must be distinct workflow versions.</span>
+                    </div>
+                  )}
+
+                  {/* Component-Level Inheritance Table */}
+                  <div className="evo-table-container" style={{ marginTop: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <label className="evo-label" style={{ margin: 0 }}>Component-Level Inheritance Map</label>
+                      <span className="evo-cell-sub">Select inheritance source for each workflow module</span>
+                    </div>
+                    <table className="evo-table">
+                      <thead>
+                        <tr>
+                          <th>Workflow Module</th>
+                          <th>Parent A Source</th>
+                          <th>Inherit From</th>
+                          <th>Parent B Source</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[
+                          { key: 'retrieval', label: 'Retrieval Configuration', desc: 'Chunk size, overlap, top-K, similarity threshold, rerank' },
+                          { key: 'prompt', label: 'Prompt Template', desc: 'Prompt template, grounding instructions, custom guidance' },
+                          { key: 'model', label: 'LLM Model Spec', desc: 'Provider, Model ID' },
+                          { key: 'generation', label: 'Generation Parameters', desc: 'Temperature, max token limits' },
+                          { key: 'operators', label: 'Operators / Execution', desc: 'Context compression, timeout, max retries' },
+                        ].map(({ key, label, desc }) => (
+                          <tr key={key} className="evo-table-row">
+                            <td>
+                              <strong>{label}</strong>
+                              <div className="evo-cell-sub">{desc}</div>
+                            </td>
+                            <td>
+                              <span className="evo-version-tag" style={{ background: '#3b82f6' }}>Parent A</span>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button
+                                  type="button"
+                                  className={`evo-btn-sm ${crossoverMap[key] === 'parent_a' ? 'evo-btn-primary' : 'evo-btn-secondary'}`}
+                                  onClick={() => setCrossoverMap((prev) => ({ ...prev, [key]: 'parent_a' }))}
+                                  disabled={running}
+                                >
+                                  Parent A
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`evo-btn-sm ${crossoverMap[key] === 'parent_b' ? 'evo-btn-primary' : 'evo-btn-secondary'}`}
+                                  onClick={() => setCrossoverMap((prev) => ({ ...prev, [key]: 'parent_b' }))}
+                                  disabled={running}
+                                >
+                                  Parent B
+                                </button>
+                              </div>
+                            </td>
+                            <td>
+                              <span className="evo-version-tag" style={{ background: '#8b5cf6' }}>Parent B</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Post-Crossover Mutation Selection */}
+                  <div className="evo-form-row" style={{ marginTop: 16 }}>
+                    <div className="evo-form-group evo-col-half">
+                      <label className="evo-label">Optional Post-Crossover Mutation</label>
+                      <select
+                        value={postCrossoverMutation}
+                        onChange={(e) => setPostCrossoverMutation(e.target.value)}
+                        className="evo-select"
+                        disabled={running}
+                      >
+                        <option value="none">None / Pure Crossover (No Mutation)</option>
+                        <option value="prompt">Prompt Variation (Stochastic Template Mutation)</option>
+                        <option value="retrieval">Retrieval Tuning (Top-K / Similarity Adjust)</option>
+                        <option value="model">Deterministic Model (Low-Temperature Calibration)</option>
+                        <option value="operator">Toggle Compression (Invert Context Compression)</option>
+                        <option value="composite">Composite Mutation (Multi-Component Refinement)</option>
+                      </select>
+                    </div>
+                    <div className="evo-form-group evo-col-half" style={{ display: 'flex', alignItems: 'flex-end' }}>
+                      <button
+                        type="button"
+                        onClick={handlePreviewCrossover}
+                        className="evo-btn-secondary"
+                        disabled={isPreviewLoading || running || crossoverParentA === crossoverParentB}
+                        style={{ width: '100%', height: '38px' }}
+                      >
+                        {isPreviewLoading ? 'Assembling Preview...' : '🔍 Preview Child Workflow Genome'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Crossover Genome Preview Card */}
+                  {crossoverPreview && (
+                    <div className="evo-summary-box" style={{ marginTop: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <strong>🧬 Child Workflow Genome Preview:</strong>
+                        <span className="evo-status-tag tag-pareto">Valid Complete Configuration</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+                        <div className="evo-metric-cell">
+                          <span className="evo-metric-label">Model</span>
+                          <span className="evo-metric-val" style={{ fontSize: '0.9rem' }}>{crossoverPreview.resulting_configuration.model?.model_id}</span>
+                          <span className="evo-cell-sub">Source: {crossoverPreview.crossover_map.model === 'parent_a' ? 'Parent A' : 'Parent B'}</span>
+                        </div>
+                        <div className="evo-metric-cell">
+                          <span className="evo-metric-label">Retrieval (top_k / sim)</span>
+                          <span className="evo-metric-val" style={{ fontSize: '0.9rem' }}>
+                            k={crossoverPreview.resulting_configuration.retrieval?.top_k}, sim={crossoverPreview.resulting_configuration.retrieval?.similarity_threshold}
+                          </span>
+                          <span className="evo-cell-sub">Source: {crossoverPreview.crossover_map.retrieval === 'parent_a' ? 'Parent A' : 'Parent B'}</span>
+                        </div>
+                        <div className="evo-metric-cell">
+                          <span className="evo-metric-label">Prompt Template</span>
+                          <span className="evo-metric-val" style={{ fontSize: '0.9rem' }}>{crossoverPreview.resulting_configuration.prompt?.template_name}</span>
+                          <span className="evo-cell-sub">Source: {crossoverPreview.crossover_map.prompt === 'parent_a' ? 'Parent A' : 'Parent B'}</span>
+                        </div>
+                        <div className="evo-metric-cell">
+                          <span className="evo-metric-label">Compression</span>
+                          <span className="evo-metric-val" style={{ fontSize: '0.9rem' }}>
+                            {crossoverPreview.resulting_configuration.execution?.context_compression ? 'Enabled' : 'Disabled'}
+                          </span>
+                          <span className="evo-cell-sub">Source: {crossoverPreview.crossover_map.operators === 'parent_a' ? 'Parent A' : 'Parent B'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Submit / Launch Optimization Button */}
+              <div className="evo-form-actions" style={{ marginTop: 20 }}>
                 <button
                   type="submit"
                   className="evo-btn-primary"
-                  disabled={running || !query.trim()}
+                  disabled={running || (candidateStrategy === 'crossover' && crossoverParentA === crossoverParentB)}
                 >
                   {running ? (
                     <>
-                      <span className="evo-spinner" /> Running Optimization...
+                      <span className="evo-spinner" /> Generating & Evaluating Candidates...
                     </>
                   ) : (
                     <>
-                      <span>🧬</span> Run Evolutionary Optimization
+                      <span>🧬</span> Generate & Evaluate Candidates
                     </>
                   )}
                 </button>
@@ -873,122 +1468,145 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
             </form>
           </section>
 
-          {/* Stepper Pipeline */}
+          {/* Progress Tracker */}
           {running && (
-            <section className="evo-section evo-pipeline-section" aria-live="polite">
-              <div className="evo-process-stepper">
+            <div className="evo-progress-card">
+              <div className="evo-stepper">
                 {[
-                  { step: 1, name: 'Reference Workflow', desc: 'Evaluating Baseline/Parent' },
-                  { step: 2, name: 'Candidate Generation', desc: `${selectedStrategy.toUpperCase()} mutations` },
-                  { step: 3, name: 'Phase 6 Evaluation', desc: 'Decomposing claims & calculating cost' },
-                  { step: 4, name: 'Pareto Optimization', desc: 'Groundedness ↑ vs Cost ↓ Frontier' },
-                ].map((s) => {
-                  const isDone = currentStageIndex > s.step
-                  const isCurrent = currentStageIndex === s.step
-                  return (
-                    <div key={s.step} className={`evo-process-step ${isDone ? 'step-done' : ''} ${isCurrent ? 'step-running' : ''}`}>
-                      <div className="evo-step-indicator">
-                        {isDone ? '✓' : s.step}
-                      </div>
-                      <div className="evo-step-details">
-                        <span className="evo-step-name">{s.name}</span>
-                        <span className="evo-step-caption">{s.desc}</span>
-                      </div>
-                    </div>
-                  )
-                })}
+                  { step: 1, label: 'Candidate Generation' },
+                  { step: 2, label: 'Phase 6 Claim Evaluation' },
+                  { step: 3, label: 'Pareto Frontier Analysis' },
+                  { step: 4, label: 'Human Governance Gate' },
+                ].map((st) => (
+                  <div
+                    key={st.step}
+                    className={`evo-step ${currentStageIndex >= st.step ? 'active' : ''} ${currentStageIndex > st.step ? 'complete' : ''}`}
+                  >
+                    <div className="evo-step-circle">{st.step}</div>
+                    <span className="evo-step-label">{st.label}</span>
+                  </div>
+                ))}
               </div>
-            </section>
+            </div>
           )}
 
-          {/* Optimization Report / Pareto Frontier */}
+          {/* Pareto Optimization Report Section */}
           {report && (
-            <section className="evo-section evo-report-section">
-              <div className="evo-section-header">
-                <div className="evo-header-with-badge">
-                  <h2 className="evo-section-title">Pareto Optimization Report</h2>
-                  <span className="evo-frontier-badge">{report.pareto_frontier_count} Pareto-Optimal Workflows</span>
+            <div className="evo-report-container">
+              {/* Header */}
+              <div className="evo-report-header">
+                <div>
+                  <div className="evo-report-title-row">
+                    <h2 className="evo-report-title">AgentEvo Optimization Run</h2>
+                    <span className="evo-run-id-pill">Run: {report.run_id}</span>
+                  </div>
+                  <p className="evo-report-query">Query: "{report.query}"</p>
                 </div>
-                <div className="evo-report-actions">
-                  <button
-                    type="button"
-                    onClick={() => setIsReportCollapsed(!isReportCollapsed)}
-                    className="evo-btn-secondary evo-btn-sm"
-                  >
-                    {isReportCollapsed ? 'Expand Report' : 'Collapse'}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsReportCollapsed(!isReportCollapsed)}
+                  className="evo-btn-secondary evo-btn-sm"
+                >
+                  {isReportCollapsed ? 'Expand Details' : 'Collapse Details'}
+                </button>
               </div>
 
               {!isReportCollapsed && (
-                <div className="evo-report-body">
+                <>
+                  {/* Executive Summary Box */}
+                  <div className="evo-summary-box">
+                    <strong>Executive Summary:</strong> {report.executive_summary}
+                  </div>
+
+                  {/* Summary Metric Cards */}
+                  <div className="evo-summary-grid">
+                    <div className="evo-metric-card">
+                      <span className="evo-metric-label">Candidates Evaluated</span>
+                      <span className="evo-metric-value">{report.total_candidates_evaluated}</span>
+                      <span className="evo-metric-delta">
+                        {report.successful_candidates} successful, {report.failed_candidates} failed
+                      </span>
+                    </div>
+                    <div className="evo-metric-card">
+                      <span className="evo-metric-label">Pareto-Optimal Count</span>
+                      <span className="evo-metric-value evo-val-green">{report.pareto_frontier_count}</span>
+                      <span className="evo-metric-delta">Non-dominated candidates</span>
+                    </div>
+                    <div className="evo-metric-card">
+                      <span className="evo-metric-label">Baseline Groundedness</span>
+                      <span className="evo-metric-value">
+                        {baselineCandidate ? `${((baselineCandidate.metrics.groundedness ?? baselineCandidate.metrics.performance) * 100).toFixed(1)}%` : '100.0%'}
+                      </span>
+                      <span className="evo-metric-delta">Reference Standard</span>
+                    </div>
+                    <div className="evo-metric-card">
+                      <span className="evo-metric-label">Baseline Cost / Query</span>
+                      <span className="evo-metric-value">
+                        ${baselineCandidate ? baselineCandidate.metrics.cost.toFixed(6) : '0.000057'}
+                      </span>
+                      <span className="evo-metric-delta">Gemini 3.5 Flash-Lite</span>
+                    </div>
+                  </div>
+
                   {/* Candidates Comparison Table */}
-                  <div className="evo-table-container">
+                  <div className="evo-table-container" style={{ marginTop: 20 }}>
+                    <h3 className="evo-section-title" style={{ fontSize: '1.05rem', marginBottom: 10 }}>
+                      Evaluated Workflow Candidates (Pareto Frontier & Dominated)
+                    </h3>
                     <table className="evo-table">
                       <thead>
                         <tr>
-                          <th>Status</th>
-                          <th>Workflow Candidate</th>
-                          <th>Strategy</th>
+                          <th>Candidate / Strategy</th>
+                          <th>Workflow Name</th>
                           <th>Model</th>
-                          <th>Groundedness ↑</th>
-                          <th>Cost / Query ↓</th>
+                          <th>Groundedness</th>
+                          <th>Cost / Query</th>
                           <th>Latency</th>
-                          <th>Pareto Dominance</th>
-                          <th>Action</th>
+                          <th>Pareto Status</th>
+                          <th>Governance Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         {report.all_candidates.map((cand) => {
-                          const isBaseline = cand.candidate_id === 'baseline' || cand.candidate_id === report.baseline.candidate_id
                           const isPareto = cand.is_pareto_optimal
+                          const isSelected = cand.candidate_id === selectedCandidateId
                           const groundedness = cand.metrics.groundedness ?? cand.metrics.performance
                           const isApproved = report.approved_workflow_id === cand.candidate_id
 
                           return (
                             <tr
                               key={cand.candidate_id}
-                              className={`evo-table-row ${selectedCandidateId === cand.candidate_id ? 'row-selected' : ''} ${isPareto ? 'row-pareto' : ''}`}
+                              className={`evo-table-row ${isSelected ? 'selected' : ''}`}
                               onClick={() => setSelectedCandidateId(cand.candidate_id)}
                             >
                               <td>
-                                {isBaseline ? (
-                                  <span className="evo-status-tag tag-baseline">Baseline</span>
-                                ) : isPareto ? (
-                                  <span className="evo-status-tag tag-pareto">Pareto</span>
-                                ) : (
-                                  <span className="evo-status-tag tag-dominated">Dominated</span>
-                                )}
-                              </td>
-                              <td>
-                                <strong>{cand.workflow.name}</strong>
-                                <div className="evo-cell-sub"><code>{cand.candidate_id}</code></div>
-                              </td>
-                              <td>{renderMutationBadge(cand)}</td>
-                              <td>
-                                <div className="evo-model-cell">
-                                  <span className="evo-provider-name">{cand.workflow.model.provider}</span>
-                                  <span className="evo-model-id">{cand.workflow.model.model_id}</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <code>{cand.candidate_id}</code>
+                                  {renderMutationBadge(cand)}
                                 </div>
                               </td>
                               <td>
-                                <span className="evo-perf-val">{(groundedness * 100).toFixed(1)}%</span>
+                                <strong>{cand.workflow.name}</strong>
+                              </td>
+                              <td>
+                                <span className="evo-model-id">{cand.workflow.model.model_id}</span>
+                              </td>
+                              <td>
+                                <strong className="evo-val-green">{(groundedness * 100).toFixed(1)}%</strong>
                               </td>
                               <td>
                                 <span className="evo-cost-val">${cand.metrics.cost.toFixed(6)}</span>
                               </td>
                               <td>
-                                <span className="evo-latency-val">{cand.metrics.llm_latency_ms.toFixed(0)} ms</span>
+                                <span>{cand.metrics.llm_latency_ms.toFixed(0)} ms</span>
                               </td>
                               <td>
-                                {isPareto ? (
-                                  <span className="evo-pareto-optimal-badge">✓ Non-dominated</span>
-                                ) : (
-                                  <span className="evo-dominated-badge">Dominated by {cand.dominated_by?.length || 1}</span>
-                                )}
+                                <span className={isPareto ? 'evo-pareto-optimal-badge' : 'evo-dominated-badge'}>
+                                  {isPareto ? 'Pareto-Optimal' : 'Dominated'}
+                                </span>
                               </td>
                               <td>
-                                <div className="evo-action-buttons">
+                                <div style={{ display: 'flex', gap: 6 }}>
                                   <button
                                     type="button"
                                     onClick={(e) => {
@@ -999,7 +1617,9 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                                   >
                                     Inspect
                                   </button>
-                                  {isPareto && !isBaseline && !isApproved && (
+                                  {isApproved ? (
+                                    <span className="evo-gov-state-pill gov-approved">APPROVED</span>
+                                  ) : (
                                     <button
                                       type="button"
                                       onClick={(e) => {
@@ -1009,11 +1629,8 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                                       className="evo-btn-approve"
                                       disabled={approvingId === cand.candidate_id}
                                     >
-                                      {approvingId === cand.candidate_id ? 'Approving...' : 'Approve'}
+                                      Approve
                                     </button>
-                                  )}
-                                  {isApproved && (
-                                    <span className="evo-approved-tag">✓ Approved</span>
                                   )}
                                 </div>
                               </td>
@@ -1023,87 +1640,152 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                       </tbody>
                     </table>
                   </div>
-                </div>
-              )}
-            </section>
-          )}
 
-          {/* Approved Workflow Versions Section */}
-          <section className="evo-section evo-versions-section">
-            <div className="evo-section-header">
-              <div className="evo-header-with-badge">
-                <h2 className="evo-section-title">Approved Workflow Versions</h2>
-                <span className="evo-count-badge">{workflowVersions.length} Available</span>
+                  {/* Pareto Trade-Off Analyses */}
+                  {report.trade_off_analyses && report.trade_off_analyses.length > 0 && (
+                    <div className="evo-tradeoff-grid" style={{ marginTop: 20 }}>
+                      {report.trade_off_analyses.map((analysis) => (
+                        <div key={analysis.candidate_id} className="evo-tradeoff-card">
+                          <div className="evo-tradeoff-card-head">
+                            <span className="evo-tradeoff-tag">{analysis.candidate_id}</span>
+                            <span className="evo-tradeoff-title">{analysis.name}</span>
+                          </div>
+                          <p className="evo-tradeoff-summary">{analysis.trade_off_summary}</p>
+                          <div className="evo-tradeoff-metrics">
+                            <div className="evo-delta-item">
+                              <span>Groundedness:</span>
+                              <strong className={analysis.performance_delta_pct >= 0 ? 'evo-val-green' : 'evo-val-amber'}>
+                                {analysis.performance_delta_pct > 0 ? '+' : ''}{analysis.performance_delta_pct.toFixed(1)}%
+                              </strong>
+                            </div>
+                            <div className="evo-delta-item">
+                              <span>Cost Delta:</span>
+                              <strong className={analysis.cost_delta_pct <= 0 ? 'evo-val-green' : 'evo-val-red'}>
+                                {analysis.cost_delta_pct > 0 ? '+' : ''}{analysis.cost_delta_pct.toFixed(1)}%
+                              </strong>
+                            </div>
+                            <div className="evo-delta-item">
+                              <span>Latency Delta:</span>
+                              <strong className={analysis.latency_delta_pct <= 0 ? 'evo-val-green' : 'evo-val-amber'}>
+                                {analysis.latency_delta_pct > 0 ? '+' : ''}{analysis.latency_delta_pct.toFixed(1)}%
+                              </strong>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 2: PRODUCTION VERSIONS & LIFECYCLE                                    */}
+      {/* ========================================================================= */}
+      {activeMainTab === 'lifecycle' && (
+        <>
+          {/* Active Production Workflow Banner Card */}
+          <section className="evo-section evo-active-banner">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                  <span className="evo-status-tag tag-pareto" style={{ fontSize: '0.85rem', padding: '4px 10px' }}>
+                    ● CURRENTLY ACTIVE IN PRODUCTION
+                  </span>
+                  <span className="evo-version-tag" style={{ background: '#10b981' }}>
+                    {activeWorkflow?.version_id === 'baseline' ? 'Production Baseline' : `v${activeWorkflow?.version_number}`}
+                  </span>
+                </div>
+                <h2 className="evo-section-title" style={{ margin: '4px 0 6px 0', color: '#f8fafc' }}>
+                  {activeWorkflow?.name || 'Production Baseline'}
+                </h2>
+                <div className="evo-cell-sub" style={{ color: '#94a3b8' }}>
+                  Model: <code>{activeWorkflow?.model_id || 'gemini-3.5-flash-lite'}</code> ({activeWorkflow?.provider || 'Google Gemini'}) |
+                  Top-K: <code>{activeWorkflow?.configuration?.retrieval?.top_k || 5}</code> |
+                  Sim: <code>{activeWorkflow?.configuration?.retrieval?.similarity_threshold || 0.35}</code> |
+                  Activated: {activeWorkflow?.activated_at ? new Date(activeWorkflow.activated_at).toLocaleString() : 'System Genesis'}
+                </div>
               </div>
-              <div className="evo-bench-actions">
+              <div style={{ display: 'flex', gap: 10 }}>
                 <button
                   type="button"
-                  onClick={compareSelectedVersions}
-                  className="evo-btn-secondary evo-btn-sm"
+                  onClick={() => handleTriggerReoptimize(activeWorkflow?.version_id)}
+                  className="evo-btn-primary"
                 >
-                  ⚖️ Compare Selected ({selectedBenchmarkVersions.length})
+                  <span>🔄</span> Trigger Explicit Re-optimization
                 </button>
+              </div>
+            </div>
+          </section>
+
+          {/* Approved Workflow Versions Table */}
+          <section className="evo-section">
+            <div className="evo-section-header">
+              <div>
+                <h2 className="evo-section-title">Approved Workflow Versions & Governance</h2>
+                <span className="evo-section-caption">
+                  Immutable stored workflow configurations resulting from explicit developer approval. Only one version is ACTIVE at a time.
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
                 <button
                   type="button"
                   onClick={selectAllVersionsForBenchmark}
-                  className="evo-btn-primary evo-btn-sm"
-                >
-                  🚀 Benchmark All Versions
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveMainTab('lineage')}
                   className="evo-btn-secondary evo-btn-sm"
                 >
-                  🌳 View Lineage Graph
+                  ⚖️ Benchmark All in Head-to-Head
                 </button>
               </div>
             </div>
 
-            {workflowVersions.length === 0 ? (
-              <div className="evo-versions-empty">
-                <p>No approved workflow versions recorded yet. Inspect and approve a Pareto-optimal candidate above to persist a version.</p>
-              </div>
-            ) : (
-              <div className="evo-table-container">
-                <table className="evo-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: 40 }}>Select</th>
-                      <th>Version</th>
-                      <th>Workflow Name</th>
-                      <th>Source Candidate</th>
-                      <th>Model</th>
-                      <th>Groundedness</th>
-                      <th>Cost / Query</th>
-                      <th>Approved At</th>
-                      <th>Status</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {/* Baseline row */}
-                    <tr className="evo-table-row">
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={selectedBenchmarkVersions.includes('baseline')}
-                          onChange={() => toggleBenchmarkVersion('baseline')}
-                          aria-label="Select baseline for benchmark"
-                        />
-                      </td>
-                      <td>
-                        <span className="evo-version-tag" style={{ background: '#0284c7' }}>Base</span>
-                        <div className="evo-cell-sub"><code>baseline</code></div>
-                      </td>
-                      <td><strong>Production Baseline</strong></td>
-                      <td><span className="evo-cell-sub">Reference System</span></td>
-                      <td><span className="evo-model-id">gemini-3.5-flash-lite</span></td>
-                      <td><span className="evo-perf-val">100.0%</span></td>
-                      <td><span className="evo-cost-val">$0.000057</span></td>
-                      <td><span className="evo-cell-sub">Immutable Baseline</span></td>
-                      <td><span className="evo-gov-state-pill gov-approved">ACTIVE</span></td>
-                      <td>
+            <div className="evo-table-container">
+              <table className="evo-table">
+                <thead>
+                  <tr>
+                    <th>Version</th>
+                    <th>Workflow Name</th>
+                    <th>Lineage / Strategy</th>
+                    <th>Model & Provider</th>
+                    <th>Snapshot Groundedness</th>
+                    <th>Snapshot Cost</th>
+                    <th>Approved By</th>
+                    <th>Governance Status</th>
+                    <th>Lifecycle Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Baseline row */}
+                  <tr className="evo-table-row">
+                    <td>
+                      <span className="evo-version-tag" style={{ background: '#0284c7' }}>Base</span>
+                      <div className="evo-cell-sub"><code>baseline</code></div>
+                    </td>
+                    <td>
+                      <strong>Production Baseline</strong>
+                      <div className="evo-cell-sub">Reference standard workflow</div>
+                    </td>
+                    <td>
+                      <span className="evo-cell-sub">Immutable Baseline</span>
+                    </td>
+                    <td>
+                      <div className="evo-model-cell">
+                        <span className="evo-provider-name">Google</span>
+                        <span className="evo-model-id">gemini-3.5-flash-lite</span>
+                      </div>
+                    </td>
+                    <td><span className="evo-perf-val">100.0%</span></td>
+                    <td><span className="evo-cost-val">$0.000057</span></td>
+                    <td><span className="evo-approver-user">System Genesis</span></td>
+                    <td>
+                      <span className={`evo-gov-state-pill ${activeWorkflow?.version_id === 'baseline' ? 'gov-active' : 'gov-inactive'}`}>
+                        {activeWorkflow?.version_id === 'baseline' ? 'ACTIVE' : 'INACTIVE'}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 6 }}>
                         <button
                           type="button"
                           onClick={() => handleInspectVersion('baseline')}
@@ -1111,64 +1793,91 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                         >
                           Inspect
                         </button>
-                      </td>
-                    </tr>
+                        {activeWorkflow?.version_id !== 'baseline' && (
+                          <button
+                            type="button"
+                            onClick={() => setActionModalVersion({
+                              version: {
+                                id: 'baseline',
+                                version_id: 'baseline',
+                                version_number: 0,
+                                name: 'Production Baseline',
+                                source_run_id: 'genesis',
+                                source_candidate_id: 'baseline',
+                                model_id: 'gemini-3.5-flash-lite',
+                                provider: 'Google',
+                                configuration: {},
+                                evaluation_snapshot: {},
+                                status: 'APPROVED',
+                                approved_by: 'System Genesis',
+                                approved_at: new Date().toISOString(),
+                                created_at: new Date().toISOString(),
+                              },
+                              type: 'rollback'
+                            })}
+                            className="evo-btn-rollback"
+                          >
+                            Rollback
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
 
-                    {workflowVersions.map((ver) => {
-                      const snap = ver.evaluation_snapshot || {}
-                      const groundedness = snap.groundedness ?? snap.performance ?? null
-                      const cost = snap.cost ?? null
-                      const formattedDate = ver.approved_at ? new Date(ver.approved_at).toLocaleString() : 'N/A'
-                      const isChecked = selectedBenchmarkVersions.includes(ver.version_id)
+                  {/* Approved Versions List */}
+                  {workflowVersions.map((ver) => {
+                    const snap = ver.evaluation_snapshot || {}
+                    const groundedness = snap.groundedness ?? snap.performance ?? null
+                    const cost = snap.cost ?? null
+                    const formattedDate = ver.approved_at ? new Date(ver.approved_at).toLocaleDateString() : 'N/A'
+                    const isVerActive = activeWorkflow?.version_id === ver.version_id
+                    const statusPillClass = isVerActive ? 'gov-active' : ver.status === 'ACTIVE' ? 'gov-active' : ver.status === 'APPROVED' ? 'gov-approved' : 'gov-inactive'
 
-                      return (
-                        <tr key={ver.id || ver.version_id} className="evo-table-row">
-                          <td>
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => toggleBenchmarkVersion(ver.version_id)}
-                              aria-label={`Select version ${ver.version_id} for benchmark`}
-                            />
-                          </td>
-                          <td>
-                            <span className="evo-version-tag">v{ver.version_number}</span>
-                            <div className="evo-cell-sub"><code>{ver.version_id}</code></div>
-                          </td>
-                          <td>
-                            <strong>{ver.name}</strong>
-                            {ver.description && <div className="evo-cell-sub">{ver.description}</div>}
-                          </td>
-                          <td>
-                            <div className="evo-cell-sub">Candidate: <code>{ver.source_candidate_id}</code></div>
-                            <div className="evo-cell-sub">Run: <code>{ver.source_run_id}</code></div>
-                          </td>
-                          <td>
-                            <div className="evo-model-cell">
-                              <span className="evo-provider-name">{ver.provider}</span>
-                              <span className="evo-model-id">{ver.model_id}</span>
-                            </div>
-                          </td>
-                          <td>
-                            <span className="evo-perf-val">
-                              {groundedness !== null ? `${(groundedness * 100).toFixed(1)}%` : 'N/A'}
-                            </span>
-                          </td>
-                          <td>
-                            <span className="evo-cost-val">
-                              {cost !== null ? `$${Number(cost).toFixed(6)}` : 'N/A'}
-                            </span>
-                          </td>
-                          <td>
-                            <div className="evo-approver-info">
-                              <span className="evo-approver-user">{ver.approved_by || 'Developer'}</span>
-                              <span className="evo-approved-date">{formattedDate}</span>
-                            </div>
-                          </td>
-                          <td>
-                            <span className="evo-gov-state-pill gov-approved">{ver.status.toUpperCase()}</span>
-                          </td>
-                          <td>
+                    return (
+                      <tr key={ver.id || ver.version_id} className="evo-table-row">
+                        <td>
+                          <span className="evo-version-tag">v{ver.version_number}</span>
+                          <div className="evo-cell-sub"><code>{ver.version_id}</code></div>
+                        </td>
+                        <td>
+                          <strong>{ver.name}</strong>
+                          {ver.description && <div className="evo-cell-sub">{ver.description}</div>}
+                        </td>
+                        <td>
+                          <div className="evo-cell-sub">Cand: <code>{ver.source_candidate_id}</code></div>
+                          {ver.configuration?.mutation_metadata?.mutation_type === 'crossover' && (
+                            <span className="evo-mut-tag evo-mut-crossover" style={{ fontSize: '0.65rem' }}>CROSSOVER</span>
+                          )}
+                        </td>
+                        <td>
+                          <div className="evo-model-cell">
+                            <span className="evo-provider-name">{ver.provider}</span>
+                            <span className="evo-model-id">{ver.model_id}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <span className="evo-perf-val">
+                            {groundedness !== null ? `${(groundedness * 100).toFixed(1)}%` : 'N/A'}
+                          </span>
+                        </td>
+                        <td>
+                          <span className="evo-cost-val">
+                            {cost !== null ? `$${Number(cost).toFixed(6)}` : 'N/A'}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="evo-approver-info">
+                            <span className="evo-approver-user">{ver.approved_by || 'Developer'}</span>
+                            <span className="evo-approved-date">{formattedDate}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`evo-gov-state-pill ${statusPillClass}`}>
+                            {isVerActive ? 'ACTIVE' : ver.status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                             <button
                               type="button"
                               onClick={() => handleInspectVersion(ver.version_id)}
@@ -1176,10 +1885,146 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                             >
                               Inspect
                             </button>
-                          </td>
-                        </tr>
-                      )
-                    })}
+                            {!isVerActive && (
+                              <button
+                                type="button"
+                                onClick={() => setActionModalVersion({
+                                  version: ver,
+                                  type: ver.status === 'INACTIVE' ? 'rollback' : 'activate'
+                                })}
+                                className={ver.status === 'INACTIVE' ? 'evo-btn-rollback' : 'evo-btn-activate'}
+                              >
+                                {ver.status === 'INACTIVE' ? 'Rollback' : 'Activate'}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* Production Runtime Executions & Monitoring */}
+          <section className="evo-section">
+            <div className="evo-section-header">
+              <div>
+                <h2 className="evo-section-title">Production Runtime Executions & Monitoring</h2>
+                <span className="evo-section-caption">
+                  Real user telemetry logged against the currently ACTIVE production workflow version. LLM latency and Total Execution Time are tracked separately.
+                </span>
+              </div>
+            </div>
+
+            {executions.length === 0 ? (
+              <div className="evo-summary-box">
+                No production executions recorded yet. Execute queries in the RAG Query workspace to monitor live runtime metrics.
+              </div>
+            ) : (
+              <div className="evo-table-container">
+                <table className="evo-table">
+                  <thead>
+                    <tr>
+                      <th>Execution ID</th>
+                      <th>Version ID</th>
+                      <th>Query</th>
+                      <th>Model</th>
+                      <th>Tokens (In / Out)</th>
+                      <th>Cost</th>
+                      <th>LLM Latency</th>
+                      <th>Total Time</th>
+                      <th>Timestamp</th>
+                      <th>User Feedback</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {executions.map((exec) => (
+                      <tr key={exec.execution_id} className="evo-table-row">
+                        <td><code>{exec.execution_id.slice(0, 12)}...</code></td>
+                        <td><span className="evo-version-tag">{exec.workflow_version_id}</span></td>
+                        <td>
+                          <div style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={exec.query}>
+                            {exec.query}
+                          </div>
+                        </td>
+                        <td><span className="evo-model-id">{exec.model_id}</span></td>
+                        <td>
+                          <span className="evo-cell-sub">{exec.total_tokens} ({exec.input_tokens} / {exec.output_tokens})</span>
+                        </td>
+                        <td><span className="evo-cost-val">${exec.cost.toFixed(6)}</span></td>
+                        <td><strong className="evo-val-purple">{exec.llm_latency_ms.toFixed(0)} ms</strong></td>
+                        <td><span>{exec.total_execution_time_ms.toFixed(0)} ms</span></td>
+                        <td><span className="evo-cell-sub">{new Date(exec.created_at).toLocaleTimeString()}</span></td>
+                        <td>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFeedbackModalExecution(exec)
+                              setFeedbackRating(5)
+                              setFeedbackText('')
+                            }}
+                            className="evo-btn-feedback"
+                          >
+                            ⭐ Record Feedback
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {/* Lifecycle Governance Audit Trail */}
+          <section className="evo-section">
+            <div className="evo-section-header">
+              <div>
+                <h2 className="evo-section-title">Lifecycle Governance Audit Trail</h2>
+                <span className="evo-section-caption">
+                  Immutable security audit log of all human approvals, production activations, rollbacks, and explicit re-optimization events.
+                </span>
+              </div>
+            </div>
+
+            {auditEvents.length === 0 ? (
+              <div className="evo-summary-box">No audit events recorded yet.</div>
+            ) : (
+              <div className="evo-table-container">
+                <table className="evo-table">
+                  <thead>
+                    <tr>
+                      <th>Event ID</th>
+                      <th>Action Type</th>
+                      <th>Target Version</th>
+                      <th>Previous Version</th>
+                      <th>Triggered By</th>
+                      <th>Timestamp</th>
+                      <th>Audit Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditEvents.map((evt) => (
+                      <tr key={evt.event_id} className="evo-table-row">
+                        <td><code>{evt.event_id.slice(0, 12)}...</code></td>
+                        <td>
+                          <span className="evo-status-tag tag-pareto" style={{ fontSize: '0.75rem' }}>
+                            {evt.event_type}
+                          </span>
+                        </td>
+                        <td><strong>{evt.workflow_version_id || '—'}</strong></td>
+                        <td><span className="evo-cell-sub">{evt.previous_version_id || '—'}</span></td>
+                        <td><span className="evo-approver-user">{evt.triggered_by}</span></td>
+                        <td><span className="evo-cell-sub">{new Date(evt.created_at).toLocaleString()}</span></td>
+                        <td>
+                          <span className="evo-cell-sub">
+                            {evt.details?.reason ? `Reason: ${evt.details.reason}` : evt.details?.candidate_id ? `Cand: ${evt.details.candidate_id}` : 'Governed Event'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -1189,7 +2034,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 2: VERSION BENCHMARK & COMPARISON                                     */}
+      {/* TAB 3: VERSION BENCHMARK & COMPARISON                                     */}
       {/* ========================================================================= */}
       {activeMainTab === 'benchmark' && (
         <>
@@ -1312,430 +2157,61 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                 </div>
               </div>
 
-              {/* Benchmark Metadata Card */}
               <div className="evo-summary-box" style={{ marginBottom: 16 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '8px' }}>
                   <div><strong>Benchmark ID:</strong> <code>{benchmarkReport.benchmark_id}</code></div>
                   <div><strong>Timestamp:</strong> <span>{new Date(benchmarkReport.created_at).toLocaleString()}</span></div>
                   <div><strong>Evaluation Preset:</strong> <span>{benchmarkReport.preset_name || 'clinical'}</span></div>
                   <div><strong>Versions Evaluated:</strong> <span>{benchmarkReport.selected_versions?.length || benchmarkReport.results?.length || 0}</span></div>
-                  <div><strong>Repetitions:</strong> <span>{benchmarkReport.repetitions || benchmarkReport.results[0]?.iterations_count || 1} per version</span></div>
-                  <div><strong>Documents:</strong> <span>{benchmarkReport.document_ids?.join(', ') || benchmarkReport.document_id || 'Global Ingested Knowledge Base'}</span></div>
                 </div>
                 <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '8px' }}>
                   <strong>Query:</strong> <em>"{benchmarkReport.query}"</em>
                 </div>
-                <div style={{ marginTop: '4px' }}>
-                  <strong>Summary:</strong> {benchmarkReport.summary}
-                </div>
               </div>
 
-              {/* Pareto Scatter Plot Visualization */}
-              <div className="evo-bench-scatter-container">
-                <div className="evo-bench-scatter-head">
-                  <div className="evo-bench-scatter-title">
-                    <span>📊</span> Pareto Trade-off Frontier (Groundedness ↑ vs Cost / Query ↓)
-                  </div>
-                  <div className="evo-bench-legend">
-                    <div className="evo-legend-item">
-                      <span className="evo-legend-dot baseline" /> Production Baseline
-                    </div>
-                    <div className="evo-legend-item">
-                      <span className="evo-legend-dot pareto" /> Pareto-Optimal (Non-dominated)
-                    </div>
-                    <div className="evo-legend-item">
-                      <span className="evo-legend-dot dominated" /> Dominated
-                    </div>
-                  </div>
-                </div>
-
-                {/* SVG Scatter Plot */}
-                <div className="evo-bench-svg-wrap">
-                  <svg width="100%" height="100%" viewBox="0 0 800 240" preserveAspectRatio="none">
-                    {/* Grid lines */}
-                    <line x1="60" y1="20" x2="760" y2="20" stroke="rgba(255,255,255,0.06)" strokeDasharray="4" />
-                    <line x1="60" y1="75" x2="760" y2="75" stroke="rgba(255,255,255,0.06)" strokeDasharray="4" />
-                    <line x1="60" y1="130" x2="760" y2="130" stroke="rgba(255,255,255,0.06)" strokeDasharray="4" />
-                    <line x1="60" y1="185" x2="760" y2="185" stroke="rgba(255,255,255,0.06)" strokeDasharray="4" />
-                    <line x1="60" y1="200" x2="760" y2="200" stroke="rgba(255,255,255,0.2)" />
-                    <line x1="60" y1="20" x2="60" y2="200" stroke="rgba(255,255,255,0.2)" />
-
-                    {/* Y-axis Labels (Groundedness %) */}
-                    <text x="15" y="25" fill="#94a3b8" fontSize="10">100%</text>
-                    <text x="20" y="80" fill="#94a3b8" fontSize="10">75%</text>
-                    <text x="20" y="135" fill="#94a3b8" fontSize="10">50%</text>
-                    <text x="20" y="190" fill="#94a3b8" fontSize="10">25%</text>
-
-                    {/* X-axis Label */}
-                    <text x="400" y="228" fill="#94a3b8" fontSize="11" textAnchor="middle">Cost per Query ($) →</text>
-                    <text x="20" y="110" fill="#94a3b8" fontSize="11" transform="rotate(-90 20,110)" textAnchor="middle">Groundedness ↑</text>
-
-                    {/* Data Points */}
-                    {benchmarkReport.results.map((item) => {
-                      const itemCost = item.cost_per_query ?? item.cost
-                      const maxCost = Math.max(...benchmarkReport.results.map((r) => r.cost_per_query ?? r.cost), 0.0001)
-                      const minCost = Math.min(...benchmarkReport.results.map((r) => r.cost_per_query ?? r.cost), 0.0)
-                      const costRange = maxCost - minCost || 0.0001
-
-                      // X scale from 90 to 730
-                      const cx = 90 + ((itemCost - minCost) / costRange) * 620
-                      // Y scale from 200 (0%) to 30 (100%)
-                      const cy = 200 - item.groundedness * 170
-
-                      const isBaseline = item.version_id === 'baseline' || item.version === 'baseline'
-                      const isPareto = item.is_pareto_optimal
-
-                      return (
-                        <g
-                          key={item.version_id}
-                          onMouseEnter={() => setHoveredBenchItem(item)}
-                          onMouseLeave={() => setHoveredBenchItem(null)}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          {isBaseline ? (
-                            <rect
-                              x={cx - 7}
-                              y={cy - 7}
-                              width={14}
-                              height={14}
-                              fill="#38bdf8"
-                              stroke="#ffffff"
-                              strokeWidth={2}
-                              rx={2}
-                            />
-                          ) : (
-                            <circle
-                              cx={cx}
-                              cy={cy}
-                              r={isPareto ? 8 : 6}
-                              fill={isPareto ? '#10b981' : '#64748b'}
-                              stroke={isPareto ? '#34d399' : '#94a3b8'}
-                              strokeWidth={isPareto ? 2.5 : 1}
-                            />
-                          )}
-                          <text
-                            x={cx}
-                            y={cy - 12}
-                            fill="#f8fafc"
-                            fontSize="10"
-                            fontWeight="bold"
-                            textAnchor="middle"
-                          >
-                            {isBaseline ? 'Base' : `v${item.version_number}`}
-                          </text>
-                        </g>
-                      )
-                    })}
-                  </svg>
-
-                  {/* Tooltip */}
-                  {hoveredBenchItem && (
-                    <div className="evo-bench-tooltip" style={{ top: 10, right: 10 }}>
-                      <div className="evo-bench-tooltip-title">
-                        {hoveredBenchItem.version_id === 'baseline' ? 'Production Baseline' : `v${hoveredBenchItem.version_number}: ${hoveredBenchItem.workflow || hoveredBenchItem.workflow_name}`}
-                      </div>
-                      <div className="evo-bench-tooltip-row">
-                        <span>Pareto Status:</span>
-                        <strong style={{ color: hoveredBenchItem.is_pareto_optimal ? '#34d399' : '#94a3b8' }}>
-                          {hoveredBenchItem.pareto_status}
-                        </strong>
-                      </div>
-                      <div className="evo-bench-tooltip-row">
-                        <span>Groundedness:</span>
-                        <strong>{(hoveredBenchItem.groundedness * 100).toFixed(1)}%</strong>
-                      </div>
-                      <div className="evo-bench-tooltip-row">
-                        <span>Hallucination Rate:</span>
-                        <strong>{((hoveredBenchItem.hallucination ?? hoveredBenchItem.hallucination_rate) * 100).toFixed(1)}%</strong>
-                      </div>
-                      <div className="evo-bench-tooltip-row">
-                        <span>Cost / Query:</span>
-                        <strong>${(hoveredBenchItem.cost_per_query ?? hoveredBenchItem.cost).toFixed(6)}</strong>
-                      </div>
-                      <div className="evo-bench-tooltip-row">
-                        <span>LLM Latency:</span>
-                        <span>{(hoveredBenchItem.latency_ms ?? hoveredBenchItem.llm_latency_ms).toFixed(0)} ms</span>
-                      </div>
-                      <div className="evo-bench-tooltip-row">
-                        <span>Total Tokens:</span>
-                        <span>{hoveredBenchItem.total_tokens}</span>
-                      </div>
-                      <div className="evo-bench-tooltip-row">
-                        <span>Model:</span>
-                        <span>{hoveredBenchItem.model || hoveredBenchItem.model_id}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* 1. Canonical Aggregate Results Table */}
-              <div className="evo-table-container" style={{ marginTop: 20 }}>
-                <h3 className="evo-section-title" style={{ padding: '8px 12px', margin: 0, fontSize: '1rem' }}>
-                  📋 Fresh Cross-Version Benchmark Results (Aggregate Mean)
-                </h3>
-                <table className="evo-table">
-                  <thead>
-                    <tr>
-                      <th>Version</th>
-                      <th>Workflow</th>
-                      <th>Groundedness</th>
-                      <th>Hallucination</th>
-                      <th>Cost/Query</th>
-                      <th>Tokens</th>
-                      <th>Latency</th>
-                      <th>Model</th>
-                      <th>Provider</th>
-                      <th>Retrieval</th>
-                      <th>Prompt</th>
-                      <th>Operators</th>
-                      <th>Pareto</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {benchmarkReport.results.map((res) => {
-                      const isBaseline = res.version_id === 'baseline' || res.version === 'baseline'
-                      const isPareto = res.is_pareto_optimal
-                      const versionLabel = isBaseline ? 'Base' : `v${res.version_number ?? '?'}`
-                      const workflowName = res.workflow || res.workflow_name
-                      const groundedness = res.groundedness
-                      const hallucination = res.hallucination ?? res.hallucination_rate
-                      const cost = res.cost_per_query ?? res.cost
-                      const tokens = res.total_tokens
-                      const latency = res.latency_ms ?? res.llm_latency_ms
-                      const model = res.model || res.model_id
-                      const provider = res.provider
-                      const retrievalStr = res.retrieval_config || res.retrieval_config_summary || `top_k=${res.retrieval?.top_k ?? 5}`
-                      const promptStr = res.prompt_strategy || res.prompt_template
-                      const operatorStr = `compress=${res.context_compression ? 'True' : 'False'}`
-
-                      return (
-                        <tr
-                          key={res.version_id}
-                          className={`evo-table-row ${isPareto ? 'row-pareto' : ''}`}
-                        >
-                          <td>
-                            <span className="evo-version-tag" style={{ background: isBaseline ? '#0284c7' : undefined }}>
-                              {versionLabel}
-                            </span>
-                            <div className="evo-cell-sub"><code>{res.version_id}</code></div>
-                          </td>
-                          <td>
-                            <strong>{workflowName}</strong>
-                          </td>
-                          <td>
-                            <span className="evo-perf-val">{(groundedness * 100).toFixed(1)}%</span>
-                          </td>
-                          <td>
-                            <span className="evo-val-cyan">{(hallucination * 100).toFixed(1)}%</span>
-                          </td>
-                          <td>
-                            <span className="evo-cost-val">${cost.toFixed(6)}</span>
-                          </td>
-                          <td>
-                            <span className="evo-cell-sub">{tokens}</span>
-                          </td>
-                          <td>
-                            <span className="evo-latency-val">{latency.toFixed(0)} ms</span>
-                          </td>
-                          <td>
-                            <span className="evo-model-id">{model}</span>
-                          </td>
-                          <td>
-                            <span className="evo-provider-name">{provider}</span>
-                          </td>
-                          <td>
-                            <span className="evo-cell-sub">{retrievalStr}</span>
-                          </td>
-                          <td>
-                            <span className="evo-cell-sub">{promptStr}</span>
-                          </td>
-                          <td>
-                            <span className="evo-cell-sub">{operatorStr}</span>
-                          </td>
-                          <td>
-                            {isPareto ? (
-                              <span className="evo-pareto-optimal-badge">✓ Pareto-optimal</span>
-                            ) : (
-                              <span className="evo-dominated-badge">Dominated</span>
-                            )}
-                          </td>
-                          <td>
-                            <button
-                              type="button"
-                              onClick={() => handleInspectVersion(res.version_id)}
-                              className="evo-btn-inspect"
-                            >
-                              Inspect
-                            </button>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* 2. Relative to Production Baseline Table */}
-              <div className="evo-table-container" style={{ marginTop: 20 }}>
-                <h3 className="evo-section-title" style={{ padding: '8px 12px', margin: 0, fontSize: '1rem' }}>
-                  📈 Performance & Efficiency Relative to Production Baseline
-                </h3>
-                <table className="evo-table">
-                  <thead>
-                    <tr>
-                      <th>Version</th>
-                      <th>Workflow</th>
-                      <th>Groundedness Δ</th>
-                      <th>Cost Δ%</th>
-                      <th>Latency Δ%</th>
-                      <th>Tokens Δ%</th>
-                      <th>Pareto Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {benchmarkReport.results.map((res) => {
-                      const isBaseline = res.version_id === 'baseline' || res.version === 'baseline'
-                      const gDelta = res.relative_changes?.groundedness_delta ?? res.relative_changes?.groundedness_change ?? 0
-                      const cChange = res.relative_changes?.cost_change_pct ?? -(res.relative_changes?.cost_reduction_pct ?? 0)
-                      const lChange = res.relative_changes?.latency_change_pct ?? -(res.relative_changes?.latency_reduction_pct ?? 0)
-                      const tChange = res.relative_changes?.token_change_pct ?? -(res.relative_changes?.token_reduction_pct ?? 0)
-
-                      return (
-                        <tr key={res.version_id} className="evo-table-row">
-                          <td>
-                            <span className="evo-version-tag" style={{ background: isBaseline ? '#0284c7' : undefined }}>
-                              {isBaseline ? 'Base' : `v${res.version_number}`}
-                            </span>
-                          </td>
-                          <td><strong>{res.workflow || res.workflow_name}</strong></td>
-                          <td>
-                            <span className={gDelta >= 0 ? 'evo-perf-val' : 'evo-cost-val'}>
-                              {gDelta >= 0 ? '+' : ''}{gDelta.toFixed(4)}
-                            </span>
-                          </td>
-                          <td>
-                            <span className={cChange <= 0 ? 'evo-perf-val' : 'evo-cost-val'}>
-                              {cChange > 0 ? '+' : ''}{cChange.toFixed(2)}%
-                            </span>
-                          </td>
-                          <td>
-                            <span className={lChange <= 0 ? 'evo-perf-val' : 'evo-cost-val'}>
-                              {lChange > 0 ? '+' : ''}{lChange.toFixed(2)}%
-                            </span>
-                          </td>
-                          <td>
-                            <span className={tChange <= 0 ? 'evo-perf-val' : 'evo-cost-val'}>
-                              {tChange > 0 ? '+' : ''}{tChange.toFixed(2)}%
-                            </span>
-                          </td>
-                          <td>
-                            {res.is_pareto_optimal ? (
-                              <span className="evo-pareto-optimal-badge">✓ Pareto-optimal</span>
-                            ) : (
-                              <span className="evo-dominated-badge">Dominated</span>
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* 3. Repetition Details Table (R1, R2, R3, Mean, Std Dev) */}
-              <div className="evo-table-container" style={{ marginTop: 20 }}>
-                <h3 className="evo-section-title" style={{ padding: '8px 12px', margin: 0, fontSize: '1rem' }}>
-                  🔬 Repetition Breakdown & Variance (R1, R2, R3, Mean, Std Dev)
-                </h3>
-                <table className="evo-table">
-                  <thead>
-                    <tr>
-                      <th>Version</th>
-                      <th>Workflow / Run</th>
-                      <th>Groundedness</th>
-                      <th>Hallucination</th>
-                      <th>Cost / Query</th>
-                      <th>Tokens</th>
-                      <th>Latency</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {benchmarkReport.results.flatMap((res) => {
-                      const runs = res.runs || []
-                      const rows = runs.map((r) => (
-                        <tr key={`${res.version_id}-r${r.iteration}`} className="evo-table-row">
-                          <td><code>{res.version_id}</code></td>
-                          <td><span className="evo-count-badge">Repetition {r.iteration}</span></td>
-                          <td>{(r.groundedness * 100).toFixed(1)}%</td>
-                          <td>{(r.hallucination_rate * 100).toFixed(1)}%</td>
-                          <td>${r.cost.toFixed(6)}</td>
-                          <td>{r.total_tokens}</td>
-                          <td>{r.llm_latency_ms.toFixed(0)} ms</td>
-                        </tr>
-                      ))
-                      if (runs.length > 0) {
-                        rows.push(
-                          <tr key={`${res.version_id}-mean`} style={{ background: 'rgba(59, 130, 246, 0.08)', fontWeight: 'bold' }}>
-                            <td><code>{res.version_id}</code></td>
-                            <td><span className="evo-status-tag tag-pareto">Mean ± Std Dev</span></td>
-                            <td>{(res.groundedness * 100).toFixed(1)}% ± {((res.std_dev?.groundedness ?? 0) * 100).toFixed(2)}%</td>
-                            <td>{((res.hallucination ?? res.hallucination_rate) * 100).toFixed(1)}% ± {((res.std_dev?.hallucination ?? 0) * 100).toFixed(2)}%</td>
-                            <td>${(res.cost_per_query ?? res.cost).toFixed(6)} ± ${(res.std_dev?.cost ?? 0).toFixed(6)}</td>
-                            <td>{res.total_tokens} ± {(res.std_dev?.tokens ?? 0).toFixed(1)}</td>
-                            <td>{(res.latency_ms ?? res.llm_latency_ms).toFixed(0)} ms ± {(res.std_dev?.latency_ms ?? 0).toFixed(0)} ms</td>
-                          </tr>
-                        )
-                      }
-                      return rows
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-
-          {/* Past Benchmark History */}
-          {benchmarkHistory.length > 0 && (
-            <section className="evo-section">
-              <div className="evo-section-header">
-                <h3 className="evo-section-title">Benchmark History</h3>
-                <span className="evo-section-caption">Prior reproducible benchmark executions</span>
-              </div>
+              {/* Table */}
               <div className="evo-table-container">
                 <table className="evo-table">
                   <thead>
                     <tr>
-                      <th>Benchmark ID</th>
-                      <th>Benchmark Name</th>
-                      <th>Preset</th>
-                      <th>Versions Evaluated</th>
-                      <th>Created By</th>
-                      <th>Timestamp</th>
-                      <th>Action</th>
+                      <th>Version</th>
+                      <th>Workflow</th>
+                      <th>Model</th>
+                      <th>Groundedness</th>
+                      <th>Hallucination</th>
+                      <th>Cost / Query</th>
+                      <th>LLM Latency</th>
+                      <th>Tokens</th>
+                      <th>Pareto Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {benchmarkHistory.map((b) => (
-                      <tr key={b.benchmark_id} className="evo-table-row">
-                        <td><code>{b.benchmark_id}</code></td>
-                        <td><strong>{b.name}</strong></td>
-                        <td><span className="evo-cell-sub">{b.preset_name || 'custom'}</span></td>
-                        <td><span className="evo-count-badge">{b.selected_versions?.length || 0} Versions</span></td>
-                        <td><span className="evo-cell-sub">{b.created_by}</span></td>
-                        <td><span className="evo-cell-sub">{new Date(b.created_at).toLocaleString()}</span></td>
-                        <td>
-                          <button
-                            type="button"
-                            onClick={() => setBenchmarkReport(b)}
-                            className="evo-btn-secondary evo-btn-sm"
-                          >
-                            Load Report
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {benchmarkReport.results.map((r) => {
+                      const isBase = r.version_id === 'baseline' || r.version === 'baseline'
+                      const isPareto = r.is_pareto_optimal
+                      return (
+                        <tr key={r.version_id} className="evo-table-row">
+                          <td>
+                            <span className="evo-version-tag" style={isBase ? { background: '#0284c7' } : undefined}>
+                              {isBase ? 'Base' : `v${r.version_number ?? ''}`}
+                            </span>
+                            <div className="evo-cell-sub"><code>{r.version_id}</code></div>
+                          </td>
+                          <td><strong>{r.workflow_name || r.workflow}</strong></td>
+                          <td><span className="evo-model-id">{r.model_id || r.model}</span></td>
+                          <td><strong className="evo-val-green">{(r.groundedness * 100).toFixed(1)}%</strong></td>
+                          <td><span className="evo-val-cyan">{((r.hallucination_rate ?? r.hallucination ?? 0) * 100).toFixed(1)}%</span></td>
+                          <td><span className="evo-cost-val">${(r.cost_per_query ?? r.cost).toFixed(6)}</span></td>
+                          <td><span className="evo-val-purple">{(r.llm_latency_ms ?? r.latency_ms ?? 0).toFixed(0)} ms</span></td>
+                          <td><span>{r.total_tokens}</span></td>
+                          <td>
+                            <span className={isPareto ? 'evo-pareto-optimal-badge' : 'evo-dominated-badge'}>
+                              {r.pareto_status}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1745,92 +2221,76 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 3: WORKFLOW VERSION LINEAGE GRAPH                                     */}
+      {/* TAB 4: WORKFLOW VERSION LINEAGE GRAPH                                     */}
       {/* ========================================================================= */}
       {activeMainTab === 'lineage' && (
-        <section className="evo-section evo-lineage-container">
+        <section className="evo-section">
           <div className="evo-section-header">
             <div>
-              <h2 className="evo-section-title">Workflow Lineage & Derivation Tree</h2>
+              <h2 className="evo-section-title">Workflow Lineage & Evolutionary Provenance</h2>
               <span className="evo-section-caption">
-                Visualizing true parent-to-child relationships from database metadata. Baseline remains immutable reference root.
+                Complete directed acyclic provenance graph depicting ancestry, mutations, targeted refinements, and crossover recombination.
               </span>
             </div>
-            <button
-              type="button"
-              onClick={fetchLineage}
-              className="evo-btn-secondary evo-btn-sm"
-              disabled={isLineageLoading}
-            >
-              🔄 Refresh Lineage
-            </button>
           </div>
 
-          {isLineageLoading ? (
-            <div className="evo-versions-empty">
-              <span className="evo-spinner" /> Loading lineage graph...
-            </div>
-          ) : !lineageData || lineageData.nodes.length === 0 ? (
-            <div className="evo-versions-empty">
-              <p>No workflow version lineage found.</p>
-            </div>
-          ) : (
-            <div className="evo-lineage-flow">
-              {/* Root node: Baseline */}
-              <div className="evo-lineage-level">
-                {lineageData.nodes
-                  .filter((n) => n.version_id === 'baseline')
-                  .map((rootNode) => (
-                    <div key={rootNode.version_id} className="evo-lineage-card is-baseline">
-                      <div className="evo-lineage-card-head">
-                        <span className="evo-lineage-tag" style={{ background: '#0284c7' }}>ROOT BASELINE</span>
-                        <span className="evo-gov-state-pill gov-approved">IMMUTABLE</span>
-                      </div>
-                      <div className="evo-lineage-name">{rootNode.name}</div>
-                      <div className="evo-lineage-meta">
-                        <span>Model: <code>{rootNode.model_id}</code></span>
-                        <span>Provider: {rootNode.provider}</span>
-                        <span>{rootNode.rationale}</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleInspectVersion('baseline')}
-                        className="evo-btn-inspect"
-                      >
-                        Inspect Baseline
-                      </button>
-                    </div>
-                  ))}
-              </div>
-
-              {/* Child Nodes */}
-              <div className="evo-lineage-level">
+          {lineageData && (
+            <div className="evo-lineage-container">
+              <div className="evo-lineage-grid">
                 {lineageData.nodes
                   .filter((n) => n.version_id !== 'baseline')
                   .map((node) => {
-                    const edge = lineageData.edges.find((e) => e.target === node.version_id)
-                    const parentLabel = edge?.source === 'baseline' ? 'baseline' : edge?.source
+                    const edges = lineageData.edges.filter((e) => e.target === node.version_id)
+                    const isCrossover = node.candidate_type === 'CROSSOVER' || !!node.parent_b_version_id || edges.length > 1
+                    const primaryEdge = edges[0]
+                    const secondaryEdge = edges[1]
 
                     return (
                       <div
                         key={node.version_id}
-                        className={`evo-lineage-card ${node.mutation_type === 'refinement' ? 'is-refined' : ''}`}
+                        className={`evo-lineage-card ${isCrossover ? 'is-crossover' : node.mutation_type === 'refinement' ? 'is-refined' : ''}`}
                       >
                         <div className="evo-lineage-card-head">
-                          <span className="evo-lineage-tag">v{node.version_number}</span>
-                          <span className="evo-lineage-arrow-tag">
-                            ↓ from <code>{parentLabel}</code> ({edge?.label || 'mutation'})
+                          <span className="evo-lineage-tag" style={isCrossover ? { background: '#8b5cf6' } : undefined}>
+                            {isCrossover ? '🔀 ' : ''}v{node.version_number}
                           </span>
+                          {isCrossover ? (
+                            <span className="evo-lineage-arrow-tag" style={{ background: '#f3e8ff', color: '#6b21a8' }}>
+                              🔀 Crossover: <code>{node.parent_a_version_id || primaryEdge?.source}</code> + <code>{node.parent_b_version_id || secondaryEdge?.source}</code>
+                            </span>
+                          ) : (
+                            <span className="evo-lineage-arrow-tag">
+                              ↓ from <code>{primaryEdge?.source === 'baseline' ? 'baseline' : primaryEdge?.source}</code> ({primaryEdge?.label || 'mutation'})
+                            </span>
+                          )}
                         </div>
                         <div className="evo-lineage-name">{node.name}</div>
                         <div className="evo-lineage-meta">
                           <span>Version ID: <code>{node.version_id}</code></span>
                           <span>Candidate: <code>{node.source_candidate_id}</code></span>
-                          <span>Strategy: <strong>{node.mutation_type?.toUpperCase()}</strong> {node.refinement_operation ? `(${node.refinement_operation})` : ''}</span>
-                          {node.fields_changed && node.fields_changed.length > 0 && (
-                            <span>Fields: {node.fields_changed.join(', ')}</span>
+                          <span>
+                            Strategy: <strong>{isCrossover ? 'CROSSOVER' : node.mutation_type?.toUpperCase()}</strong>{' '}
+                            {node.refinement_operation ? `(${node.refinement_operation})` : ''}
+                          </span>
+                          {isCrossover && node.crossover_map && (
+                            <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                              {Object.entries(node.crossover_map).map(([comp, par]) => (
+                                <span
+                                  key={comp}
+                                  style={{
+                                    fontSize: '0.68rem',
+                                    padding: '1px 5px',
+                                    borderRadius: 3,
+                                    background: par === 'parent_a' ? '#eff6ff' : '#f0fdf4',
+                                    color: par === 'parent_a' ? '#1d4ed8' : '#15803d',
+                                    border: '1px solid currentColor'
+                                  }}
+                                >
+                                  {comp}: {par === 'parent_a' ? 'Parent A' : 'Parent B'}
+                                </span>
+                              ))}
+                            </div>
                           )}
-                          {node.rationale && <span>Rationale: {node.rationale}</span>}
                         </div>
                         <button
                           type="button"
@@ -1866,6 +2326,9 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                 <strong>Cost / Query:</strong> ${confirmApprovalCandidate.metrics.cost.toFixed(6)}<br />
                 <strong>Model:</strong> {confirmApprovalCandidate.workflow.model.model_id}
               </div>
+              <p style={{ marginTop: 10, fontSize: '0.85rem', color: '#94a3b8' }}>
+                Note: Approval creates an immutable version with status <code>APPROVED</code>. It does NOT automatically activate or deploy the workflow.
+              </p>
             </div>
             <div className="evo-modal-foot">
               <button type="button" onClick={() => setConfirmApprovalCandidate(null)} className="evo-btn-secondary">
@@ -1885,7 +2348,120 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* INSPECT WORKFLOW CANDIDATE MODAL                                          */}
+      {/* ACTIVATE / ROLLBACK CONFIRMATION MODAL                                    */}
+      {/* ========================================================================= */}
+      {actionModalVersion && (
+        <div className="evo-modal-backdrop" onClick={() => setActionModalVersion(null)} role="dialog" aria-modal="true">
+          <div className="evo-modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="evo-modal-head">
+              <h3>{actionModalVersion.type === 'activate' ? 'Activate Production Workflow' : 'Rollback to Workflow Version'}</h3>
+              <button type="button" onClick={() => setActionModalVersion(null)} className="evo-modal-close">✕</button>
+            </div>
+            <div className="evo-modal-content">
+              <p>
+                {actionModalVersion.type === 'activate'
+                  ? `Promote version ${actionModalVersion.version.version_id} to be the ACTIVE production workflow.`
+                  : `Rollback production execution to immutable version ${actionModalVersion.version.version_id}.`}
+              </p>
+              <div className="evo-summary-box" style={{ marginTop: 12 }}>
+                <strong>Target Version:</strong> {actionModalVersion.version.name} (<code>{actionModalVersion.version.version_id}</code>)<br />
+                <strong>Model:</strong> {actionModalVersion.version.model_id}<br />
+                <strong>Current Active:</strong> {activeWorkflow?.version_id || 'baseline'}
+              </div>
+              <div className="evo-form-group" style={{ marginTop: 14 }}>
+                <label className="evo-label">Reason / Governance Note (Optional)</label>
+                <input
+                  type="text"
+                  className="evo-input"
+                  placeholder="e.g., Clinical trial validation complete / rolled back due to latency spike"
+                  value={actionReason}
+                  onChange={(e) => setActionReason(e.target.value)}
+                  disabled={isActionSubmitting}
+                />
+              </div>
+            </div>
+            <div className="evo-modal-foot">
+              <button type="button" onClick={() => setActionModalVersion(null)} className="evo-btn-secondary">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteAction}
+                className={actionModalVersion.type === 'activate' ? 'evo-btn-primary' : 'evo-btn-rollback'}
+                disabled={isActionSubmitting}
+              >
+                {isActionSubmitting ? 'Processing...' : actionModalVersion.type === 'activate' ? 'Confirm Activation' : 'Confirm Rollback'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* RECORD USER FEEDBACK MODAL                                                */}
+      {/* ========================================================================= */}
+      {feedbackModalExecution && (
+        <div className="evo-modal-backdrop" onClick={() => setFeedbackModalExecution(null)} role="dialog" aria-modal="true">
+          <div className="evo-modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="evo-modal-head">
+              <h3>Record Runtime Feedback</h3>
+              <button type="button" onClick={() => setFeedbackModalExecution(null)} className="evo-modal-close">✕</button>
+            </div>
+            <div className="evo-modal-content">
+              <div className="evo-summary-box">
+                <div><strong>Execution ID:</strong> <code>{feedbackModalExecution.execution_id}</code></div>
+                <div><strong>Workflow Version:</strong> <span>{feedbackModalExecution.workflow_version_id}</span></div>
+                <div><strong>Query:</strong> <em>"{feedbackModalExecution.query}"</em></div>
+              </div>
+
+              <div className="evo-form-group" style={{ marginTop: 16 }}>
+                <label className="evo-label">Clinical Rating (1 to 5 Stars)</label>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setFeedbackRating(star)}
+                      className={`evo-btn-sm ${feedbackRating >= star ? 'evo-btn-primary' : 'evo-btn-secondary'}`}
+                      style={{ fontSize: '1.2rem', padding: '6px 14px' }}
+                    >
+                      ★ {star}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="evo-form-group" style={{ marginTop: 12 }}>
+                <label className="evo-label">Feedback Notes / Observations</label>
+                <textarea
+                  className="evo-textarea"
+                  rows={3}
+                  placeholder="Note any medical accuracy issues, missing context, or high groundedness observations..."
+                  value={feedbackText}
+                  onChange={(e) => setFeedbackText(e.target.value)}
+                  disabled={isSubmittingFeedback}
+                />
+              </div>
+            </div>
+            <div className="evo-modal-foot">
+              <button type="button" onClick={() => setFeedbackModalExecution(null)} className="evo-btn-secondary">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitFeedback}
+                className="evo-btn-primary"
+                disabled={isSubmittingFeedback}
+              >
+                {isSubmittingFeedback ? 'Submitting...' : 'Submit Feedback'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* INSPECT CANDIDATE MODAL                                                   */}
       {/* ========================================================================= */}
       {inspectModalCandidate && baselineCandidate && (
         <div className="evo-modal-backdrop" onClick={() => setInspectModalCandidate(null)} role="dialog" aria-modal="true">
@@ -1905,70 +2481,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
             </div>
 
             <div className="evo-modal-content">
-              {/* Mutation Metadata */}
-              {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata) && (
-                <div className="evo-modal-block">
-                  <h4 className="evo-modal-block-title">Mutation & Lineage Details</h4>
-                  <div className="evo-modal-grid">
-                    <div className="evo-modal-field">
-                      <span className="evo-field-key">Parent Workflow</span>
-                      <span className="evo-field-value">
-                        <code>{(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.parent_workflow_id}</code>
-                      </span>
-                    </div>
-                    <div className="evo-modal-field">
-                      <span className="evo-field-key">Mutation Category</span>
-                      <span className="evo-field-value">
-                        {renderMutationBadge(inspectModalCandidate)}
-                      </span>
-                    </div>
-                    {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.refinement_operation && (
-                      <div className="evo-modal-field">
-                        <span className="evo-field-key">Refinement Operation</span>
-                        <span className="evo-field-value">
-                          <code className="evo-refine-op-tag">
-                            {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.refinement_operation}
-                          </code>
-                        </span>
-                      </div>
-                    )}
-                    {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.fields_changed && (
-                      <div className="evo-modal-field">
-                        <span className="evo-field-key">Fields Changed</span>
-                        <span className="evo-field-value">
-                          {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.fields_changed?.join(', ')}
-                        </span>
-                      </div>
-                    )}
-                    <div className="evo-modal-field evo-metric-card-span">
-                      <span className="evo-field-key">Rationale</span>
-                      <span className="evo-field-value">
-                        {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.mutation_description}
-                      </span>
-                    </div>
-
-                    {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.before_configuration && (
-                      <div className="evo-modal-field evo-metric-card-span evo-refine-diff-box">
-                        <div className="evo-refine-diff-col">
-                          <span className="evo-field-key">Before Configuration (Parent)</span>
-                          <pre className="evo-refine-cfg-pre">
-                            {JSON.stringify((inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.before_configuration, null, 2)}
-                          </pre>
-                        </div>
-                        <div className="evo-refine-arrow">→</div>
-                        <div className="evo-refine-diff-col">
-                          <span className="evo-field-key">After Configuration (Refined)</span>
-                          <pre className="evo-refine-cfg-pre">
-                            {JSON.stringify((inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.generation_metadata?.after_configuration, null, 2)}
-                          </pre>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Evaluation Metrics */}
+              {/* Metrics */}
               <div className="evo-modal-block">
                 <h4 className="evo-modal-block-title">Phase 6 Evaluation Metrics</h4>
                 <div className="evo-modal-grid">
@@ -1998,6 +2511,33 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Mutation Metadata */}
+              {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata) && (
+                <div className="evo-modal-block">
+                  <h4 className="evo-modal-block-title">Generation & Lineage Details</h4>
+                  <div className="evo-modal-grid">
+                    <div className="evo-modal-field">
+                      <span className="evo-field-key">Parent Workflow</span>
+                      <span className="evo-field-value">
+                        <code>{(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.parent_workflow_id}</code>
+                      </span>
+                    </div>
+                    <div className="evo-modal-field">
+                      <span className="evo-field-key">Category</span>
+                      <span className="evo-field-value">
+                        {renderMutationBadge(inspectModalCandidate)}
+                      </span>
+                    </div>
+                    <div className="evo-modal-field evo-metric-card-span">
+                      <span className="evo-field-key">Rationale / Description</span>
+                      <span className="evo-field-value">
+                        {(inspectModalCandidate.mutation_metadata || inspectModalCandidate.workflow.mutation_metadata)?.mutation_description}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="evo-modal-foot">
@@ -2032,121 +2572,48 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
               <div className="evo-modal-block">
                 <h4 className="evo-modal-block-title">Workflow Lineage & Strategy</h4>
                 <div className="evo-modal-grid">
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Parent Workflow</span>
-                    <span className="evo-field-value">
-                      <code>{inspectModalVersion.parent_workflow_id || 'Production Baseline'}</code>
-                      {inspectModalVersion.parent_version && (
-                        <span className="evo-cell-sub"> (v{inspectModalVersion.parent_version.version_number}: {inspectModalVersion.parent_version.name})</span>
-                      )}
-                    </span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Strategy</span>
-                    <span className="evo-field-value">
-                      <strong>{inspectModalVersion.mutation_type?.toUpperCase() || 'BASELINE'}</strong>
-                      {inspectModalVersion.refinement_operation ? ` (${inspectModalVersion.refinement_operation})` : ''}
-                    </span>
-                  </div>
-                  {inspectModalVersion.source_candidate_id && (
-                    <div className="evo-modal-field">
-                      <span className="evo-field-key">Source Candidate / Run</span>
-                      <span className="evo-field-value">
-                        <code>{inspectModalVersion.source_candidate_id}</code> in <code>{inspectModalVersion.source_run_id}</code>
-                      </span>
-                    </div>
-                  )}
-                  {inspectModalVersion.fields_changed && inspectModalVersion.fields_changed.length > 0 && (
-                    <div className="evo-modal-field">
-                      <span className="evo-field-key">Fields Changed</span>
-                      <span className="evo-field-value">{inspectModalVersion.fields_changed.join(', ')}</span>
-                    </div>
-                  )}
-                  {inspectModalVersion.rationale && (
-                    <div className="evo-modal-field evo-metric-card-span">
-                      <span className="evo-field-key">Rationale</span>
-                      <span className="evo-field-value">{inspectModalVersion.rationale}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Before vs After Diffs */}
-                {inspectModalVersion.before_configuration && inspectModalVersion.after_configuration && (
-                  <div className="evo-inspect-diff-grid">
-                    <div className="evo-diff-pane">
-                      <div className="evo-diff-pane-title">
-                        <span>Before (Parent Configuration)</span>
+                  {inspectModalVersion.candidate_type === 'CROSSOVER' || inspectModalVersion.parent_a_version_id ? (
+                    <>
+                      <div className="evo-modal-field">
+                        <span className="evo-field-key">Parent A</span>
+                        <span className="evo-field-value">
+                          <code>{inspectModalVersion.parent_a_version_id || inspectModalVersion.parent_workflow_id}</code>
+                        </span>
                       </div>
-                      <pre className="evo-refine-cfg-pre">
-                        {JSON.stringify(inspectModalVersion.before_configuration, null, 2)}
-                      </pre>
-                    </div>
-                    <div className="evo-diff-pane">
-                      <div className="evo-diff-pane-title">
-                        <span>After (Refined Configuration)</span>
+                      <div className="evo-modal-field">
+                        <span className="evo-field-key">Parent B</span>
+                        <span className="evo-field-value">
+                          <code>{inspectModalVersion.parent_b_version_id}</code>
+                        </span>
                       </div>
-                      <pre className="evo-refine-cfg-pre">
-                        {JSON.stringify(inspectModalVersion.after_configuration, null, 2)}
-                      </pre>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Evaluation Snapshot */}
-              <div className="evo-modal-block">
-                <h4 className="evo-modal-block-title">Evaluation Snapshot (At Approval)</h4>
-                <div className="evo-modal-grid">
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Groundedness</span>
-                    <span className="evo-field-value evo-val-green">
-                      {inspectModalVersion.evaluation_snapshot?.groundedness !== null && inspectModalVersion.evaluation_snapshot?.groundedness !== undefined
-                        ? `${(inspectModalVersion.evaluation_snapshot.groundedness * 100).toFixed(1)}%`
-                        : inspectModalVersion.evaluation_snapshot?.performance !== undefined
-                        ? `${(inspectModalVersion.evaluation_snapshot.performance * 100).toFixed(1)}%`
-                        : 'N/A'}
-                    </span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Hallucination Rate</span>
-                    <span className="evo-field-value evo-val-cyan">
-                      {inspectModalVersion.evaluation_snapshot?.hallucination_rate !== null && inspectModalVersion.evaluation_snapshot?.hallucination_rate !== undefined
-                        ? `${(inspectModalVersion.evaluation_snapshot.hallucination_rate * 100).toFixed(1)}%`
-                        : '0.0%'}
-                    </span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Cost / Query</span>
-                    <span className="evo-field-value evo-val-amber">
-                      ${Number(inspectModalVersion.evaluation_snapshot?.cost || 0).toFixed(6)}
-                    </span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">LLM Latency</span>
-                    <span className="evo-field-value evo-val-purple">
-                      {Number(inspectModalVersion.evaluation_snapshot?.llm_latency_ms || 0).toFixed(0)} ms
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Approval Info */}
-              <div className="evo-modal-block">
-                <h4 className="evo-modal-block-title">Governance & Approval Record</h4>
-                <div className="evo-modal-grid">
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Approved By</span>
-                    <span className="evo-field-value">{inspectModalVersion.approved_by}</span>
-                  </div>
-                  <div className="evo-modal-field">
-                    <span className="evo-field-key">Approved At</span>
-                    <span className="evo-field-value">{new Date(inspectModalVersion.approved_at).toLocaleString()}</span>
-                  </div>
+                      <div className="evo-modal-field">
+                        <span className="evo-field-key">Strategy</span>
+                        <span className="evo-field-value">
+                          <strong style={{ color: '#8b5cf6' }}>CROSSOVER</strong>
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="evo-modal-field">
+                        <span className="evo-field-key">Parent Workflow</span>
+                        <span className="evo-field-value">
+                          <code>{inspectModalVersion.parent_workflow_id || 'Production Baseline'}</code>
+                        </span>
+                      </div>
+                      <div className="evo-modal-field">
+                        <span className="evo-field-key">Strategy</span>
+                        <span className="evo-field-value">
+                          <strong>{inspectModalVersion.mutation_type?.toUpperCase() || 'BASELINE'}</strong>
+                        </span>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
               {/* Raw JSON */}
-              <details className="evo-details-block">
+              <details className="evo-details-block" style={{ marginTop: 12 }}>
                 <summary className="evo-details-summary">Immutable Configuration Spec (JSON)</summary>
                 <pre className="evo-json-pre">{JSON.stringify(inspectModalVersion.configuration, null, 2)}</pre>
               </details>

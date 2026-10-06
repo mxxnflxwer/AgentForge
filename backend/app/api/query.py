@@ -122,11 +122,28 @@ async def query_answer(
     overall_start = time.perf_counter()
     retrieval_start = time.perf_counter()
 
+    active_wf_info = None
+    active_version_id = "baseline"
+    context_compression = False
+    effective_top_k = request.top_k
+
+    if db:
+        try:
+            from app.services.agent_evo.workflow_lifecycle_service import WorkflowLifecycleService
+            active_wf_info = WorkflowLifecycleService.get_active_workflow(db=db)
+            if active_wf_info and active_wf_info.is_active_set:
+                active_version_id = active_wf_info.active_version_id
+                cfg = active_wf_info.configuration or {}
+                effective_top_k = cfg.get("retrieval", {}).get("top_k", request.top_k)
+                context_compression = cfg.get("execution", {}).get("context_compression", False)
+        except Exception as e:
+            logger.warning(f"Could not load active workflow for query answer: {e}")
+
     retrieval = execute_rag_retrieval(
         user_id=current_user.id,
         query=request.query,
         document_id=request.document_id,
-        top_k=request.top_k,
+        top_k=effective_top_k,
         db=db,
     )
     retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
@@ -153,6 +170,7 @@ async def query_answer(
         )
         eval_result = eval_engine.evaluate(eval_input)
 
+        exec_id = f"exec_{int(time.time()*1000)}"
         return QueryAnswerResponse(
             status="not_found",
             query=request.query,
@@ -164,9 +182,15 @@ async def query_answer(
             latency_ms=0.0,
             disclaimer=MEDICAL_DISCLAIMER,
             evaluation=convert_eval_result_to_response(eval_result),
+            execution_id=exec_id,
+            workflow_version_id=active_version_id,
         )
 
     context_str = build_context_from_retrieval(retrieval)
+    if context_compression:
+        from app.services.agent_evo.evaluator_adapter import apply_context_compression_operator
+        context_str = apply_context_compression_operator(context_str)
+
     llm_resp = await llm_router.generate_single(
         model_key=request.model,
         query=request.query,
@@ -175,6 +199,7 @@ async def query_answer(
 
     # Individual pipeline execution time: retrieval + LLM generation
     pipeline_exec_ms = round(retrieval_ms + (llm_resp.latency_ms or 0.0), 2)
+    total_exec_ms = round((time.perf_counter() - overall_start) * 1000, 2)
 
     # Run AgentEvo Evaluation Engine on the response
     eval_input = EvaluationInput(
@@ -192,6 +217,36 @@ async def query_answer(
     eval_result = eval_engine.evaluate(eval_input)
 
     sources = extract_sources(retrieval)
+    exec_id = f"exec_{int(time.time()*1000)}"
+
+    # Persist runtime execution record in database
+    if db:
+        try:
+            from app.models.workflow_version import WorkflowExecution
+            import datetime
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            db_exec = WorkflowExecution(
+                execution_id=exec_id,
+                workflow_version_id=active_version_id,
+                user_id=current_user.id,
+                query=request.query,
+                response=llm_resp.answer,
+                retrieved_chunks=[s.model_dump() for s in sources],
+                model=llm_resp.model,
+                provider="Google" if "gemini" in llm_resp.model.lower() else "OpenRouter",
+                input_tokens=eval_result.input_tokens,
+                output_tokens=eval_result.output_tokens,
+                total_tokens=eval_result.total_tokens,
+                cost=eval_result.total_cost,
+                llm_latency_ms=llm_resp.latency_ms or 0.0,
+                total_execution_time_ms=total_exec_ms,
+                status="success" if llm_resp.success or llm_resp.answer else "error",
+                created_at=now_utc,
+            )
+            db.add(db_exec)
+            db.commit()
+        except Exception as e:
+            logger.warning(f"Failed to record runtime execution metrics: {e}")
 
     return QueryAnswerResponse(
         status="success" if llm_resp.success or llm_resp.answer else "error",
@@ -204,6 +259,8 @@ async def query_answer(
         latency_ms=llm_resp.latency_ms,
         disclaimer=MEDICAL_DISCLAIMER,
         evaluation=convert_eval_result_to_response(eval_result),
+        execution_id=exec_id,
+        workflow_version_id=active_version_id,
     )
 
 

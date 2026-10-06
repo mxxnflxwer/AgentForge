@@ -56,6 +56,8 @@ class QueryAnswerResponse(BaseModel):
         None,
         description="AgentEvo evaluation metrics (accuracy, groundedness, hallucination rate, tokens, cost, latency, execution time).",
     )
+    execution_id: Optional[str] = Field(None, description="Unique runtime execution identifier for telemetry & feedback")
+    workflow_version_id: Optional[str] = Field(None, description="Active workflow version ID used for this execution")
 
 
 class QueryCompareRequest(BaseModel):

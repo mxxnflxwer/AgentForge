@@ -32,13 +32,33 @@ class OptimizationRunRequest(BaseModel):
         None,
         description="Optional seed for deterministic candidate generation.",
     )
+    strategy: Optional[str] = Field(
+        "mutation",
+        description="Candidate generation strategy: 'mutation' (Exploration), 'refinement' (Targeted), 'crossover' (Recombination).",
+    )
     parent_workflow_id: Optional[str] = Field(
         None,
-        description="Optional parent workflow version ID e.g. wf_v4_b0844c or candidate ID to refine/mutate from.",
+        description="Parent A / primary parent workflow version ID e.g. wf_v4_b0844c or candidate ID.",
+    )
+    parent_b_workflow_id: Optional[str] = Field(
+        None,
+        description="Parent B workflow version ID for crossover recombination.",
+    )
+    crossover_map: Optional[Dict[str, str]] = Field(
+        None,
+        description="Mapping of components ('model', 'prompt', 'retrieval', 'generation', 'operators') to 'parent_a' or 'parent_b'.",
+    )
+    post_crossover_mutation: Optional[str] = Field(
+        "none",
+        description="Optional post-crossover mutation: 'none', 'prompt', 'retrieval', 'model', 'operator', 'composite'.",
+    )
+    refinement_strategy: Optional[str] = Field(
+        None,
+        description="Targeted refinement operation: e.g. 'prompt_simplification', 'retrieval_reduction', 'context_compression'.",
     )
     allowed_mutation_types: Optional[List[str]] = Field(
         None,
-        description="Optional subset of mutation categories to explore or refine: prompt, retrieval, model, operator, mixed, refinement.",
+        description="Optional subset of mutation categories to explore: prompt, retrieval, model, operator, mixed, refinement.",
     )
 
 
@@ -61,9 +81,10 @@ class WorkflowVersionResponse(BaseModel):
     provider: str = Field(..., description="Model provider")
     configuration: Dict[str, Any] = Field(..., description="Full workflow configuration dictionary")
     evaluation_snapshot: Dict[str, Any] = Field(..., description="Snapshot of Phase 6 evaluation metrics at approval")
-    status: str = Field("approved", description="Workflow version governance status")
+    status: str = Field("APPROVED", description="Workflow version governance status: APPROVED, ACTIVE, INACTIVE")
     approved_by: str = Field(..., description="Developer who approved this workflow version")
     approved_at: str = Field(..., description="ISO 8601 approval timestamp")
+    activated_at: Optional[str] = Field(None, description="ISO 8601 activation timestamp if active")
     created_at: str = Field(..., description="ISO 8601 creation timestamp")
 
 
@@ -87,6 +108,127 @@ class ApproveWorkflowResponse(BaseModel):
     message: str
     report: OptimizationReport
     version: Optional[WorkflowVersionResponse] = Field(None, description="Created or existing workflow version")
+
+
+# ---------------------------------------------------------------------------
+# Workflow Governance & Production Lifecycle Schemas
+# ---------------------------------------------------------------------------
+
+class ActivateWorkflowResponse(BaseModel):
+    """Response when an approved workflow is promoted to ACTIVE production status."""
+    status: str
+    version_id: str
+    message: str
+    previous_active_version_id: Optional[str] = None
+    version: WorkflowVersionResponse
+
+
+class RollbackWorkflowRequest(BaseModel):
+    """Request to rollback production to a previous approved/inactive workflow version."""
+    target_version_id: str = Field(..., description="The previous version ID to reactivate")
+    reason: Optional[str] = Field(None, description="Reason for performing the rollback")
+
+
+class RollbackWorkflowResponse(BaseModel):
+    """Response confirming rollback of production workflow."""
+    status: str
+    active_version_id: str
+    previous_active_version_id: Optional[str] = None
+    message: str
+    version: WorkflowVersionResponse
+
+
+class ActiveWorkflowResponse(BaseModel):
+    """Details of the currently active production workflow version."""
+    is_active_set: bool
+    active_version_id: str
+    version_number: Optional[int] = None
+    name: str
+    model_id: str
+    provider: str
+    configuration: Dict[str, Any]
+    status: str
+    activated_at: Optional[str] = None
+    evaluation_snapshot: Optional[Dict[str, Any]] = None
+
+
+class WorkflowExecutionRequest(BaseModel):
+    """Request payload to execute a query against the currently active production workflow."""
+    query: str = Field(..., min_length=1, description="User query to process")
+    document_id: Optional[str] = Field(None, description="Optional document ID for retrieval")
+    expected_answer: Optional[str] = Field(None, description="Optional ground truth reference")
+
+
+class WorkflowExecutionResponse(BaseModel):
+    """Runtime metrics and response from executing a query through the active workflow."""
+    execution_id: str
+    workflow_version_id: str
+    query: str
+    response: str
+    sources: List[Dict[str, Any]] = []
+    model: str
+    provider: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cost: float = 0.0
+    llm_latency_ms: float = 0.0
+    total_execution_time_ms: float = 0.0
+    status: str = "success"
+    created_at: str
+
+
+class WorkflowExecutionListResponse(BaseModel):
+    """List of production workflow runtime executions."""
+    total_executions: int
+    executions: List[WorkflowExecutionResponse]
+
+
+class WorkflowFeedbackRequest(BaseModel):
+    """Feedback payload for a specific workflow execution."""
+    rating: int = Field(..., ge=1, le=5, description="Numerical rating from 1 to 5")
+    feedback_text: Optional[str] = Field(None, description="Optional qualitative feedback or issue description")
+
+
+class WorkflowFeedbackResponse(BaseModel):
+    """Confirmation of recorded feedback."""
+    feedback_id: str
+    execution_id: str
+    workflow_version_id: str
+    rating: int
+    feedback_text: Optional[str] = None
+    created_at: str
+
+
+class WorkflowFeedbackListResponse(BaseModel):
+    """List of feedback items across production executions."""
+    total_feedback: int
+    feedback: List[WorkflowFeedbackResponse]
+
+
+class WorkflowAuditEventResponse(BaseModel):
+    """Audit log entry for lifecycle governance actions."""
+    event_id: str
+    workflow_version_id: str
+    event_type: str
+    user_email: str
+    details: Optional[Dict[str, Any]] = None
+    created_at: str
+
+
+class WorkflowAuditListResponse(BaseModel):
+    """List of audit events."""
+    total_events: int
+    events: List[WorkflowAuditEventResponse]
+
+
+class WorkflowReoptimizeRequest(BaseModel):
+    """Request to trigger explicit developer re-optimization from runtime feedback context."""
+    version_id: Optional[str] = Field(None, description="Optional baseline version to optimize from (defaults to ACTIVE)")
+    query: Optional[str] = Field(None, description="Target query (defaults to standard or recent feedback query)")
+    document_id: Optional[str] = Field(None, description="Optional target document ID")
+    use_feedback_context: bool = Field(True, description="Whether to include feedback insights in rationale")
+    strategy: Optional[str] = Field("mutation", description="Generation strategy: mutation, refinement, or crossover")
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +386,11 @@ class VersionLineageNode(BaseModel):
     version_number: Optional[int] = None
     name: str
     parent_workflow_id: Optional[str] = None
+    parent_a_version_id: Optional[str] = None
+    parent_b_version_id: Optional[str] = None
+    candidate_type: Optional[str] = "MUTATION"  # "BASELINE" | "MUTATION" | "CROSSOVER"
+    crossover_strategy: Optional[str] = None
+    crossover_map: Optional[Dict[str, str]] = None
     source_run_id: Optional[str] = None
     source_candidate_id: Optional[str] = None
     model_id: str
@@ -282,7 +429,14 @@ class VersionInspectResponse(BaseModel):
     name: str
     description: Optional[str] = None
     parent_workflow_id: Optional[str] = None
+    parent_a_version_id: Optional[str] = None
+    parent_b_version_id: Optional[str] = None
+    candidate_type: Optional[str] = "MUTATION"
+    crossover_strategy: Optional[str] = None
+    crossover_map: Optional[Dict[str, str]] = None
     parent_version: Optional[Dict[str, Any]] = None
+    parent_a_version: Optional[Dict[str, Any]] = None
+    parent_b_version: Optional[Dict[str, Any]] = None
     source_run_id: Optional[str] = None
     source_candidate_id: Optional[str] = None
     model_id: str
@@ -299,3 +453,118 @@ class VersionInspectResponse(BaseModel):
     approved_by: str
     approved_at: str
     created_at: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 7.4 Evolutionary Crossover Schemas
+# ---------------------------------------------------------------------------
+
+class CrossoverInheritanceItem(BaseModel):
+    """Component inheritance mapping detail."""
+    component: str
+    source_parent: str  # "parent_a" | "parent_b"
+    source_version_id: str
+    value: Any
+
+
+class CrossoverPreviewRequest(BaseModel):
+    """Request payload to preview component inheritance and validate crossover configuration."""
+    parent_a_version_id: str = Field(..., description="Version ID or name of Parent A")
+    parent_b_version_id: str = Field(..., description="Version ID or name of Parent B")
+    crossover_map: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "model": "parent_a",
+            "prompt": "parent_b",
+            "retrieval": "parent_a",
+            "generation": "parent_a",
+            "operators": "parent_b",
+        },
+        description="Map of component to parent source ('parent_a' or 'parent_b')",
+    )
+    post_crossover_mutation: Optional[str] = Field(
+        "none",
+        description="Optional post-crossover mutation: 'none', 'prompt', 'retrieval', 'model', 'operator', 'composite'",
+    )
+
+
+class CrossoverPreviewResponse(BaseModel):
+    """Preview of resulting child workflow genome and validation status before execution."""
+    is_valid: bool
+    validation_errors: List[str] = []
+    parent_a: Dict[str, Any]
+    parent_b: Dict[str, Any]
+    crossover_strategy: str = "component_level"
+    crossover_map: Dict[str, str]
+    inheritance_breakdown: List[CrossoverInheritanceItem]
+    resulting_configuration: Dict[str, Any]
+    post_crossover_mutation: Optional[str] = "none"
+
+
+class CrossoverCandidateRequest(BaseModel):
+    """Request payload to construct, validate, and evaluate a crossover candidate workflow."""
+    parent_a_version_id: str = Field(..., description="Version ID of Parent A")
+    parent_b_version_id: str = Field(..., description="Version ID of Parent B")
+    crossover_map: Dict[str, str] = Field(
+        ...,
+        description="Map of component name to parent ('parent_a' or 'parent_b')",
+    )
+    post_crossover_mutation: Optional[str] = Field(
+        "none",
+        description="Optional post-crossover mutation: 'none', 'prompt', 'retrieval', 'model', 'operator', 'composite'",
+    )
+    query: str = Field(
+        ...,
+        min_length=1,
+        description="The evaluation query for testing the crossover child.",
+    )
+    document_id: Optional[str] = Field(None, description="Optional document ID for evaluation.")
+    document_ids: Optional[List[str]] = Field(None, description="Optional list of document IDs for evaluation.")
+    expected_answer: Optional[str] = Field(None, description="Optional ground truth expected answer.")
+    evaluate: bool = Field(True, description="Whether to immediately evaluate the child workflow through Phase 6.")
+
+
+class CrossoverCandidateResponse(BaseModel):
+    """Complete record of an evaluated crossover candidate workflow."""
+    candidate_id: str
+    candidate_type: str = "CROSSOVER"
+    name: str
+    description: str
+    parent_a_version_id: str
+    parent_b_version_id: str
+    parent_a_name: Optional[str] = None
+    parent_b_name: Optional[str] = None
+    parent_a_candidate_id: Optional[str] = None
+    parent_b_candidate_id: Optional[str] = None
+    parent_a_run_id: Optional[str] = None
+    parent_b_run_id: Optional[str] = None
+    crossover_strategy: str = "component_level"
+    crossover_map: Dict[str, str]
+    post_crossover_mutation_strategy: Optional[str] = "none"
+    resulting_workflow_configuration: Dict[str, Any]
+    evaluation_run_id: Optional[str] = None
+    groundedness: Optional[float] = 0.0
+    hallucination: Optional[float] = 0.0
+    cost: float = 0.0
+    cost_per_query: Optional[float] = None
+    total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_ms: float = 0.0
+    llm_latency_ms: Optional[float] = None
+    execution_time_ms: Optional[float] = None
+    is_pareto_optimal: bool
+    pareto_status: str
+    dominated_by: List[str] = []
+    dominates: List[str] = []
+    parent_a_metrics: Optional[Dict[str, Any]] = None
+    parent_b_metrics: Optional[Dict[str, Any]] = None
+    inheritance_breakdown: Optional[List[CrossoverInheritanceItem]] = None
+    claim_breakdown: Optional[List[Dict[str, Any]]] = None
+    raw_details: Optional[Dict[str, Any]] = None
+    created_at: str
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.cost_per_query is None:
+            self.cost_per_query = self.cost
+        if self.llm_latency_ms is None:
+            self.llm_latency_ms = self.latency_ms

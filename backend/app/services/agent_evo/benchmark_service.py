@@ -597,6 +597,12 @@ class BenchmarkService:
             gen_meta = meta.get("generation_metadata") or {}
 
             parent_id = meta.get("parent_workflow_id") or "baseline"
+            candidate_type = gen_meta.get("candidate_type") or "MUTATION"
+            parent_a_id = gen_meta.get("parent_a_version_id") or (parent_id if candidate_type == "CROSSOVER" else None)
+            parent_b_id = gen_meta.get("parent_b_version_id")
+            crossover_strat = gen_meta.get("crossover_strategy")
+            crossover_map = gen_meta.get("crossover_map")
+
             mutation_type = meta.get("mutation_type")
             refinement_op = gen_meta.get("refinement_operation")
             fields_changed = gen_meta.get("fields_changed") or []
@@ -615,6 +621,11 @@ class BenchmarkService:
                 version_number=v.version_number,
                 name=v.name,
                 parent_workflow_id=parent_id,
+                parent_a_version_id=parent_a_id,
+                parent_b_version_id=parent_b_id,
+                candidate_type=candidate_type,
+                crossover_strategy=crossover_strat,
+                crossover_map=crossover_map,
                 source_run_id=v.source_run_id,
                 source_candidate_id=v.source_candidate_id,
                 model_id=v.model_id,
@@ -633,15 +644,31 @@ class BenchmarkService:
             )
             nodes.append(node)
 
-            # Add directed edge from parent to this version
-            edge_label = refinement_op or mutation_type or "mutation"
-            edges.append(
-                VersionLineageEdge(
-                    source=parent_id,
-                    target=v.version_id,
-                    label=edge_label,
+            # Add directed edge(s) from parent(s) to this version
+            if candidate_type == "CROSSOVER" and parent_b_id:
+                edges.append(
+                    VersionLineageEdge(
+                        source=parent_a_id or parent_id,
+                        target=v.version_id,
+                        label="Crossover (Parent A)",
+                    )
                 )
-            )
+                edges.append(
+                    VersionLineageEdge(
+                        source=parent_b_id,
+                        target=v.version_id,
+                        label="Crossover (Parent B)",
+                    )
+                )
+            else:
+                edge_label = refinement_op or mutation_type or "mutation"
+                edges.append(
+                    VersionLineageEdge(
+                        source=parent_id,
+                        target=v.version_id,
+                        label=edge_label,
+                    )
+                )
 
         return VersionLineageResponse(
             total_versions=len(nodes),
@@ -709,6 +736,12 @@ class BenchmarkService:
         before_cfg = gen_meta.get("before_configuration")
         after_cfg = gen_meta.get("after_configuration")
 
+        candidate_type = gen_meta.get("candidate_type") or "MUTATION"
+        parent_a_id = gen_meta.get("parent_a_version_id") or (parent_id if candidate_type == "CROSSOVER" else None)
+        parent_b_id = gen_meta.get("parent_b_version_id")
+        crossover_strat = gen_meta.get("crossover_strategy")
+        crossover_map = gen_meta.get("crossover_map")
+
         # Resolve parent version summary if parent exists in DB
         parent_version_info = None
         if parent_id not in ("baseline", "Production Baseline"):
@@ -723,6 +756,22 @@ class BenchmarkService:
                     "name": p_rec.name,
                     "model_id": p_rec.model_id,
                     "provider": p_rec.provider,
+                }
+
+        parent_a_version_info = parent_version_info
+        parent_b_version_info = None
+        if parent_b_id and parent_b_id not in ("baseline", "Production Baseline"):
+            pb_rec = db.query(WorkflowVersion).filter(
+                (WorkflowVersion.version_id == parent_b_id)
+                | (WorkflowVersion.source_candidate_id == parent_b_id)
+            ).first()
+            if pb_rec:
+                parent_b_version_info = {
+                    "version_id": pb_rec.version_id,
+                    "version_number": pb_rec.version_number,
+                    "name": pb_rec.name,
+                    "model_id": pb_rec.model_id,
+                    "provider": pb_rec.provider,
                 }
 
         approved_at_str = (
@@ -742,7 +791,14 @@ class BenchmarkService:
             name=v.name,
             description=v.description,
             parent_workflow_id=parent_id,
+            parent_a_version_id=parent_a_id,
+            parent_b_version_id=parent_b_id,
+            candidate_type=candidate_type,
+            crossover_strategy=crossover_strat,
+            crossover_map=crossover_map,
             parent_version=parent_version_info,
+            parent_a_version=parent_a_version_info,
+            parent_b_version=parent_b_version_info,
             source_run_id=v.source_run_id,
             source_candidate_id=v.source_candidate_id,
             model_id=v.model_id,

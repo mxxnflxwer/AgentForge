@@ -12,6 +12,7 @@ class MutationType(str, Enum):
     OPERATOR = "operator"
     MIXED = "mixed"
     REFINEMENT = "refinement"
+    CROSSOVER = "crossover"
 
 
 class MutationMetadata(BaseModel):

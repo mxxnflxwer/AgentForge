@@ -158,64 +158,152 @@ class AgentEvoOptimizer:
         expected_answer: Optional[str] = None,
         candidate_count: int = 5,
         seed: Optional[int] = None,
+        strategy: str = "mutation",
         parent_workflow_id: Optional[str] = None,
+        parent_b_workflow_id: Optional[str] = None,
+        crossover_map: Optional[Dict[str, str]] = None,
+        post_crossover_mutation: Optional[str] = "none",
+        refinement_strategy: Optional[str] = None,
         allowed_mutation_types: Optional[List[str]] = None,
         db: Optional[Session] = None,
     ) -> OptimizationReport:
         """
-        Execute full AgentEvo workflow optimization end-to-end.
+        Execute full AgentEvo workflow optimization end-to-end supporting:
+        1. Mutation / Exploration
+        2. Refinement
+        3. Crossover / Recombination
         """
         run_id = f"evo_{uuid.uuid4().hex[:10]}"
-        logger.info(f"Starting AgentEvo optimization run '{run_id}' for query: '{query[:40]}'")
+        logger.info(f"Starting AgentEvo optimization run '{run_id}' [strategy={strategy}] for query: '{query[:40]}'")
 
         archive = ParetoArchive()
+        from app.services.agent_evo.crossover_service import CrossoverService
 
-        # Step 1: Resolve and Evaluate Reference / Parent Workflow
-        parent_wf = get_baseline_workflow()
-        if parent_workflow_id and parent_workflow_id not in ("baseline", "Production Baseline"):
+        # -------------------------------------------------------------------
+        # Strategy: Crossover / Recombination
+        # -------------------------------------------------------------------
+        if strategy == "crossover" or parent_b_workflow_id:
+            parent_a_id = parent_workflow_id or "baseline"
+            parent_b_id = parent_b_workflow_id
+
+            if not parent_b_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Parent B workflow version must be specified for crossover / recombination.",
+                )
+
+            if parent_a_id == parent_b_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Parent A and Parent B cannot be the same workflow version. Please select two distinct parents.",
+                )
+
+            parent_a_wf, a_id, _, a_name, _, _, _ = CrossoverService.resolve_parent(parent_a_id, db=db)
+            parent_b_wf, b_id, _, b_name, _, _, _ = CrossoverService.resolve_parent(parent_b_id, db=db)
+
+            # Step 1: Evaluate Reference Parent A
+            logger.info(f"Evaluating reference Parent A '{parent_a_wf.workflow_id}'...")
+            baseline_evaluated: EvaluatedCandidate = await EvaluatorAdapter.evaluate_candidate(
+                workflow=parent_a_wf,
+                query=query,
+                user_id=user_id,
+                document_id=document_id,
+                expected_answer=expected_answer,
+                db=db,
+            )
+            baseline_evaluated.candidate_id = parent_a_wf.workflow_id
+            archive.add_candidate(baseline_evaluated)
+
+            # Step 1b: Evaluate Reference Parent B
+            logger.info(f"Evaluating reference Parent B '{parent_b_wf.workflow_id}'...")
+            parent_b_evaluated: EvaluatedCandidate = await EvaluatorAdapter.evaluate_candidate(
+                workflow=parent_b_wf,
+                query=query,
+                user_id=user_id,
+                document_id=document_id,
+                expected_answer=expected_answer,
+                db=db,
+            )
+            parent_b_evaluated.candidate_id = parent_b_wf.workflow_id
+            archive.add_candidate(parent_b_evaluated)
+
+            # Step 2: Assemble Recombined Child Genome
+            crossover_map_to_use = crossover_map or {
+                "retrieval": "parent_a",
+                "prompt": "parent_b",
+                "model": "parent_a",
+                "generation": "parent_a",
+                "operators": "parent_b",
+            }
+            child_wf, inheritance_items = CrossoverService.assemble_child_genome(
+                parent_a_wf=parent_a_wf,
+                parent_b_wf=parent_b_wf,
+                parent_a_id=a_id,
+                parent_b_id=b_id,
+                crossover_map=crossover_map_to_use,
+                post_mutation=post_crossover_mutation or "none",
+            )
+
+            # Apply Optional Post-Crossover Mutation
+            if post_crossover_mutation and post_crossover_mutation != "none":
+                child_wf = CrossoverService._apply_post_crossover_mutation(child_wf, post_crossover_mutation)
+
+            candidates_to_eval = [child_wf]
+
+        # -------------------------------------------------------------------
+        # Strategy: Mutation / Exploration or Refinement
+        # -------------------------------------------------------------------
+        else:
+            # Step 1: Resolve and Evaluate Reference / Parent Workflow
+            parent_wf = get_baseline_workflow()
+            if parent_workflow_id and parent_workflow_id not in ("baseline", "Production Baseline"):
+                if db:
+                    found_version = db.query(WorkflowVersion).filter(
+                        (WorkflowVersion.version_id == parent_workflow_id)
+                        | (WorkflowVersion.id == parent_workflow_id)
+                        | (WorkflowVersion.source_candidate_id == parent_workflow_id)
+                    ).first()
+                    if found_version and isinstance(found_version.configuration, dict):
+                        parent_wf = AgentWorkflow.from_dict(found_version.configuration)
+                        parent_wf.workflow_id = found_version.version_id
+                        parent_wf.name = found_version.name
+                        logger.info(f"Loaded parent workflow '{found_version.version_id}' ({found_version.name}) for run '{run_id}'.")
+                    else:
+                        logger.warning(f"Parent workflow '{parent_workflow_id}' not found in DB; using baseline.")
+
+            logger.info(f"Evaluating reference workflow '{parent_wf.workflow_id}'...")
+            baseline_evaluated = await EvaluatorAdapter.evaluate_candidate(
+                workflow=parent_wf,
+                query=query,
+                user_id=user_id,
+                document_id=document_id,
+                expected_answer=expected_answer,
+                db=db,
+            )
+            baseline_evaluated.candidate_id = parent_wf.workflow_id
+            archive.add_candidate(baseline_evaluated)
+
+            # Step 2: Generate Diverse Mutated / Refined Candidate Workflows
+            existing_versions_configs = []
             if db:
-                found_version = db.query(WorkflowVersion).filter(
-                    (WorkflowVersion.version_id == parent_workflow_id)
-                    | (WorkflowVersion.id == parent_workflow_id)
-                    | (WorkflowVersion.source_candidate_id == parent_workflow_id)
-                ).first()
-                if found_version and isinstance(found_version.configuration, dict):
-                    parent_wf = AgentWorkflow.from_dict(found_version.configuration)
-                    parent_wf.workflow_id = found_version.version_id
-                    parent_wf.name = found_version.name
-                    logger.info(f"Loaded parent workflow '{found_version.version_id}' ({found_version.name}) for run '{run_id}'.")
-                else:
-                    logger.warning(f"Parent workflow '{parent_workflow_id}' not found in DB; using baseline.")
+                try:
+                    db_versions = db.query(WorkflowVersion).all()
+                    existing_versions_configs = [v.configuration for v in db_versions if v.configuration]
+                except Exception as e:
+                    logger.warning(f"Failed to query existing workflow versions for duplicate prevention: {e}")
 
-        logger.info(f"Evaluating reference workflow '{parent_wf.workflow_id}'...")
-        baseline_evaluated: EvaluatedCandidate = await EvaluatorAdapter.evaluate_candidate(
-            workflow=parent_wf,
-            query=query,
-            user_id=user_id,
-            document_id=document_id,
-            expected_answer=expected_answer,
-            db=db,
-        )
-        baseline_evaluated.candidate_id = parent_wf.workflow_id
-        archive.add_candidate(baseline_evaluated)
+            types_to_use = allowed_mutation_types
+            if strategy == "refinement" and not types_to_use:
+                types_to_use = ["refinement"]
 
-        # Step 2: Generate Diverse Mutated Candidate Workflows
-        existing_versions_configs = []
-        if db:
-            try:
-                db_versions = db.query(WorkflowVersion).all()
-                existing_versions_configs = [v.configuration for v in db_versions if v.configuration]
-            except Exception as e:
-                logger.warning(f"Failed to query existing workflow versions for duplicate prevention: {e}")
-
-        candidates_to_eval = generate_candidates(
-            baseline=parent_wf,
-            count=candidate_count,
-            seed=seed,
-            allowed_types=allowed_mutation_types,
-            existing_versions=existing_versions_configs,
-        )
-        logger.info(f"Generated {len(candidates_to_eval)} mutated candidate workflows.")
+            candidates_to_eval = generate_candidates(
+                baseline=parent_wf,
+                count=candidate_count,
+                seed=seed,
+                allowed_types=types_to_use,
+                existing_versions=existing_versions_configs,
+            )
+            logger.info(f"Generated {len(candidates_to_eval)} candidate workflows.")
 
         # Step 3: Evaluate Candidates Sequentially / Concurrently
         for cand_wf in candidates_to_eval:

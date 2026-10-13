@@ -7,11 +7,21 @@ from app.services.agent_evo.report import OptimizationReport, ParetoTradeOff
 
 class OptimizationRunRequest(BaseModel):
     """Request payload to initiate an AgentEvo workflow optimization run."""
-    query: str = Field(
-        ...,
-        min_length=1,
-        description="The target query to optimize workflows for.",
+    query: Optional[str] = Field(
+        None,
+        description="Target query to optimize workflows for (single-query mode).",
         examples=["What is the primary clinical diagnosis and assessment for this patient?"],
+    )
+    workload: Optional[List[str]] = Field(
+        None,
+        description="Optional evaluation workload containing multiple representative queries.",
+        examples=[
+            "What is the primary clinical diagnosis and assessment for this patient?",
+            "What medications were prescribed for this patient?",
+            "What are the abnormal laboratory findings?",
+            "What is the patient's treatment plan?",
+            "What is the relevant cardiac history?",
+        ],
     )
     document_id: Optional[str] = Field(
         None,
@@ -22,11 +32,21 @@ class OptimizationRunRequest(BaseModel):
         description="Optional ground truth reference answer for accuracy calculation.",
         examples=["Stable angina pectoris, likely related to underlying coronary artery disease."],
     )
+    expected_answers: Optional[List[Optional[str]]] = Field(
+        None,
+        description="Optional list of ground truth reference answers matching each query in the evaluation workload.",
+    )
     candidate_count: int = Field(
         5,
         ge=1,
         le=10,
         description="Number of candidate workflow mutations to generate and evaluate.",
+    )
+    max_iterations: int = Field(
+        1,
+        ge=1,
+        le=5,
+        description="Maximum evolutionary loop iterations for adaptive optimization.",
     )
     seed: Optional[int] = Field(
         None,
@@ -34,7 +54,7 @@ class OptimizationRunRequest(BaseModel):
     )
     strategy: Optional[str] = Field(
         "mutation",
-        description="Candidate generation strategy: 'mutation' (Exploration), 'refinement' (Targeted), 'crossover' (Recombination).",
+        description="Candidate generation strategy: 'mutation' (Exploration), 'refinement' (Targeted), 'crossover' (Recombination), 'adaptive' (Adaptive Scheduler).",
     )
     parent_workflow_id: Optional[str] = Field(
         None,

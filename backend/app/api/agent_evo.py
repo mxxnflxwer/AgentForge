@@ -111,12 +111,24 @@ async def optimize_workflow(
     All strategies produce candidates evaluated through Phase 6 and Pareto analysis.
     """
     optimizer = get_agent_evo_optimizer()
+    target_query = request.query
+    if not target_query and not request.workload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either 'query' or 'workload' must be provided for AgentEvo optimization.",
+        )
+    if not target_query and request.workload:
+        target_query = request.workload[0]
+
     report = await optimizer.run_optimization(
-        query=request.query,
+        query=target_query,
         user_id=current_user.id,
+        workload=request.workload,
         document_id=request.document_id,
         expected_answer=request.expected_answer,
+        expected_answers=request.expected_answers,
         candidate_count=request.candidate_count,
+        max_iterations=request.max_iterations,
         seed=request.seed,
         strategy=request.strategy or "mutation",
         parent_workflow_id=request.parent_workflow_id,

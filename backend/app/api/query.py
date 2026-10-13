@@ -126,6 +126,9 @@ async def query_answer(
     active_version_id = "baseline"
     context_compression = False
     effective_top_k = request.top_k
+    effective_model = request.model
+    prompt_template_name = "default"
+    custom_instructions = None
 
     if db:
         try:
@@ -136,6 +139,10 @@ async def query_answer(
                 cfg = active_wf_info.configuration or {}
                 effective_top_k = cfg.get("retrieval", {}).get("top_k", request.top_k)
                 context_compression = cfg.get("execution", {}).get("context_compression", False)
+                if request.model == "gemini" and cfg.get("model", {}).get("model_id"):
+                    effective_model = cfg.get("model", {}).get("model_id")
+                prompt_template_name = cfg.get("prompt", {}).get("template_name", "default")
+                custom_instructions = cfg.get("prompt", {}).get("custom_instructions")
         except Exception as e:
             logger.warning(f"Could not load active workflow for query answer: {e}")
 
@@ -149,8 +156,8 @@ async def query_answer(
     retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
 
     llm_router = get_llm_router()
-    adapter = llm_router.get_adapter(request.model) or llm_router.get_adapter("gemini")
-    model_display_name = adapter.name if adapter else request.model
+    adapter = llm_router.get_adapter(effective_model) or llm_router.get_adapter("gemini")
+    model_display_name = adapter.name if adapter else effective_model
 
     eval_engine = get_evaluation_engine()
 
@@ -191,10 +198,18 @@ async def query_answer(
         from app.services.agent_evo.evaluator_adapter import apply_context_compression_operator
         context_str = apply_context_compression_operator(context_str)
 
-    llm_resp = await llm_router.generate_single(
-        model_key=request.model,
+    from app.services.agent_evo.evaluator_adapter import build_candidate_prompt
+    sys_prompt = build_candidate_prompt(
+        template_name=prompt_template_name,
         query=request.query,
         context=context_str,
+        custom_instructions=custom_instructions,
+    )
+
+    llm_resp = await adapter.generate(
+        query=request.query,
+        context=context_str,
+        system_prompt=sys_prompt,
     )
 
     # Individual pipeline execution time: retrieval + LLM generation

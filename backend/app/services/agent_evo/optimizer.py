@@ -154,9 +154,12 @@ class AgentEvoOptimizer:
         self,
         query: str,
         user_id: str,
+        workload: Optional[List[str]] = None,
         document_id: Optional[str] = None,
         expected_answer: Optional[str] = None,
+        expected_answers: Optional[List[Optional[str]]] = None,
         candidate_count: int = 5,
+        max_iterations: int = 1,
         seed: Optional[int] = None,
         strategy: str = "mutation",
         parent_workflow_id: Optional[str] = None,
@@ -169,28 +172,121 @@ class AgentEvoOptimizer:
     ) -> OptimizationReport:
         """
         Execute full AgentEvo workflow optimization end-to-end supporting:
-        1. Mutation / Exploration
-        2. Refinement
-        3. Crossover / Recombination
+        1. Single-Query or Multi-Query Workload evaluation.
+        2. Mutation / Exploration
+        3. Targeted Refinement
+        4. Crossover / Recombination
+        5. Adaptive Evolutionary Scheduling
         """
         run_id = f"evo_{uuid.uuid4().hex[:10]}"
-        logger.info(f"Starting AgentEvo optimization run '{run_id}' [strategy={strategy}] for query: '{query[:40]}'")
+        
+        # Determine evaluation workload queries
+        queries_to_eval = [q.strip() for q in workload if q.strip()] if workload else [query.strip()]
+        is_workload = len(queries_to_eval) > 1
+        primary_query = queries_to_eval[0] if queries_to_eval else query
+
+        logger.info(
+            f"Starting AgentEvo optimization run '{run_id}' [strategy={strategy}, workload_size={len(queries_to_eval)}] for query: '{primary_query[:40]}'"
+        )
 
         archive = ParetoArchive()
         from app.services.agent_evo.crossover_service import CrossoverService
+        from app.services.agent_evo.scheduler import AgentEvoScheduler, SchedulerDecision
+
+        scheduler_decision_dict: Optional[Dict[str, Any]] = None
+        effective_strategy = strategy
+
+        # Helper evaluation runner that automatically switches between single-query and workload evaluation
+        async def evaluate_wf(wf: AgentWorkflow) -> EvaluatedCandidate:
+            if is_workload:
+                return await EvaluatorAdapter.evaluate_candidate_workload(
+                    workflow=wf,
+                    queries=queries_to_eval,
+                    user_id=user_id,
+                    document_id=document_id,
+                    expected_answers=expected_answers,
+                    db=db,
+                )
+            else:
+                return await EvaluatorAdapter.evaluate_candidate(
+                    workflow=wf,
+                    query=primary_query,
+                    user_id=user_id,
+                    document_id=document_id,
+                    expected_answer=expected_answer,
+                    db=db,
+                )
+
+        # -------------------------------------------------------------------
+        # Strategy: Adaptive Evolutionary Scheduling
+        # -------------------------------------------------------------------
+        if strategy == "adaptive":
+            # 1. Resolve and Evaluate Baseline first to inform scheduler
+            parent_wf = get_baseline_workflow()
+            if parent_workflow_id and parent_workflow_id not in ("baseline", "Production Baseline"):
+                if db:
+                    found_version = db.query(WorkflowVersion).filter(
+                        (WorkflowVersion.version_id == parent_workflow_id)
+                        | (WorkflowVersion.id == parent_workflow_id)
+                        | (WorkflowVersion.source_candidate_id == parent_workflow_id)
+                    ).first()
+                    if found_version and isinstance(found_version.configuration, dict):
+                        parent_wf = AgentWorkflow.from_dict(found_version.configuration)
+                        parent_wf.workflow_id = found_version.version_id
+                        parent_wf.name = found_version.name
+
+            baseline_evaluated = await evaluate_wf(parent_wf)
+            baseline_evaluated.candidate_id = parent_wf.workflow_id
+            archive.add_candidate(baseline_evaluated)
+
+            # 2. Query available approved versions
+            available_versions = self.list_versions(db=db)
+
+            # 3. Schedule Strategy
+            decision: SchedulerDecision = AgentEvoScheduler.select_strategy(
+                iteration=1,
+                max_iterations=max_iterations,
+                baseline=baseline_evaluated,
+                archive_candidates=archive.all_candidates,
+                available_versions=available_versions,
+                candidate_count=candidate_count,
+            )
+            scheduler_decision_dict = decision.model_dump()
+            effective_strategy = decision.strategy
+            logger.info(
+                f"Adaptive Scheduler selected stage '{decision.stage_name}' ({decision.strategy}): {decision.reason}"
+            )
+
+            # Override parameters with scheduler decisions
+            if decision.strategy == "crossover":
+                parent_a_id = decision.parameters.get("parent_workflow_id", "baseline")
+                parent_b_id = decision.parameters.get("parent_b_workflow_id")
+                crossover_map_to_use = decision.parameters.get("crossover_map")
+                post_crossover_mutation = decision.parameters.get("post_crossover_mutation", "none")
+            elif decision.strategy == "refinement":
+                refinement_strategy = decision.parameters.get("refinement_strategy", "all")
+                allowed_mutation_types = ["refinement"]
+            elif decision.strategy == "mutation":
+                allowed_mutation_types = decision.parameters.get("allowed_mutation_types", ["all"])
 
         # -------------------------------------------------------------------
         # Strategy: Crossover / Recombination
         # -------------------------------------------------------------------
-        if strategy == "crossover" or parent_b_workflow_id:
+        if effective_strategy == "crossover" or (strategy != "adaptive" and parent_b_workflow_id):
             parent_a_id = parent_workflow_id or "baseline"
             parent_b_id = parent_b_workflow_id
 
             if not parent_b_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Parent B workflow version must be specified for crossover / recombination.",
-                )
+                # If crossover was selected but no Parent B was given, choose first available approved version
+                avail_vers = self.list_versions(db=db)
+                distinct_ver = next((v for v in avail_vers if v.version_id != parent_a_id), None)
+                if distinct_ver:
+                    parent_b_id = distinct_ver.version_id
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Parent B workflow version must be specified for crossover / recombination.",
+                    )
 
             if parent_a_id == parent_b_id:
                 raise HTTPException(
@@ -203,27 +299,13 @@ class AgentEvoOptimizer:
 
             # Step 1: Evaluate Reference Parent A
             logger.info(f"Evaluating reference Parent A '{parent_a_wf.workflow_id}'...")
-            baseline_evaluated: EvaluatedCandidate = await EvaluatorAdapter.evaluate_candidate(
-                workflow=parent_a_wf,
-                query=query,
-                user_id=user_id,
-                document_id=document_id,
-                expected_answer=expected_answer,
-                db=db,
-            )
+            baseline_evaluated = await evaluate_wf(parent_a_wf)
             baseline_evaluated.candidate_id = parent_a_wf.workflow_id
             archive.add_candidate(baseline_evaluated)
 
             # Step 1b: Evaluate Reference Parent B
             logger.info(f"Evaluating reference Parent B '{parent_b_wf.workflow_id}'...")
-            parent_b_evaluated: EvaluatedCandidate = await EvaluatorAdapter.evaluate_candidate(
-                workflow=parent_b_wf,
-                query=query,
-                user_id=user_id,
-                document_id=document_id,
-                expected_answer=expected_answer,
-                db=db,
-            )
+            parent_b_evaluated = await evaluate_wf(parent_b_wf)
             parent_b_evaluated.candidate_id = parent_b_wf.workflow_id
             archive.add_candidate(parent_b_evaluated)
 
@@ -254,7 +336,7 @@ class AgentEvoOptimizer:
         # Strategy: Mutation / Exploration or Refinement
         # -------------------------------------------------------------------
         else:
-            # Step 1: Resolve and Evaluate Reference / Parent Workflow
+            # Step 1: Resolve and Evaluate Reference / Parent Workflow (if not already evaluated in adaptive step)
             parent_wf = get_baseline_workflow()
             if parent_workflow_id and parent_workflow_id not in ("baseline", "Production Baseline"):
                 if db:
@@ -271,17 +353,13 @@ class AgentEvoOptimizer:
                     else:
                         logger.warning(f"Parent workflow '{parent_workflow_id}' not found in DB; using baseline.")
 
-            logger.info(f"Evaluating reference workflow '{parent_wf.workflow_id}'...")
-            baseline_evaluated = await EvaluatorAdapter.evaluate_candidate(
-                workflow=parent_wf,
-                query=query,
-                user_id=user_id,
-                document_id=document_id,
-                expected_answer=expected_answer,
-                db=db,
-            )
-            baseline_evaluated.candidate_id = parent_wf.workflow_id
-            archive.add_candidate(baseline_evaluated)
+            if not archive.all_candidates:
+                logger.info(f"Evaluating reference workflow '{parent_wf.workflow_id}'...")
+                baseline_evaluated = await evaluate_wf(parent_wf)
+                baseline_evaluated.candidate_id = parent_wf.workflow_id
+                archive.add_candidate(baseline_evaluated)
+            else:
+                baseline_evaluated = archive.all_candidates[0]
 
             # Step 2: Generate Diverse Mutated / Refined Candidate Workflows
             existing_versions_configs = []
@@ -293,7 +371,7 @@ class AgentEvoOptimizer:
                     logger.warning(f"Failed to query existing workflow versions for duplicate prevention: {e}")
 
             types_to_use = allowed_mutation_types
-            if strategy == "refinement" and not types_to_use:
+            if effective_strategy == "refinement" and not types_to_use:
                 types_to_use = ["refinement"]
 
             candidates_to_eval = generate_candidates(
@@ -305,22 +383,15 @@ class AgentEvoOptimizer:
             )
             logger.info(f"Generated {len(candidates_to_eval)} candidate workflows.")
 
-        # Step 3: Evaluate Candidates Sequentially / Concurrently
+        # Step 3: Evaluate Candidates Sequentially across single-query or workload
         for cand_wf in candidates_to_eval:
             try:
-                evaluated_cand = await EvaluatorAdapter.evaluate_candidate(
-                    workflow=cand_wf,
-                    query=query,
-                    user_id=user_id,
-                    document_id=document_id,
-                    expected_answer=expected_answer,
-                    db=db,
-                )
+                evaluated_cand = await evaluate_wf(cand_wf)
                 archive.add_candidate(evaluated_cand)
             except Exception as e:
                 logger.error(f"Unexpected evaluation failure for candidate '{cand_wf.workflow_id}': {e}")
 
-        # Step 4: Recompute Final Pareto Frontier
+        # Step 4: Recompute Final Pareto Frontier based on aggregate Groundedness & Cost
         pareto_frontier = archive.recompute_frontier()
         all_evaluated = archive.all_candidates
 
@@ -331,10 +402,14 @@ class AgentEvoOptimizer:
         # Step 5: Generate Report
         report = generate_optimization_report(
             run_id=run_id,
-            query=query,
+            query=primary_query,
             baseline=baseline_evaluated,
             all_candidates=all_evaluated,
             pareto_candidates=pareto_frontier,
+            is_workload=is_workload,
+            workload_queries=queries_to_eval,
+            strategy=strategy,
+            scheduler_decision=scheduler_decision_dict,
         )
 
         # Store in run registry

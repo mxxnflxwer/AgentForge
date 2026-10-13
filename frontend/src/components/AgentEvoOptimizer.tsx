@@ -62,6 +62,12 @@ export interface CandidateMetrics {
   execution_time_ms: number
   status: string
   error_message?: string | null
+  evaluation_count?: number
+  avg_groundedness?: number | null
+  avg_hallucination?: number | null
+  avg_cost_per_query?: number | null
+  avg_tokens_per_query?: number | null
+  avg_latency_ms?: number | null
   raw_details?: Record<string, any>
 }
 
@@ -100,6 +106,18 @@ export interface OptimizationReport {
   executive_summary: string
   human_approval_required: boolean
   approved_workflow_id?: string | null
+  is_workload?: boolean
+  workload_queries?: string[]
+  total_workflow_evaluations?: number
+  strategy?: string
+  scheduler_decision?: {
+    stage: string
+    reason: string
+    rationale?: string
+    stagnation_counter?: number
+    pareto_archive_size?: number
+  } | null
+  scope_claim?: string
 }
 
 export interface WorkflowVersion {
@@ -411,6 +429,45 @@ const PRESET_QUERIES: Record<PresetType, { label: string; query: string }> = {
   },
 }
 
+type WorkloadPresetType = 'clinical_comprehensive' | 'diagnostic_triage' | 'medication_safety' | 'custom_workload'
+
+const WORKLOAD_PRESETS: Record<WorkloadPresetType, { label: string; description: string; queries: string[] }> = {
+  clinical_comprehensive: {
+    label: 'Clinical Assessment Suite (5 Queries)',
+    description: 'Comprehensive 5-query panel spanning diagnosis, medications, labs, treatment plan, and cardiac history.',
+    queries: [
+      'What is the primary clinical diagnosis and assessment for this patient?',
+      'What medications were prescribed for this patient?',
+      'What are the abnormal laboratory findings?',
+      'What is the patient\'s treatment plan?',
+      'What is the relevant cardiac history?',
+    ],
+  },
+  diagnostic_triage: {
+    label: 'Diagnostic Triage Panel (3 Queries)',
+    description: 'Focused 3-query evaluation covering primary diagnosis, lab abnormalities, and immediate clinical plan.',
+    queries: [
+      'What is the primary clinical diagnosis and assessment for this patient?',
+      'What are the abnormal laboratory findings?',
+      'What is the patient\'s treatment plan?',
+    ],
+  },
+  medication_safety: {
+    label: 'Pharmacotherapy & Safety (3 Queries)',
+    description: 'Safety-oriented 3-query evaluation on prescribed drugs, contraindications, and monitoring.',
+    queries: [
+      'What medications were prescribed for this patient?',
+      'Are there any contraindications or drug interactions noted?',
+      'What follow-up monitoring is recommended?',
+    ],
+  },
+  custom_workload: {
+    label: 'Custom Evaluation Workload',
+    description: 'Define your own representative multi-query workload for multi-query validation.',
+    queries: [],
+  },
+}
+
 export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   apiBase,
   documents,
@@ -421,8 +478,13 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   // Top-level Navigation Sub-Tabs
   const [activeMainTab, setActiveMainTab] = useState<'optimizer' | 'lifecycle' | 'benchmark' | 'lineage'>('optimizer')
 
-  // Candidate Generation Strategy Selector inside Optimizer: Mutation, Refinement, Crossover
-  const [candidateStrategy, setCandidateStrategy] = useState<'mutation' | 'refinement' | 'crossover'>('mutation')
+  // Evaluation Mode: Single Query vs Multi-Query Workload
+  const [evalMode, setEvalMode] = useState<'single' | 'workload'>('single')
+  const [activeWorkloadPreset, setActiveWorkloadPreset] = useState<WorkloadPresetType>('clinical_comprehensive')
+  const [workloadText, setWorkloadText] = useState<string>(WORKLOAD_PRESETS.clinical_comprehensive.queries.join('\n'))
+
+  // Candidate Generation Strategy Selector inside Optimizer: Adaptive, Mutation, Refinement, Crossover
+  const [candidateStrategy, setCandidateStrategy] = useState<'adaptive' | 'mutation' | 'refinement' | 'crossover'>('adaptive')
 
   // Optimization Setup State
   const [activePreset, setActivePreset] = useState<PresetType>('clinical')
@@ -669,6 +731,13 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
     }
   }
 
+  const handleWorkloadPresetChange = (preset: WorkloadPresetType) => {
+    setActiveWorkloadPreset(preset)
+    if (preset !== 'custom_workload') {
+      setWorkloadText(WORKLOAD_PRESETS[preset].queries.join('\n'))
+    }
+  }
+
   const handleBenchPresetChange = (preset: PresetType) => {
     setBenchPreset(preset)
     if (preset !== 'custom') {
@@ -710,9 +779,23 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
 
   const handleRunOptimization = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
-    if (!query.trim()) {
-      setError('Please provide an evaluation query.')
-      return
+
+    let targetQueries: string[] = []
+    if (evalMode === 'workload') {
+      targetQueries = workloadText
+        .split('\n')
+        .map((q) => q.trim())
+        .filter((q) => q.length > 0)
+      if (targetQueries.length === 0) {
+        setError('Please provide at least one query in the Evaluation Workload.')
+        return
+      }
+    } else {
+      if (!query.trim()) {
+        setError('Please provide a Target Evaluation Query.')
+        return
+      }
+      targetQueries = [query.trim()]
     }
 
     if (candidateStrategy === 'crossover' && crossoverParentA === crossoverParentB) {
@@ -729,8 +812,11 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
 
     try {
       const payload: Record<string, any> = {
-        query: query.trim(),
+        query: targetQueries[0],
         strategy: candidateStrategy,
+      }
+      if (evalMode === 'workload') {
+        payload.workload = targetQueries
       }
       if (selectedDocId) {
         payload.document_id = selectedDocId
@@ -756,6 +842,11 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
         payload.parent_b_workflow_id = crossoverParentB
         payload.crossover_map = crossoverMap
         payload.post_crossover_mutation = postCrossoverMutation
+      } else if (candidateStrategy === 'adaptive') {
+        payload.candidate_count = generatedCandidateCount
+        if (selectedParentWorkflowId && selectedParentWorkflowId !== 'baseline') {
+          payload.parent_workflow_id = selectedParentWorkflowId
+        }
       }
 
       const res = await fetch(`${apiBase}/api/agent-evo/optimize`, {
@@ -1051,40 +1142,129 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
             </div>
 
             <form onSubmit={handleRunOptimization} className="evo-form">
-              {/* Preset Selector */}
+              {/* Evaluation Mode Toggle: Single Query vs Evaluation Workload */}
               <div className="evo-form-group">
-                <label className="evo-label">Evaluation Preset</label>
-                <div className="evo-preset-buttons">
-                  {(Object.keys(PRESET_QUERIES) as PresetType[]).map((presetKey) => (
-                    <button
-                      key={presetKey}
-                      type="button"
-                      onClick={() => handlePresetChange(presetKey)}
-                      className={`evo-preset-btn ${activePreset === presetKey ? 'active' : ''}`}
-                      disabled={running}
-                    >
-                      {PRESET_QUERIES[presetKey].label}
-                    </button>
-                  ))}
+                <label className="evo-label">Evaluation Mode</label>
+                <div className="evo-strat-tabs" style={{ marginBottom: 12 }}>
+                  <button
+                    type="button"
+                    className={`evo-strat-tab-btn ${evalMode === 'single' ? 'active' : ''}`}
+                    onClick={() => setEvalMode('single')}
+                    disabled={running}
+                    style={{ flex: 1 }}
+                  >
+                    <span>🎯</span>
+                    <div>
+                      <strong>Single Query Mode</strong>
+                      <div className="evo-cell-sub">Evaluate candidates on a single target query</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className={`evo-strat-tab-btn ${evalMode === 'workload' ? 'active' : ''}`}
+                    onClick={() => setEvalMode('workload')}
+                    disabled={running}
+                    style={{ flex: 1 }}
+                  >
+                    <span>📚</span>
+                    <div>
+                      <strong>Evaluation Workload Mode</strong>
+                      <div className="evo-cell-sub">Evaluate candidates across multi-query workload</div>
+                    </div>
+                  </button>
                 </div>
               </div>
 
-              {/* Evaluation Query Input */}
-              <div className="evo-form-group">
-                <label htmlFor="evo-query-input" className="evo-label">Target Evaluation Query</label>
-                <textarea
-                  id="evo-query-input"
-                  className="evo-textarea"
-                  value={query}
-                  onChange={(e) => {
-                    setQuery(e.target.value)
-                    setActivePreset('custom')
-                  }}
-                  rows={2}
-                  placeholder="Enter medical query to evaluate candidates against..."
-                  disabled={running}
-                />
-              </div>
+              {/* SINGLE QUERY MODE CONTROLS */}
+              {evalMode === 'single' ? (
+                <>
+                  <div className="evo-form-group">
+                    <label className="evo-label">Single Query Preset</label>
+                    <div className="evo-preset-buttons">
+                      {(Object.keys(PRESET_QUERIES) as PresetType[]).map((presetKey) => (
+                        <button
+                          key={presetKey}
+                          type="button"
+                          onClick={() => handlePresetChange(presetKey)}
+                          className={`evo-preset-btn ${activePreset === presetKey ? 'active' : ''}`}
+                          disabled={running}
+                        >
+                          {PRESET_QUERIES[presetKey].label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="evo-form-group">
+                    <label htmlFor="evo-query-input" className="evo-label">Target Evaluation Query</label>
+                    <textarea
+                      id="evo-query-input"
+                      className="evo-textarea"
+                      value={query}
+                      onChange={(e) => {
+                        setQuery(e.target.value)
+                        setActivePreset('custom')
+                      }}
+                      rows={2}
+                      placeholder="Enter single medical query to evaluate candidates against..."
+                      disabled={running}
+                    />
+                    <span className="evo-cell-sub" style={{ marginTop: 4 }}>
+                      Single-query evaluation optimizes parameters specifically for this query.
+                    </span>
+                  </div>
+                </>
+              ) : (
+                /* EVALUATION WORKLOAD MODE CONTROLS */
+                <>
+                  <div className="evo-form-group">
+                    <label className="evo-label">Workload Preset</label>
+                    <div className="evo-preset-buttons">
+                      {(Object.keys(WORKLOAD_PRESETS) as WorkloadPresetType[]).map((presetKey) => (
+                        <button
+                          key={presetKey}
+                          type="button"
+                          onClick={() => handleWorkloadPresetChange(presetKey)}
+                          className={`evo-preset-btn ${activeWorkloadPreset === presetKey ? 'active' : ''}`}
+                          disabled={running}
+                        >
+                          {WORKLOAD_PRESETS[presetKey].label}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="evo-cell-sub" style={{ marginTop: 4 }}>
+                      {WORKLOAD_PRESETS[activeWorkloadPreset].description}
+                    </span>
+                  </div>
+
+                  <div className="evo-form-group">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <label htmlFor="evo-workload-input" className="evo-label" style={{ margin: 0 }}>
+                        Evaluation Workload (One Query per Line)
+                      </label>
+                      <span className="evo-version-tag" style={{ background: '#3b82f6' }}>
+                        {workloadText.split('\n').filter((q) => q.trim().length > 0).length} Representative Queries
+                      </span>
+                    </div>
+                    <textarea
+                      id="evo-workload-input"
+                      className="evo-textarea"
+                      value={workloadText}
+                      onChange={(e) => {
+                        setWorkloadText(e.target.value)
+                        setActiveWorkloadPreset('custom_workload')
+                      }}
+                      rows={5}
+                      placeholder="Enter one evaluation query per line..."
+                      disabled={running}
+                      style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
+                    />
+                    <span className="evo-cell-sub" style={{ marginTop: 4 }}>
+                      Every workflow candidate will be evaluated across all {workloadText.split('\n').filter((q) => q.trim().length > 0).length} queries. Aggregate averages are used for Pareto comparison.
+                    </span>
+                  </div>
+                </>
+              )}
 
               {/* Document Selection */}
               <div className="evo-form-group">
@@ -1105,10 +1285,22 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                 </select>
               </div>
 
-              {/* Strategy Selector: Mutation / Exploration | Refinement | Crossover / Recombination */}
+              {/* Strategy Selector: Adaptive | Mutation / Exploration | Refinement | Crossover / Recombination */}
               <div className="evo-form-group" style={{ marginTop: 16 }}>
                 <label className="evo-label">Candidate Generation Strategy</label>
                 <div className="evo-strat-tabs">
+                  <button
+                    type="button"
+                    className={`evo-strat-tab-btn ${candidateStrategy === 'adaptive' ? 'active' : ''}`}
+                    onClick={() => setCandidateStrategy('adaptive')}
+                    disabled={running}
+                  >
+                    <span>🤖</span>
+                    <div>
+                      <strong>Adaptive Strategy</strong>
+                      <div className="evo-cell-sub">Deterministic Evolutionary Scheduler</div>
+                    </div>
+                  </button>
                   <button
                     type="button"
                     className={`evo-strat-tab-btn ${candidateStrategy === 'mutation' ? 'active' : ''}`}
@@ -1147,6 +1339,54 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* STRATEGY 0: ADAPTIVE SCHEDULER CONFIGURATION */}
+              {candidateStrategy === 'adaptive' && (
+                <div className="evo-strategy-config-box">
+                  <div className="evo-form-row">
+                    <div className="evo-form-group evo-col-half">
+                      <label htmlFor="evo-adaptive-parent" className="evo-label">Initial Parent Workflow</label>
+                      <select
+                        id="evo-adaptive-parent"
+                        className="evo-select"
+                        value={selectedParentWorkflowId}
+                        onChange={(e) => setSelectedParentWorkflowId(e.target.value)}
+                        disabled={running}
+                      >
+                        <option value="baseline">Production Baseline (Default Reference)</option>
+                        {workflowVersions.map((v) => (
+                          <option key={v.version_id} value={v.version_id}>
+                            v{v.version_number}: {v.name} ({v.model_id}) [{v.status}]
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="evo-form-group evo-col-half">
+                      <label htmlFor="evo-adaptive-count" className="evo-label">Candidates per Iteration ({generatedCandidateCount})</label>
+                      <input
+                        id="evo-adaptive-count"
+                        type="range"
+                        min={2}
+                        max={6}
+                        value={generatedCandidateCount}
+                        onChange={(e) => setGeneratedCandidateCount(Number(e.target.value))}
+                        className="evo-slider"
+                        disabled={running}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="evo-summary-box" style={{ marginTop: 10, background: 'rgba(59, 130, 246, 0.06)', borderLeft: '3px solid #3b82f6' }}>
+                    <div style={{ fontWeight: 600, color: '#93c5fd', marginBottom: 4 }}>
+                      🤖 AgentEvo Adapter Scheduler (Deterministic Policy)
+                    </div>
+                    <p style={{ margin: 0, fontSize: '0.84rem', color: '#cbd5e1', lineHeight: 1.5 }}>
+                      The adaptive scheduler analyzes optimization history, Pareto frontier progress, groundedness retention, and stagnation to select the optimal evolutionary mechanism (Mutation, Refinement, or Crossover).
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* STRATEGY 1: MUTATION / EXPLORATION CONFIGURATION */}
               {candidateStrategy === 'mutation' && (
@@ -1514,7 +1754,23 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     <h2 className="evo-report-title">AgentEvo Optimization Run</h2>
                     <span className="evo-run-id-pill">Run: {report.run_id}</span>
                   </div>
-                  <p className="evo-report-query">Query: "{report.query}"</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
+                    <p className="evo-report-query" style={{ margin: 0 }}>
+                      {report.is_workload ? `Workload (${report.workload_queries?.length || 1} queries)` : `Query: "${report.query}"`}
+                    </p>
+                    <span
+                      className="evo-status-pill"
+                      style={{
+                        background: 'rgba(59, 130, 246, 0.15)',
+                        borderColor: '#3b82f6',
+                        color: '#93c5fd',
+                        fontSize: '0.8rem',
+                        padding: '2px 8px',
+                      }}
+                    >
+                      🎯 {report.scope_claim || (report.is_workload ? 'Optimized for the selected evaluation workload.' : 'Optimized for the selected evaluation query.')}
+                    </span>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -1527,6 +1783,36 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
 
               {!isReportCollapsed && (
                 <>
+                  {/* Adaptive Scheduler Strategy Decision Box (if adaptive mode was used) */}
+                  {report.scheduler_decision && (
+                    <div
+                      className="evo-summary-box"
+                      style={{
+                        marginBottom: 16,
+                        background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.08) 100%)',
+                        borderLeft: '4px solid #8b5cf6',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: '1.2rem' }}>🤖</span>
+                          <strong style={{ color: '#c4b5fd', fontSize: '0.95rem' }}>Adaptive Strategy Selection</strong>
+                        </div>
+                        <span className="evo-version-tag" style={{ background: '#8b5cf6' }}>
+                          Selected Stage: {report.scheduler_decision.stage?.toUpperCase()}
+                        </span>
+                      </div>
+                      <div style={{ marginTop: 8, fontSize: '0.88rem', color: '#e2e8f0', lineHeight: 1.5 }}>
+                        <strong>Reason:</strong> {report.scheduler_decision.reason}
+                      </div>
+                      {report.scheduler_decision.rationale && (
+                        <div style={{ marginTop: 4, fontSize: '0.82rem', color: '#94a3b8' }}>
+                          <strong>Scheduler State:</strong> {report.scheduler_decision.rationale}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Executive Summary Box with Clean Multi-line Formatting */}
                   <div className="evo-summary-box" style={{ whiteSpace: 'pre-line' }}>
                     <strong>Executive Summary:</strong>
@@ -1540,14 +1826,22 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     const generatedCount = Math.max(0, totalWorkflows - baselineCount)
                     const paretoCount = report.pareto_frontier_count ?? report.pareto_frontier.length
                     const paretoWfStr = paretoCount === 1 ? 'workflow forms' : 'workflows form'
+                    const queryCount = report.workload_queries?.length || 1
+                    const totalEvals = report.total_workflow_evaluations || (totalWorkflows * queryCount)
 
                     return (
                       <div className="evo-summary-grid">
                         <div className="evo-metric-card">
-                          <span className="evo-metric-label">Total Workflows Evaluated</span>
-                          <span className="evo-metric-value">{totalWorkflows}</span>
+                          <span className="evo-metric-label">
+                            {report.is_workload ? 'Workload Evaluations' : 'Total Workflows Evaluated'}
+                          </span>
+                          <span className="evo-metric-value">{report.is_workload ? totalEvals : totalWorkflows}</span>
                           <div className="evo-cell-sub" style={{ marginTop: 4, fontWeight: 500 }}>
-                            {baselineCount} Baseline + {generatedCount} Generated Candidate{generatedCount === 1 ? '' : 's'}
+                            {report.is_workload ? (
+                              <>{totalWorkflows} Workflows × {queryCount} Queries</>
+                            ) : (
+                              <>{baselineCount} Baseline + {generatedCount} Generated Candidate{generatedCount === 1 ? '' : 's'}</>
+                            )}
                           </div>
                           <span className="evo-metric-delta" style={{ marginTop: 2 }}>
                             {report.successful_candidates} successful, {report.failed_candidates} failed
@@ -1559,16 +1853,20 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                           <span className="evo-metric-delta">{paretoCount} {paretoWfStr} the Pareto frontier</span>
                         </div>
                         <div className="evo-metric-card">
-                          <span className="evo-metric-label">Baseline Groundedness</span>
+                          <span className="evo-metric-label">
+                            {report.is_workload ? 'Avg Baseline Groundedness' : 'Baseline Groundedness'}
+                          </span>
                           <span className="evo-metric-value">
-                            {baselineCandidate ? `${((baselineCandidate.metrics.groundedness ?? baselineCandidate.metrics.performance) * 100).toFixed(1)}%` : '100.0%'}
+                            {baselineCandidate ? `${((baselineCandidate.metrics.avg_groundedness ?? baselineCandidate.metrics.groundedness ?? baselineCandidate.metrics.performance) * 100).toFixed(1)}%` : '100.0%'}
                           </span>
                           <span className="evo-metric-delta">Reference Standard</span>
                         </div>
                         <div className="evo-metric-card">
-                          <span className="evo-metric-label">Baseline Cost / Query</span>
+                          <span className="evo-metric-label">
+                            {report.is_workload ? 'Avg Baseline Cost / Query' : 'Baseline Cost / Query'}
+                          </span>
                           <span className="evo-metric-value">
-                            ${baselineCandidate ? baselineCandidate.metrics.cost.toFixed(6) : '0.000057'}
+                            ${baselineCandidate ? (baselineCandidate.metrics.avg_cost_per_query ?? baselineCandidate.metrics.cost).toFixed(6) : '0.000057'}
                           </span>
                           <span className="evo-metric-delta">{baselineCandidate?.workflow?.model?.model_id || 'gemini-3.5-flash-lite'}</span>
                         </div>
@@ -2605,6 +2903,79 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* Workload Per-Query Evaluation Evidence (if multi-query workload) */}
+              {inspectModalCandidate.metrics.raw_details?.per_query_evaluations &&
+                Array.isArray(inspectModalCandidate.metrics.raw_details.per_query_evaluations) &&
+                inspectModalCandidate.metrics.raw_details.per_query_evaluations.length > 0 && (
+                  <div className="evo-modal-block">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <h4 className="evo-modal-block-title" style={{ margin: 0 }}>
+                        Workload Per-Query Evaluation Evidence ({inspectModalCandidate.metrics.raw_details.per_query_evaluations.length} Queries)
+                      </h4>
+                      <span className="evo-cell-sub">Independent claim & cost measurements</span>
+                    </div>
+
+                    <div className="evo-table-container">
+                      <table className="evo-table" style={{ fontSize: '0.82rem' }}>
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>Evaluation Query</th>
+                            <th>Groundedness</th>
+                            <th>Hallucination</th>
+                            <th>Cost</th>
+                            <th>Tokens (In/Out)</th>
+                            <th>Latency</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {inspectModalCandidate.metrics.raw_details.per_query_evaluations.map((item: any, idx: number) => (
+                            <tr key={idx} className="evo-table-row">
+                              <td><strong>Q{idx + 1}</strong></td>
+                              <td style={{ maxWidth: 280 }}>
+                                <div style={{ fontWeight: 500, color: '#f1f5f9' }}>{item.query}</div>
+                                {item.response && (
+                                  <details style={{ marginTop: 4 }}>
+                                    <summary style={{ fontSize: '0.75rem', color: '#94a3b8', cursor: 'pointer' }}>
+                                      View Generated Response
+                                    </summary>
+                                    <p style={{ margin: '4px 0', fontSize: '0.78rem', color: '#cbd5e1', lineHeight: 1.4 }}>
+                                      {item.response}
+                                    </p>
+                                  </details>
+                                )}
+                              </td>
+                              <td>
+                                <strong className="evo-val-green">
+                                  {item.groundedness !== undefined && item.groundedness !== null
+                                    ? `${(item.groundedness * 100).toFixed(1)}%`
+                                    : 'N/A'}
+                                </strong>
+                              </td>
+                              <td>
+                                <span className="evo-val-cyan">
+                                  {item.hallucination_rate !== undefined && item.hallucination_rate !== null
+                                    ? `${(item.hallucination_rate * 100).toFixed(1)}%`
+                                    : '0.0%'}
+                                </span>
+                              </td>
+                              <td>
+                                <span className="evo-cost-val">${Number(item.cost || 0).toFixed(6)}</span>
+                              </td>
+                              <td>
+                                <span>{item.input_tokens ?? item.tokens ?? 0} / {item.output_tokens ?? 0}</span>
+                              </td>
+                              <td>
+                                <span>{Number(item.llm_latency_ms ?? item.latency_ms ?? 0).toFixed(0)} ms</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
             </div>
 
             <div className="evo-modal-foot">

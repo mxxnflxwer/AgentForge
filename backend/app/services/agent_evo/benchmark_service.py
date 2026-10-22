@@ -8,15 +8,18 @@ from sqlalchemy.orm import Session
 from app.models.benchmark_run import BenchmarkRun
 from app.models.workflow_version import WorkflowVersion
 from app.schemas.agent_evo import (
+    BaselineVsOptimizedComparisonResponse,
     BenchmarkItemResult,
     BenchmarkReportResponse,
     BenchmarkRunListResponse,
+    PerQueryComparisonRecord,
     VersionInspectResponse,
     VersionLineageEdge,
     VersionLineageNode,
     VersionLineageResponse,
 )
 from app.services.agent_evo.evaluator_adapter import EvaluatorAdapter
+from app.services.agent_evo.runtime_selector import RuntimeWorkflowSelector
 from app.services.agent_evo.workflow import AgentWorkflow, get_baseline_workflow
 
 logger = logging.getLogger("agentforge.services.agent_evo.benchmark")
@@ -74,12 +77,14 @@ class BenchmarkService:
     async def run_benchmark(
         cls,
         version_ids: List[str],
-        query: str,
         user_id: str,
         user_email: str,
+        query: Optional[str] = None,
+        workload: Optional[List[str]] = None,
         document_id: Optional[str] = None,
         document_ids: Optional[List[str]] = None,
         expected_answer: Optional[str] = None,
+        expected_answers: Optional[List[Optional[str]]] = None,
         preset_name: Optional[str] = "clinical",
         name: Optional[str] = "Version Benchmark Comparison",
         description: Optional[str] = None,
@@ -89,7 +94,7 @@ class BenchmarkService:
     ) -> BenchmarkReportResponse:
         """
         Execute controlled reproducible benchmark across all selected workflow versions.
-        Supports multiple iterations per workflow to capture variance, establishes baseline-relative deltas,
+        Supports single query or multi-query workload across versions, establishes baseline-relative deltas,
         and computes Pareto dominance.
         """
         if not version_ids:
@@ -101,9 +106,15 @@ class BenchmarkService:
         if repetitions is not None and repetitions >= 1:
             iterations = repetitions
 
+        target_query = query
+        if not target_query and workload and len(workload) > 0:
+            target_query = workload[0]
+        elif not target_query:
+            target_query = "What is the primary clinical diagnosis and assessment for this patient?"
+
         benchmark_id = f"bench_{uuid.uuid4().hex[:10]}"
         logger.info(
-            f"Starting Benchmark '{benchmark_id}' ({name}) across {len(version_ids)} versions ({iterations} iterations) for query: '{query[:40]}'"
+            f"Starting Benchmark '{benchmark_id}' ({name}) across {len(version_ids)} versions ({iterations} iterations) for query: '{target_query[:40]}'"
         )
 
         workflows_to_evaluate: List[Tuple[str, Optional[int], str, Optional[str], Optional[str], Optional[str], AgentWorkflow]] = []
@@ -178,14 +189,24 @@ class BenchmarkService:
 
             for it in range(num_iters):
                 try:
-                    evaluated = await EvaluatorAdapter.evaluate_candidate(
-                        workflow=wf_inst,
-                        query=query,
-                        user_id=user_id,
-                        document_id=document_id,
-                        expected_answer=expected_answer,
-                        db=db,
-                    )
+                    if workload and len(workload) > 0:
+                        evaluated = await EvaluatorAdapter.evaluate_candidate_workload(
+                            workflow=wf_inst,
+                            queries=workload,
+                            user_id=user_id,
+                            document_id=document_id,
+                            expected_answers=expected_answers,
+                            db=db,
+                        )
+                    else:
+                        evaluated = await EvaluatorAdapter.evaluate_candidate(
+                            workflow=wf_inst,
+                            query=target_query,
+                            user_id=user_id,
+                            document_id=document_id,
+                            expected_answer=expected_answer,
+                            db=db,
+                        )
                     last_evaluated = evaluated
                     m = evaluated.metrics
                     groundedness = m.groundedness if m.groundedness is not None else (m.performance or 0.0)
@@ -416,7 +437,7 @@ class BenchmarkService:
 
         # Step 5: Generate Benchmark Summary
         summary = (
-            f"Benchmark '{name}' evaluated {len(raw_benchmark_results)} workflow versions against query '{query[:50]}...'. "
+            f"Benchmark '{name}' evaluated {len(raw_benchmark_results)} workflow versions against query '{target_query[:50]}...'. "
             f"{len(pareto_frontier)} version(s) are Pareto-optimal (non-dominated on Groundedness vs Cost trade-off frontier), "
             f"and {len(dominated_list)} version(s) are dominated."
         )
@@ -430,7 +451,7 @@ class BenchmarkService:
             description=description,
             status="completed",
             preset_name=preset_name,
-            query=query,
+            query=target_query,
             document_id=document_id,
             document_ids=document_ids,
             expected_answer=expected_answer,
@@ -453,7 +474,7 @@ class BenchmarkService:
                     description=description,
                     status="completed",
                     preset_name=preset_name,
-                    query=query,
+                    query=target_query,
                     document_id=document_id,
                     expected_answer=expected_answer,
                     selected_versions=version_ids,
@@ -616,6 +637,9 @@ class BenchmarkService:
                 else str(v.approved_at)
             )
 
+            sched_dec = cfg.get("scheduler_decision") or {}
+            scheduler_strategy = sched_dec.get("selected_strategy") or sched_dec.get("strategy")
+
             node = VersionLineageNode(
                 version_id=v.version_id,
                 version_number=v.version_number,
@@ -632,6 +656,7 @@ class BenchmarkService:
                 provider=v.provider,
                 mutation_type=mutation_type,
                 refinement_operation=refinement_op,
+                scheduler_strategy=scheduler_strategy,
                 fields_changed=fields_changed,
                 rationale=rationale,
                 before_configuration=before_cfg,
@@ -815,4 +840,265 @@ class BenchmarkService:
             approved_by=v.approved_by,
             approved_at=approved_at_str,
             created_at=created_at_str,
+        )
+
+    @classmethod
+    async def compare_baseline_vs_optimized(
+        cls,
+        optimized_version_id: str,
+        workload: List[str],
+        user_id: str,
+        user_email: str,
+        baseline_version_id: Optional[str] = "baseline",
+        document_id: Optional[str] = None,
+        expected_answers: Optional[List[Optional[str]]] = None,
+        db: Optional[Session] = None,
+    ) -> BaselineVsOptimizedComparisonResponse:
+        """
+        Controlled, reproducible evaluation of an approved optimized workflow against the baseline
+        using the exact same evaluation workload.
+        Records raw per-query response, groundedness, claims, tokens, cost, latency, provider, and model ID.
+        Computes aggregate metrics from raw unrounded metrics.
+        Never executes an unapproved candidate.
+        Clearly distinguishes real provider evaluations from mocked or simulation tests.
+        Reports cost reduction and groundedness retention honestly without claiming universal optimality.
+        """
+        if not workload or len(workload) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Evaluation workload must contain at least one query.",
+            )
+
+        # 1. Resolve baseline workflow
+        if not baseline_version_id or baseline_version_id in ("baseline", "Production Baseline"):
+            baseline_wf = get_baseline_workflow()
+            base_ver_id = "baseline"
+        else:
+            if not db:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Database session required to load workflow versions.",
+                )
+            base_rec = db.query(WorkflowVersion).filter(
+                (WorkflowVersion.version_id == baseline_version_id) | (WorkflowVersion.id == baseline_version_id)
+            ).first()
+            if not base_rec:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Baseline workflow version '{baseline_version_id}' not found.",
+                )
+            baseline_wf = AgentWorkflow.from_dict(base_rec.configuration)
+            base_ver_id = base_rec.version_id
+
+        # 2. Resolve optimized workflow from database - STRICT GUARD: MUST BE APPROVED OR ACTIVE
+        if not db:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database session required to load optimized workflow version.",
+            )
+
+        opt_rec = db.query(WorkflowVersion).filter(
+            (WorkflowVersion.version_id == optimized_version_id) | (WorkflowVersion.id == optimized_version_id)
+        ).first()
+
+        if not opt_rec:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow version '{optimized_version_id}' not found in registry. Only approved workflows can be evaluated.",
+            )
+
+        status_norm = (opt_rec.status or "").upper()
+        if status_norm not in ("APPROVED", "ACTIVE"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Workflow version '{opt_rec.version_id}' has status '{opt_rec.status}'. Only APPROVED or ACTIVE workflows may be evaluated.",
+            )
+
+        opt_wf = AgentWorkflow.from_dict(opt_rec.configuration)
+        opt_wf.workflow_id = opt_rec.version_id
+        opt_wf.name = opt_rec.name
+
+        # 3. Execute baseline evaluation across workload
+        baseline_eval = await EvaluatorAdapter.evaluate_candidate_workload(
+            workflow=baseline_wf,
+            queries=workload,
+            user_id=user_id,
+            document_id=document_id,
+            expected_answers=expected_answers,
+            db=db,
+        )
+
+        # 4. Execute optimized workflow evaluation across identical workload
+        opt_eval = await EvaluatorAdapter.evaluate_candidate_workload(
+            workflow=opt_wf,
+            queries=workload,
+            user_id=user_id,
+            document_id=document_id,
+            expected_answers=expected_answers,
+            db=db,
+        )
+
+        base_pq = baseline_eval.metrics.raw_details.get("per_query_evaluations") or []
+        opt_pq = opt_eval.metrics.raw_details.get("per_query_evaluations") or []
+
+        # 5. Detect execution mode (live provider vs mocked)
+        is_mocked = bool(
+            baseline_eval.metrics.raw_details.get("is_mocked", False)
+            or opt_eval.metrics.raw_details.get("is_mocked", False)
+        )
+        eval_mode = "mocked_or_saved_response" if is_mocked else "live_provider"
+        mode_disclaimer = (
+            "Evaluated using mocked adapter responses. Mocked test runs demonstrate pipeline functionality, "
+            "deterministic routing, and metric aggregation, not real-world API cost savings."
+            if is_mocked
+            else "Evaluated using live provider API (Google / OpenRouter). Measured real API token usage, cost, and latency."
+        )
+
+        # 6. Build granular per-query records
+        per_query_records: List[PerQueryComparisonRecord] = []
+        total_queries = len(workload)
+
+        for i in range(total_queries):
+            b_item = base_pq[i] if i < len(base_pq) else {}
+            o_item = opt_pq[i] if i < len(opt_pq) else {}
+            q_text = workload[i]
+            task_cat = RuntimeWorkflowSelector.classify_query_task(q_text)
+
+            b_cost = float(b_item.get("cost", 0.0))
+            o_cost = float(o_item.get("cost", 0.0))
+            b_g = float(b_item.get("groundedness", 0.0))
+            o_g = float(o_item.get("groundedness", 0.0))
+
+            c_red = round(((b_cost - o_cost) / b_cost) * 100, 2) if b_cost > 0 else 0.0
+            g_delta = round(o_g - b_g, 4)
+
+            per_query_records.append(
+                PerQueryComparisonRecord(
+                    query_id=f"q_{i + 1}",
+                    query=q_text,
+                    task_category=task_cat,
+                    baseline_response=b_item.get("response", ""),
+                    baseline_groundedness=b_g,
+                    baseline_hallucination_rate=float(b_item.get("hallucination_rate", 0.0)),
+                    baseline_claims=b_item.get("supported_claims", []) + b_item.get("unsupported_claims", []),
+                    baseline_supported_claim_count=int(b_item.get("supported_claim_count", 0)),
+                    baseline_unsupported_claim_count=int(b_item.get("unsupported_claim_count", 0)),
+                    baseline_input_tokens=int(b_item.get("input_tokens", 0)),
+                    baseline_output_tokens=int(b_item.get("output_tokens", 0)),
+                    baseline_total_tokens=int(b_item.get("total_tokens", 0)),
+                    baseline_cost=b_cost,
+                    baseline_latency_ms=float(b_item.get("llm_latency_ms", 0.0)),
+                    baseline_provider=b_item.get("provider", baseline_wf.model.provider),
+                    baseline_model_id=b_item.get("model_id", baseline_wf.model.model_id),
+                    baseline_status=b_item.get("status", "success"),
+                    optimized_response=o_item.get("response", ""),
+                    optimized_groundedness=o_g,
+                    optimized_hallucination_rate=float(o_item.get("hallucination_rate", 0.0)),
+                    optimized_claims=o_item.get("supported_claims", []) + o_item.get("unsupported_claims", []),
+                    optimized_supported_claim_count=int(o_item.get("supported_claim_count", 0)),
+                    optimized_unsupported_claim_count=int(o_item.get("unsupported_claim_count", 0)),
+                    optimized_input_tokens=int(o_item.get("input_tokens", 0)),
+                    optimized_output_tokens=int(o_item.get("output_tokens", 0)),
+                    optimized_total_tokens=int(o_item.get("total_tokens", 0)),
+                    optimized_cost=o_cost,
+                    optimized_latency_ms=float(o_item.get("llm_latency_ms", 0.0)),
+                    optimized_provider=o_item.get("provider", opt_wf.model.provider),
+                    optimized_model_id=o_item.get("model_id", opt_wf.model.model_id),
+                    optimized_status=o_item.get("status", "success"),
+                    cost_reduction=c_red,
+                    groundedness_delta=g_delta,
+                )
+            )
+
+        # 7. Compute aggregate results directly from raw unrounded metrics
+        successful_evals = sum(1 for r in per_query_records if r.baseline_status == "success" and r.optimized_status == "success")
+        failed_evals = total_queries - successful_evals
+
+        raw_b_g_list = [r.baseline_groundedness for r in per_query_records]
+        raw_o_g_list = [r.optimized_groundedness for r in per_query_records]
+        raw_b_h_list = [r.baseline_hallucination_rate for r in per_query_records]
+        raw_o_h_list = [r.optimized_hallucination_rate for r in per_query_records]
+        raw_b_c_list = [r.baseline_cost for r in per_query_records]
+        raw_o_c_list = [r.optimized_cost for r in per_query_records]
+        raw_b_tok_list = [r.baseline_total_tokens for r in per_query_records]
+        raw_o_tok_list = [r.optimized_total_tokens for r in per_query_records]
+        raw_b_lat_list = [r.baseline_latency_ms for r in per_query_records]
+        raw_o_lat_list = [r.optimized_latency_ms for r in per_query_records]
+
+        agg_b_g = sum(raw_b_g_list) / max(1, total_queries)
+        agg_o_g = sum(raw_o_g_list) / max(1, total_queries)
+        groundedness_diff_pp = round((agg_o_g - agg_b_g) * 100, 2)
+        groundedness_retained = bool(agg_o_g >= agg_b_g - 0.0001)
+
+        agg_b_h = sum(raw_b_h_list) / max(1, total_queries)
+        agg_o_h = sum(raw_o_h_list) / max(1, total_queries)
+
+        agg_b_c = sum(raw_b_c_list) / max(1, total_queries)
+        agg_o_c = sum(raw_o_c_list) / max(1, total_queries)
+        cost_red_pct = round(((agg_b_c - agg_o_c) / agg_b_c) * 100, 2) if agg_b_c > 0 else 0.0
+        cost_reduced = bool(agg_o_c < agg_b_c)
+
+        agg_b_tok = sum(raw_b_tok_list) / max(1, total_queries)
+        agg_o_tok = sum(raw_o_tok_list) / max(1, total_queries)
+
+        agg_b_lat = sum(raw_b_lat_list) / max(1, total_queries)
+        agg_o_lat = sum(raw_o_lat_list) / max(1, total_queries)
+
+        # 8. Honest finding summary
+        if cost_reduced and groundedness_retained:
+            finding = (
+                f"Optimized workflow '{opt_rec.name}' (v{opt_rec.version_number}) successfully reduced cost by "
+                f"{cost_red_pct}% (${agg_o_c:.6f} vs ${agg_b_c:.6f}/query) while preserving clinical groundedness "
+                f"({agg_o_g * 100:.1f}% vs {agg_b_g * 100:.1f}%, diff: {groundedness_diff_pp:+.1f} pp). "
+                f"Results are scoped to the evaluated workload and do not claim universal optimality."
+            )
+        elif not cost_reduced and groundedness_retained:
+            finding = (
+                f"Optimized workflow '{opt_rec.name}' retained groundedness ({agg_o_g * 100:.1f}%), but did NOT "
+                f"reduce cost (${agg_o_c:.6f} vs baseline ${agg_b_c:.6f}/query). "
+                f"Honest evaluation indicates no cost advantage on this workload."
+            )
+        elif cost_reduced and not groundedness_retained:
+            finding = (
+                f"Optimized workflow '{opt_rec.name}' reduced cost by {cost_red_pct}%, but experienced a groundedness decline "
+                f"of {abs(groundedness_diff_pp):.1f} percentage points ({agg_o_g * 100:.1f}% vs {agg_b_g * 100:.1f}%). "
+                f"Trade-off shows lower cost at the expense of grounded accuracy."
+            )
+        else:
+            finding = (
+                f"Optimized workflow '{opt_rec.name}' did not achieve cost reduction (${agg_o_c:.6f} vs ${agg_b_c:.6f}) "
+                f"and experienced lower groundedness ({agg_o_g * 100:.1f}% vs {agg_b_g * 100:.1f}%)."
+            )
+
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        return BaselineVsOptimizedComparisonResponse(
+            baseline_version_id=base_ver_id,
+            optimized_version_id=opt_rec.version_id,
+            optimized_version_number=opt_rec.version_number,
+            optimized_workflow_name=opt_rec.name,
+            evaluation_mode=eval_mode,
+            is_mocked=is_mocked,
+            mode_disclaimer=mode_disclaimer,
+            scope_claim="Optimized for the selected evaluation workload. Does not claim universal optimality.",
+            total_queries_evaluated=total_queries,
+            successful_evaluations=successful_evals,
+            failed_evaluations=failed_evals,
+            baseline_groundedness=agg_b_g,
+            optimized_groundedness=agg_o_g,
+            groundedness_diff_pp=groundedness_diff_pp,
+            groundedness_retained=groundedness_retained,
+            baseline_hallucination_rate=agg_b_h,
+            optimized_hallucination_rate=agg_o_h,
+            baseline_cost_per_query=agg_b_c,
+            optimized_cost_per_query=agg_o_c,
+            cost_reduction_pct=cost_red_pct,
+            cost_reduced=cost_reduced,
+            baseline_tokens_per_query=agg_b_tok,
+            optimized_tokens_per_query=agg_o_tok,
+            baseline_latency_ms=round(agg_b_lat, 2),
+            optimized_latency_ms=round(agg_o_lat, 2),
+            per_query_evidence=per_query_records,
+            finding_summary=finding,
+            created_at=now_iso,
         )

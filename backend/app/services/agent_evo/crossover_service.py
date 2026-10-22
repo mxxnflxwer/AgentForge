@@ -62,13 +62,7 @@ class CrossoverService:
                 "Production Baseline",
                 None,
                 None,
-                {
-                    "groundedness": 1.0,
-                    "cost": 0.000039,
-                    "total_tokens": 409,
-                    "llm_latency_ms": 2401.0,
-                    "hallucination_rate": 0.0,
-                },
+                None,
             )
 
         if not db:

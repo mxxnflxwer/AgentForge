@@ -57,6 +57,7 @@ def execute_rag_retrieval(
     db: Optional[Session] = None,
     vector_store: Optional[VectorStore] = None,
     reranker: Optional[BaseReranker] = None,
+    enable_reranking: bool = True,
 ) -> RAGSearchResponse:
     """
     Intelligent, query-aware RAG retrieval pipeline:
@@ -222,22 +223,35 @@ def execute_rag_retrieval(
         )
 
     # Step 4: Specific Fact / Diagnosis / Findings / Explanation Strategies
-    candidate_k = max(25, top_k * 5)
-    raw_candidates = store.query_similar_chunks(
-        user_id=user_id,
-        query_text=cleaned_query,
-        document_id=document_id,
-        top_k=candidate_k,
-    )
-
-    reranked_results = ranker.rerank(
-        query=cleaned_query,
-        chunks=raw_candidates,
-        top_k=top_k,
-        relevance_threshold=effective_threshold,
-    )
-
-    filtered_count = max(0, len(raw_candidates) - len(reranked_results))
+    if enable_reranking:
+        candidate_k = max(25, top_k * 5)
+        raw_candidates = store.query_similar_chunks(
+            user_id=user_id,
+            query_text=cleaned_query,
+            document_id=document_id,
+            top_k=candidate_k,
+        )
+        reranked_results = ranker.rerank(
+            query=cleaned_query,
+            chunks=raw_candidates,
+            top_k=top_k,
+            relevance_threshold=effective_threshold,
+        )
+        filtered_count = max(0, len(raw_candidates) - len(reranked_results))
+    else:
+        # Direct vector similarity without reranking stage
+        raw_candidates = store.query_similar_chunks(
+            user_id=user_id,
+            query_text=cleaned_query,
+            document_id=document_id,
+            top_k=top_k,
+        )
+        # Apply relevance threshold directly to cosine similarity scores
+        reranked_results = [
+            c for c in raw_candidates
+            if (c.get("similarity_score", 0.0) >= effective_threshold)
+        ][:top_k]
+        filtered_count = max(0, len(raw_candidates) - len(reranked_results))
     debug_info = (
         RAGDebugInfo(
             retrieved_chunks=len(raw_candidates),

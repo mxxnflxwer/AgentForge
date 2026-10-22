@@ -38,6 +38,8 @@ def dominates(a: CandidateMetrics, b: CandidateMetrics) -> bool:
         return False
     if a.status == "success" and b.status != "success":
         return True
+    if a.status != "success" and b.status != "success":
+        return False
 
     perf_better_or_equal = a.performance >= b.performance
     cost_better_or_equal = a.cost <= b.cost

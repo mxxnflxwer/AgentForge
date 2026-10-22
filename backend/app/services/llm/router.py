@@ -75,20 +75,33 @@ class LLMRouter:
         query: str,
         context: str,
         system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> LLMResponse:
         """
         Execute grounded generation on a single selected model.
+        Supports per-request overrides for temperature and max_tokens.
         """
         adapter = self.get_adapter(model_key)
         if not adapter:
-            # Fallback to gemini as default
-            adapter = self.get_adapter("gemini") or list(self.get_unique_adapters())[0]
+            logger.error(f"No adapter registered for model: '{model_key}'")
+            return LLMResponse(
+                model=model_key,
+                provider="Unknown",
+                model_id=model_key,
+                answer=f"Model adapter for '{model_key}' is not registered or supported.",
+                latency_ms=0.0,
+                success=False,
+                error=f"Unsupported model: {model_key}",
+            )
 
         logger.info(f"Routing query to single model: {adapter.name}")
         return await adapter.generate(
             query=query,
             context=context,
             system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
     async def compare_all(
@@ -96,6 +109,8 @@ class LLMRouter:
         query: str,
         context: str,
         system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> List[LLMResponse]:
         """
         Execute grounded generation across all 3 models concurrently using the
@@ -109,6 +124,8 @@ class LLMRouter:
                 query=query,
                 context=context,
                 system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
             )
             for adapter in adapters
         ]
@@ -123,7 +140,8 @@ class LLMRouter:
                     LLMResponse(
                         model=adapter.name,
                         provider=adapter.provider,
-                        answer=f"Error running model comparison for {adapter.name}.",
+                        model_id=adapter.model_id,
+                        answer=f"Error running model comparison for {adapter.name}: {result}",
                         latency_ms=0.0,
                         success=False,
                         error=str(result),

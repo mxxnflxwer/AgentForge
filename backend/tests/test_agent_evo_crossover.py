@@ -106,7 +106,7 @@ def test_parent_selection_baseline_resolution(db_session):
     assert b_id == "baseline"
     assert num == 0
     assert name == "Production Baseline"
-    assert snap["groundedness"] == 1.0
+    assert snap is None
 
 
 def test_parent_selection_same_parent_rejected(sample_parents, db_session):

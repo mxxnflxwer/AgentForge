@@ -137,6 +137,7 @@ class EvaluatorAdapter:
                 top_k=workflow.retrieval.top_k,
                 relevance_threshold=workflow.retrieval.similarity_threshold,
                 db=db,
+                enable_reranking=getattr(workflow.retrieval, "reranking", True),
             )
             retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
         except Exception as e:
@@ -172,8 +173,22 @@ class EvaluatorAdapter:
 
         # 3. LLM Generation Stage
         llm_router = get_llm_router()
-        adapter = llm_router.get_adapter(workflow.model.model_id) or llm_router.get_adapter(workflow.model.provider) or llm_router.get_adapter("gemini")
-        model_display_name = adapter.name if adapter else workflow.model.model_id
+        adapter = llm_router.get_adapter(workflow.model.model_id) or llm_router.get_adapter(workflow.model.provider)
+        if not adapter:
+            logger.error(f"Candidate model '{workflow.model.model_id}' is not supported.")
+            return EvaluatedCandidate(
+                candidate_id=workflow.workflow_id,
+                workflow=workflow,
+                metrics=CandidateMetrics.from_failure(
+                    workflow_id=workflow.workflow_id,
+                    workflow_name=workflow.name,
+                    status="unsupported_model",
+                    error_message=f"Model adapter for '{workflow.model.model_id}' is not supported.",
+                ),
+                is_pareto_optimal=False,
+                mutation_metadata=workflow.mutation_metadata,
+            )
+        model_display_name = adapter.name
 
         # Anti-hallucination guardrail if no context was retrieved
         if retrieval.status == "not_found" or not retrieval.results or not context_str.strip():
@@ -194,6 +209,8 @@ class EvaluatorAdapter:
                     query=query,
                     context=context_str,
                     system_prompt=system_prompt,
+                    temperature=workflow.model.temperature,
+                    max_tokens=workflow.model.max_tokens,
                 )
                 answer_text = llm_resp.answer
                 latency_ms = llm_resp.latency_ms
@@ -298,9 +315,22 @@ class EvaluatorAdapter:
         adapter = (
             llm_router.get_adapter(workflow.model.model_id)
             or llm_router.get_adapter(workflow.model.provider)
-            or llm_router.get_adapter("gemini")
         )
-        model_display_name = adapter.name if adapter else workflow.model.model_id
+        if not adapter:
+            logger.error(f"Candidate model '{workflow.model.model_id}' is not supported.")
+            return EvaluatedCandidate(
+                candidate_id=workflow.workflow_id,
+                workflow=workflow,
+                metrics=CandidateMetrics.from_failure(
+                    workflow_id=workflow.workflow_id,
+                    workflow_name=workflow.name,
+                    status="unsupported_model",
+                    error_message=f"Model adapter for '{workflow.model.model_id}' is not supported.",
+                ),
+                is_pareto_optimal=False,
+                mutation_metadata=workflow.mutation_metadata,
+            )
+        model_display_name = adapter.name
         eval_engine = get_evaluation_engine()
 
         for idx, q in enumerate(queries):
@@ -317,6 +347,7 @@ class EvaluatorAdapter:
                     top_k=workflow.retrieval.top_k,
                     relevance_threshold=workflow.retrieval.similarity_threshold,
                     db=db,
+                    enable_reranking=getattr(workflow.retrieval, "reranking", True),
                 )
                 retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
             except Exception as e:
@@ -371,6 +402,8 @@ class EvaluatorAdapter:
                         query=q,
                         context=context_str,
                         system_prompt=system_prompt,
+                        temperature=workflow.model.temperature,
+                        max_tokens=workflow.model.max_tokens,
                     )
                     answer_text = llm_resp.answer
                     latency_ms = llm_resp.latency_ms
@@ -404,16 +437,26 @@ class EvaluatorAdapter:
 
             per_query_evals.append({
                 "query_index": idx + 1,
+                "query_id": f"q_{idx + 1}",
                 "query": q,
+                "workflow_id": workflow.workflow_id,
+                "workflow_name": workflow.name,
                 "response": answer_text,
                 "groundedness": eval_result.groundedness if eval_result.groundedness is not None else 0.0,
                 "hallucination_rate": eval_result.hallucination_rate if eval_result.hallucination_rate is not None else 0.0,
+                "supported_claims": eval_result.supported_claims,
+                "unsupported_claims": eval_result.unsupported_claims,
+                "supported_claim_count": eval_result.supported_claim_count,
+                "unsupported_claim_count": eval_result.unsupported_claim_count,
+                "total_claims": eval_result.total_claims,
                 "input_tokens": eval_result.input_tokens,
                 "output_tokens": eval_result.output_tokens,
                 "total_tokens": eval_result.total_tokens,
                 "cost": eval_result.total_cost,
                 "llm_latency_ms": eval_result.latency_ms,
                 "execution_time_ms": eval_result.execution_time_ms,
+                "provider": workflow.model.provider,
+                "model_id": model_display_name,
                 "status": "success" if gen_success and bool(answer_text) else ("empty_response" if not answer_text and gen_success else "model_error"),
                 "chunks_retrieved": len(retrieval.results),
                 "error_message": gen_error,
@@ -442,6 +485,14 @@ class EvaluatorAdapter:
         all_success = all(e["status"] == "success" for e in per_query_evals)
         cand_status = "success" if all_success else "partial_success" if any(e["status"] == "success" for e in per_query_evals) else "failed"
 
+        # Explicitly distinguish real provider calls from simulation / mocked environments
+        is_mocked = any(
+            "[Simulation" in str(e.get("response", ""))
+            or (adapter and not getattr(adapter, "is_configured", lambda: True)())
+            or "mock" in type(adapter).__name__.lower()
+            for e in per_query_evals
+        )
+
         metrics = CandidateMetrics(
             workflow_id=workflow.workflow_id,
             workflow_name=workflow.name,
@@ -459,6 +510,8 @@ class EvaluatorAdapter:
             error_message=None if all_success else "Some queries in workload experienced warnings/errors",
             raw_details={
                 "is_workload": True,
+                "is_mocked": is_mocked,
+                "evaluation_mode": "mocked_or_saved_response" if is_mocked else "live_provider",
                 "evaluation_count": total_q,
                 "workload_queries": queries,
                 "avg_groundedness": avg_groundedness,

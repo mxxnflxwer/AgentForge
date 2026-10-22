@@ -44,8 +44,9 @@ Do not extrapolate or assume unstated medical facts."""
 
 class LLMResponse(BaseModel):
     """Standardized response format across all LLM adapters."""
-    model: str = Field(..., description="Display model name, e.g. 'Gemini 2.5 Flash-Lite'")
+    model: str = Field(..., description="Display model name, e.g. 'Gemini 3.5 Flash-Lite'")
     provider: str = Field(..., description="Provider name, e.g. 'Google', 'Qwen', 'OpenAI-Compatible'")
+    model_id: Optional[str] = Field(None, description="Actual model identifier, e.g. 'gemini-3.5-flash-lite'")
     answer: str = Field(..., description="Generated answer text")
     latency_ms: float = Field(0.0, description="Round-trip latency in milliseconds")
     success: bool = Field(True, description="Whether the generation completed successfully")
@@ -75,9 +76,12 @@ class BaseLLMAdapter(abc.ABC):
         query: str,
         context: str,
         system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> LLMResponse:
         """
         Generate a grounded answer for the user query given the retrieved context.
+        Supports per-request generation settings: temperature and output token limit.
         """
         pass
 
@@ -122,6 +126,7 @@ class BaseLLMAdapter(abc.ABC):
         return LLMResponse(
             model=self.name,
             provider=self.provider,
+            model_id=self.model_id,
             answer=ans,
             latency_ms=latency,
             success=False,

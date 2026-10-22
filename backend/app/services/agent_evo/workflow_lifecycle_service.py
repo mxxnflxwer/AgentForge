@@ -217,13 +217,7 @@ class WorkflowLifecycleService:
             configuration=baseline.to_dict(),
             status="ACTIVE (DEFAULT BASELINE)",
             activated_at=None,
-            evaluation_snapshot={
-                "groundedness": 1.0,
-                "cost": 0.000039,
-                "total_tokens": 409,
-                "llm_latency_ms": 2401.0,
-                "hallucination_rate": 0.0,
-            },
+            evaluation_snapshot=None,
         )
 
     @classmethod
@@ -233,10 +227,11 @@ class WorkflowLifecycleService:
         user_id: str,
         document_id: Optional[str] = None,
         expected_answer: Optional[str] = None,
+        workflow_version_id: Optional[str] = None,
         db: Optional[Session] = None,
     ) -> WorkflowExecutionResponse:
         """
-        Executes a user query using the currently ACTIVE approved workflow configuration.
+        Executes a user query using an eligible approved workflow configuration resolved by RuntimeWorkflowSelector.
         Captures LLM latency and Total execution time as separate metrics.
         Persists runtime execution records for continuous monitoring.
         """
@@ -244,20 +239,17 @@ class WorkflowLifecycleService:
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         execution_id = f"exec_{uuid.uuid4().hex[:12]}"
 
-        # 1. Resolve Active Workflow Configuration
-        active_rec = None
-        if db:
-            active_rec = db.query(WorkflowVersion).filter(
-                WorkflowVersion.status.in_(["ACTIVE", "active"])
-            ).first()
-
-        if active_rec and isinstance(active_rec.configuration, dict):
-            wf_config = active_rec.configuration
-            active_version_id = active_rec.version_id
-        else:
-            base_wf = get_baseline_workflow()
-            wf_config = base_wf.to_dict()
-            active_version_id = "baseline"
+        # 1. Resolve Workflow Configuration via Runtime Selector
+        from app.services.agent_evo.runtime_selector import RuntimeWorkflowSelector
+        selection = RuntimeWorkflowSelector.select_workflow_for_query(
+            query=query,
+            db=db,
+            candidate_version_id_override=workflow_version_id,
+        )
+        active_version_id = selection.version_id
+        wf_config = selection.configuration or {}
+        task_category = selection.task_category
+        selection_reason = selection.selection_reason
 
         retrieval_cfg = wf_config.get("retrieval", {})
         model_cfg = wf_config.get("model", {})
@@ -266,13 +258,17 @@ class WorkflowLifecycleService:
 
         top_k = retrieval_cfg.get("top_k", 5)
         sim_threshold = retrieval_cfg.get("similarity_threshold", 0.35)
+        enable_reranking = bool(retrieval_cfg.get("reranking", True))
         model_id = model_cfg.get("model_id", "gemini-3.5-flash-lite")
         provider = model_cfg.get("provider", "Google")
         template_name = prompt_cfg.get("template_name", "default_medical")
         custom_instructions = prompt_cfg.get("custom_instructions")
         context_compression = exec_cfg.get("context_compression", False)
+        wf_temperature = model_cfg.get("temperature")
+        wf_max_tokens = model_cfg.get("max_tokens")
 
         # 2. Execute RAG Retrieval with exact active configuration
+        retrieval_start = time.perf_counter()
         retrieval = execute_rag_retrieval(
             user_id=user_id,
             query=query,
@@ -280,7 +276,9 @@ class WorkflowLifecycleService:
             top_k=top_k,
             relevance_threshold=sim_threshold,
             db=db,
+            enable_reranking=enable_reranking,
         )
+        retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
 
         context_str = ""
         if retrieval.summary_context and retrieval.summary_context.strip():
@@ -292,9 +290,10 @@ class WorkflowLifecycleService:
                 parts.append(f"[{sec}]\n{r.content}")
             context_str = "\n\n".join(parts)
 
+        raw_context_str = context_str
         # 3. Apply Context Compression Operator if enabled in active workflow
         if context_compression:
-            context_str = apply_context_compression_operator(context_str)
+            context_str = apply_context_compression_operator(raw_context_str)
 
         # 4. Build Prompt
         final_prompt = build_candidate_prompt(
@@ -310,35 +309,63 @@ class WorkflowLifecycleService:
         model_name = adapter.name if adapter else model_id
 
         llm_start = time.perf_counter()
+        llm_success = True
+        llm_error = None
         try:
-            llm_resp = await llm_router.generate_single(
-                model_key=model_id,
-                query=query,
-                context=context_str,
-            )
+            if adapter and hasattr(adapter, "generate"):
+                llm_resp = await adapter.generate(
+                    query=query,
+                    context=context_str,
+                    system_prompt=final_prompt,
+                    temperature=wf_temperature,
+                    max_tokens=wf_max_tokens,
+                )
+            else:
+                llm_resp = await llm_router.generate_single(
+                    model_key=model_id,
+                    query=query,
+                    context=context_str,
+                    system_prompt=final_prompt,
+                    temperature=wf_temperature,
+                    max_tokens=wf_max_tokens,
+                )
             llm_latency_ms = round(llm_resp.latency_ms if llm_resp.latency_ms else (time.perf_counter() - llm_start) * 1000, 2)
             answer_text = llm_resp.answer if llm_resp.success or llm_resp.answer else "The requested information could not be generated."
             raw_usage = llm_resp.raw_usage or {}
+            llm_success = llm_resp.success
+            llm_error = llm_resp.error
         except Exception as e:
             logger.error(f"LLM execution failed during active workflow query: {e}")
             llm_latency_ms = round((time.perf_counter() - llm_start) * 1000, 2)
             answer_text = f"Execution error: {str(e)}"
             raw_usage = {}
+            llm_success = False
+            llm_error = str(e)
 
-        total_execution_time_ms = round((time.perf_counter() - overall_start) * 1000, 2)
+        pipeline_exec_ms = round(retrieval_ms + llm_latency_ms, 2)
+        total_execution_time_ms = round(max((time.perf_counter() - overall_start) * 1000, pipeline_exec_ms), 2)
 
-        # 6. Token & Cost Calculation
-        token_usage = extract_token_usage(
-            raw_usage=raw_usage,
+        # 6. Evaluation Engine Execution for Groundedness & Claim Verification
+        from app.services.evaluation.evaluator import get_evaluation_engine, EvaluationInput
+        eval_engine = get_evaluation_engine()
+        eval_input = EvaluationInput(
+            question=query,
             generated_answer=answer_text,
             retrieved_context=context_str,
-            query=query,
+            expected_answer=expected_answer,
+            model_name=model_name,
+            latency_ms=llm_latency_ms,
+            execution_time_ms=pipeline_exec_ms,
+            raw_usage=raw_usage,
+            success=llm_success,
+            error=llm_error,
         )
-        input_tokens = token_usage.input_tokens
-        output_tokens = token_usage.output_tokens
-        total_tokens = token_usage.total_tokens
-        cost_breakdown = calculate_cost(model_name, input_tokens, output_tokens)
-        total_cost = cost_breakdown.total_cost
+        eval_result = eval_engine.evaluate(eval_input)
+
+        input_tokens = eval_result.input_tokens or 0
+        output_tokens = eval_result.output_tokens or 0
+        total_tokens = eval_result.total_tokens or 0
+        total_cost = eval_result.total_cost or 0.0
 
         # 7. Format Source List
         sources = [
@@ -353,7 +380,50 @@ class WorkflowLifecycleService:
             for r in (retrieval.results or [])
         ]
 
-        # 8. Persist Runtime Execution Record
+        # 8. Structured Runtime Stage Execution Trace
+        execution_trace = {
+            "stages": {
+                "retrieval": {
+                    "latency_ms": retrieval_ms,
+                    "chunks_retrieved": len(retrieval.results or []),
+                    "reranking_enabled": enable_reranking,
+                    "similarity_threshold": sim_threshold,
+                    "top_k": top_k,
+                },
+                "compression": {
+                    "enabled": context_compression,
+                    "original_context_length": len(raw_context_str),
+                    "effective_context_length": len(context_str),
+                },
+                "prompt": {
+                    "template": template_name,
+                    "custom_instructions_applied": bool(custom_instructions),
+                },
+                "llm_generation": {
+                    "model": model_name,
+                    "provider": provider,
+                    "latency_ms": llm_latency_ms,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "temperature": wf_temperature,
+                    "max_tokens": wf_max_tokens,
+                    "success": llm_success,
+                },
+                "evidence_verification": {
+                    "groundedness": eval_result.groundedness,
+                    "hallucination_rate": eval_result.hallucination_rate,
+                    "total_claims": eval_result.total_claims,
+                    "supported_claims": eval_result.supported_claim_count,
+                    "unsupported_claims": eval_result.unsupported_claim_count,
+                    "claim_breakdown": eval_result.details.get("claim_breakdown", []),
+                },
+            },
+            "effective_configuration": wf_config,
+            "task_category": task_category,
+            "selection_reason": selection_reason,
+        }
+
+        # 9. Persist Runtime Execution Record
         if db:
             exec_record = WorkflowExecution(
                 execution_id=execution_id,
@@ -370,7 +440,9 @@ class WorkflowLifecycleService:
                 cost=total_cost,
                 llm_latency_ms=llm_latency_ms,
                 total_execution_time_ms=total_execution_time_ms,
-                status="success",
+                groundedness=eval_result.groundedness,
+                execution_trace=execution_trace,
+                status="success" if llm_success else "error",
                 created_at=now_utc,
             )
             db.add(exec_record)
@@ -390,8 +462,12 @@ class WorkflowLifecycleService:
             cost=total_cost,
             llm_latency_ms=llm_latency_ms,
             total_execution_time_ms=total_execution_time_ms,
-            status="success",
+            status="success" if llm_success else "error",
             created_at=now_utc.isoformat(),
+            task_category=task_category,
+            selection_reason=selection_reason,
+            groundedness=eval_result.groundedness,
+            execution_trace=execution_trace,
         )
 
     @classmethod
@@ -460,6 +536,8 @@ class WorkflowLifecycleService:
                 total_execution_time_ms=r.total_execution_time_ms,
                 status=r.status,
                 created_at=r.created_at.isoformat() if hasattr(r.created_at, "isoformat") else str(r.created_at),
+                groundedness=r.groundedness,
+                execution_trace=r.execution_trace,
             )
             for r in records
         ]

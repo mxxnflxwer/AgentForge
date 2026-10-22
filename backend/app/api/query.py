@@ -122,42 +122,53 @@ async def query_answer(
     overall_start = time.perf_counter()
     retrieval_start = time.perf_counter()
 
-    active_wf_info = None
-    active_version_id = "baseline"
-    context_compression = False
-    effective_top_k = request.top_k
-    effective_model = request.model
-    prompt_template_name = "default"
-    custom_instructions = None
+    from app.services.agent_evo.runtime_selector import RuntimeWorkflowSelector
+    selection = RuntimeWorkflowSelector.select_workflow_for_query(
+        query=request.query,
+        db=db,
+    )
 
-    if db:
-        try:
-            from app.services.agent_evo.workflow_lifecycle_service import WorkflowLifecycleService
-            active_wf_info = WorkflowLifecycleService.get_active_workflow(db=db)
-            if active_wf_info and active_wf_info.is_active_set:
-                active_version_id = active_wf_info.active_version_id
-                cfg = active_wf_info.configuration or {}
-                effective_top_k = cfg.get("retrieval", {}).get("top_k", request.top_k)
-                context_compression = cfg.get("execution", {}).get("context_compression", False)
-                if request.model == "gemini" and cfg.get("model", {}).get("model_id"):
-                    effective_model = cfg.get("model", {}).get("model_id")
-                prompt_template_name = cfg.get("prompt", {}).get("template_name", "default")
-                custom_instructions = cfg.get("prompt", {}).get("custom_instructions")
-        except Exception as e:
-            logger.warning(f"Could not load active workflow for query answer: {e}")
+    active_version_id = selection.version_id
+    task_category = selection.task_category
+    selection_reason = selection.selection_reason
+    cfg = selection.configuration or {}
+
+    effective_top_k = cfg.get("retrieval", {}).get("top_k", request.top_k)
+    sim_threshold = cfg.get("retrieval", {}).get("similarity_threshold", 0.35)
+    enable_reranking = bool(cfg.get("retrieval", {}).get("reranking", True))
+    context_compression = cfg.get("execution", {}).get("context_compression", False)
+    
+    requested_model = (request.model or "").strip()
+    if not requested_model or requested_model.lower() in ("default", "baseline"):
+        model_to_use = cfg.get("model", {}).get("model_id", "gemini")
+    else:
+        model_to_use = requested_model
+
+    llm_router = get_llm_router()
+    adapter = llm_router.get_adapter(model_to_use)
+    if not adapter:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Model adapter for '{model_to_use}' is not supported or unavailable. Supported models: gemini, qwen, gpt_oss",
+        )
+    model_display_name = adapter.name
+    model_provider = adapter.provider
+    model_id = adapter.model_id
+    prompt_template_name = cfg.get("prompt", {}).get("template_name", "default")
+    custom_instructions = cfg.get("prompt", {}).get("custom_instructions")
+    wf_temperature = cfg.get("model", {}).get("temperature")
+    wf_max_tokens = cfg.get("model", {}).get("max_tokens")
 
     retrieval = execute_rag_retrieval(
         user_id=current_user.id,
         query=request.query,
         document_id=request.document_id,
         top_k=effective_top_k,
+        relevance_threshold=sim_threshold,
         db=db,
+        enable_reranking=enable_reranking,
     )
     retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
-
-    llm_router = get_llm_router()
-    adapter = llm_router.get_adapter(effective_model) or llm_router.get_adapter("gemini")
-    model_display_name = adapter.name if adapter else effective_model
 
     eval_engine = get_evaluation_engine()
 
@@ -178,11 +189,49 @@ async def query_answer(
         eval_result = eval_engine.evaluate(eval_input)
 
         exec_id = f"exec_{int(time.time()*1000)}"
+        trace_not_found = {
+            "stages": {
+                "retrieval": {
+                    "latency_ms": retrieval_ms,
+                    "chunks_retrieved": 0,
+                    "reranking_enabled": enable_reranking,
+                    "similarity_threshold": sim_threshold,
+                    "top_k": effective_top_k,
+                },
+                "compression": {"enabled": context_compression, "effective_context_length": 0},
+                "prompt": {"template": prompt_template_name, "custom_instructions_applied": bool(custom_instructions)},
+                "llm_generation": {"model": model_display_name, "latency_ms": 0.0, "status": "skipped_not_found"},
+                "evidence_verification": {
+                    "groundedness": eval_result.groundedness,
+                    "total_claims": eval_result.total_claims,
+                    "supported_claims": eval_result.supported_claim_count,
+                    "unsupported_claims": eval_result.unsupported_claim_count,
+                    "claim_breakdown": eval_result.details.get("claim_breakdown", []),
+                },
+            },
+            "effective_configuration": {
+                "model": {"model_id": model_id, "provider": model_provider},
+                "retrieval": {"top_k": effective_top_k, "similarity_threshold": sim_threshold, "reranking": enable_reranking},
+                "prompt": {"template_name": prompt_template_name, "custom_instructions": custom_instructions},
+                "execution": {"context_compression": context_compression},
+            },
+            "task_category": task_category,
+            "selection_reason": selection_reason,
+        }
+        logger.info(
+            f"Query classification: '{task_category}' | Selected workflow version: '{active_version_id}' | "
+            f"Selection reason: '{selection_reason}' | Execution metrics: groundedness={eval_result.groundedness}, "
+            f"cost={eval_result.total_cost}, latency={eval_result.latency_ms}ms"
+        )
         return QueryAnswerResponse(
             status="not_found",
             query=request.query,
             intent=retrieval.intent,
             model=model_display_name,
+            model_id=model_id,
+            provider=model_provider,
+            success=True,
+            error=None,
             answer="The requested information was not found in the uploaded document.",
             context=None,
             sources=[],
@@ -191,12 +240,17 @@ async def query_answer(
             evaluation=convert_eval_result_to_response(eval_result),
             execution_id=exec_id,
             workflow_version_id=active_version_id,
+            task_category=task_category,
+            selection_reason=selection_reason,
+            groundedness=eval_result.groundedness,
+            execution_trace=trace_not_found,
         )
 
-    context_str = build_context_from_retrieval(retrieval)
+    raw_context_str = build_context_from_retrieval(retrieval)
+    context_str = raw_context_str
     if context_compression:
         from app.services.agent_evo.evaluator_adapter import apply_context_compression_operator
-        context_str = apply_context_compression_operator(context_str)
+        context_str = apply_context_compression_operator(raw_context_str)
 
     from app.services.agent_evo.evaluator_adapter import build_candidate_prompt
     sys_prompt = build_candidate_prompt(
@@ -210,6 +264,8 @@ async def query_answer(
         query=request.query,
         context=context_str,
         system_prompt=sys_prompt,
+        temperature=wf_temperature,
+        max_tokens=wf_max_tokens,
     )
 
     # Individual pipeline execution time: retrieval + LLM generation
@@ -234,6 +290,75 @@ async def query_answer(
     sources = extract_sources(retrieval)
     exec_id = f"exec_{int(time.time()*1000)}"
 
+    eval_status = eval_result.details.get("status", "success")
+    if not llm_resp.success:
+        response_status = "insufficient_credits" if eval_status == "insufficient_credits" else "error"
+    else:
+        response_status = "success"
+
+    # Construct structured runtime execution trace
+    execution_trace = {
+        "stages": {
+            "retrieval": {
+                "latency_ms": retrieval_ms,
+                "chunks_retrieved": len(sources),
+                "reranking_enabled": enable_reranking,
+                "similarity_threshold": sim_threshold,
+                "top_k": effective_top_k,
+            },
+            "compression": {
+                "enabled": context_compression,
+                "original_context_length": len(raw_context_str),
+                "effective_context_length": len(context_str),
+            },
+            "prompt": {
+                "template": prompt_template_name,
+                "custom_instructions_applied": bool(custom_instructions),
+            },
+            "llm_generation": {
+                "model": llm_resp.model,
+                "model_id": llm_resp.model_id or model_id,
+                "provider": llm_resp.provider or adapter.provider,
+                "latency_ms": llm_resp.latency_ms or 0.0,
+                "input_tokens": eval_result.input_tokens or 0,
+                "output_tokens": eval_result.output_tokens or 0,
+                "temperature": wf_temperature,
+                "max_tokens": wf_max_tokens,
+                "success": llm_resp.success,
+            },
+            "evidence_verification": {
+                "groundedness": eval_result.groundedness,
+                "hallucination_rate": eval_result.hallucination_rate,
+                "total_claims": eval_result.total_claims,
+                "supported_claims": eval_result.supported_claim_count,
+                "unsupported_claims": eval_result.unsupported_claim_count,
+                "claim_breakdown": eval_result.details.get("claim_breakdown", []),
+            },
+        },
+        "effective_configuration": {
+            "model": {
+                "model_id": model_id,
+                "provider": adapter.provider,
+                "temperature": wf_temperature,
+                "max_tokens": wf_max_tokens,
+            },
+            "retrieval": {
+                "top_k": effective_top_k,
+                "similarity_threshold": sim_threshold,
+                "reranking": enable_reranking,
+            },
+            "prompt": {
+                "template_name": prompt_template_name,
+                "custom_instructions": custom_instructions,
+            },
+            "execution": {
+                "context_compression": context_compression,
+            },
+        },
+        "task_category": task_category,
+        "selection_reason": selection_reason,
+    }
+
     # Persist runtime execution record in database
     if db:
         try:
@@ -248,14 +373,16 @@ async def query_answer(
                 response=llm_resp.answer,
                 retrieved_chunks=[s.model_dump() for s in sources],
                 model=llm_resp.model,
-                provider="Google" if "gemini" in llm_resp.model.lower() else "OpenRouter",
-                input_tokens=eval_result.input_tokens,
-                output_tokens=eval_result.output_tokens,
-                total_tokens=eval_result.total_tokens,
-                cost=eval_result.total_cost,
+                provider=llm_resp.provider or adapter.provider,
+                input_tokens=eval_result.input_tokens or 0,
+                output_tokens=eval_result.output_tokens or 0,
+                total_tokens=eval_result.total_tokens or 0,
+                cost=eval_result.total_cost or 0.0,
                 llm_latency_ms=llm_resp.latency_ms or 0.0,
                 total_execution_time_ms=total_exec_ms,
-                status="success" if llm_resp.success or llm_resp.answer else "error",
+                groundedness=eval_result.groundedness,
+                execution_trace=execution_trace,
+                status=response_status,
                 created_at=now_utc,
             )
             db.add(db_exec)
@@ -263,19 +390,34 @@ async def query_answer(
         except Exception as e:
             logger.warning(f"Failed to record runtime execution metrics: {e}")
 
+    logger.info(
+        f"Query classification: '{task_category}' | Selected workflow version: '{active_version_id}' | "
+        f"Model: '{llm_resp.model}' ({llm_resp.provider}) | Status: '{response_status}' | "
+        f"Selection reason: '{selection_reason}' | Execution metrics: groundedness={eval_result.groundedness}, "
+        f"cost={eval_result.total_cost}, latency={eval_result.latency_ms}ms"
+    )
+
     return QueryAnswerResponse(
-        status="success" if llm_resp.success or llm_resp.answer else "error",
+        status=response_status,
         query=request.query,
         intent=retrieval.intent,
         model=llm_resp.model,
+        model_id=llm_resp.model_id or model_id,
+        provider=llm_resp.provider or adapter.provider,
+        success=llm_resp.success,
+        error=llm_resp.error,
         answer=llm_resp.answer,
         context=context_str,
         sources=sources,
-        latency_ms=llm_resp.latency_ms,
+        latency_ms=llm_resp.latency_ms or 0.0,
         disclaimer=MEDICAL_DISCLAIMER,
         evaluation=convert_eval_result_to_response(eval_result),
         execution_id=exec_id,
         workflow_version_id=active_version_id,
+        task_category=task_category,
+        selection_reason=selection_reason,
+        groundedness=eval_result.groundedness,
+        execution_trace=execution_trace,
     )
 
 
@@ -335,6 +477,7 @@ async def query_compare(
             not_found_results.append(
                 ModelComparisonResult(
                     model=m["name"],
+                    model_id=m["model_id"],
                     provider=m["provider"],
                     answer="The requested information was not found in the uploaded document.",
                     latency_ms=0.0,
@@ -386,9 +529,10 @@ async def query_compare(
         comparison_results.append(
             ModelComparisonResult(
                 model=r.model,
+                model_id=r.model_id,
                 provider=r.provider,
                 answer=r.answer,
-                latency_ms=r.latency_ms,
+                latency_ms=r.latency_ms or 0.0,
                 success=r.success,
                 error=r.error,
                 evaluation=convert_eval_result_to_response(e_res),

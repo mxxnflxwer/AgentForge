@@ -125,14 +125,21 @@ async def evaluate_rag_workflow(
     ]
 
     llm_router = get_llm_router()
-    adapter = llm_router.get_adapter(request.model) or llm_router.get_adapter("gemini")
-    model_name = adapter.name if adapter else request.model
+    adapter = llm_router.get_adapter(request.model)
+    if not adapter:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Model adapter for '{request.model}' is not supported.",
+        )
+    model_name = adapter.name
 
     # Anti-hallucination check if no context was found
     if retrieval.status == "not_found" or not retrieval.results:
         answer_text = "The requested information was not found in the uploaded document."
         latency_ms = 0.0
         raw_usage = None
+        gen_success = True
+        gen_error = None
     else:
         llm_resp = await llm_router.generate_single(
             model_key=request.model,
@@ -142,6 +149,8 @@ async def evaluate_rag_workflow(
         answer_text = llm_resp.answer
         latency_ms = llm_resp.latency_ms
         raw_usage = llm_resp.raw_usage
+        gen_success = llm_resp.success
+        gen_error = llm_resp.error
 
     total_execution_ms = round((time.perf_counter() - overall_start) * 1000, 2)
 
@@ -156,6 +165,8 @@ async def evaluate_rag_workflow(
         latency_ms=latency_ms,
         execution_time_ms=total_execution_ms,
         raw_usage=raw_usage,
+        success=gen_success,
+        error=gen_error,
     )
 
     eval_result = engine.evaluate(eval_input)

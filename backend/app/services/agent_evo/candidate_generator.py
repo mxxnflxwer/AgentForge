@@ -168,15 +168,16 @@ class CandidateGenerator:
         cand = base.clone(
             new_id=f"cand_retrieval_chunking_{rand.randint(100, 999)}",
             new_name="Fine-Grained Chunking Retrieval",
-            new_description="Configured compact chunk size (500 tokens) with 100-token overlap and top_k=6 for granular context retrieval.",
+            new_description="Configured compact chunk size (500 tokens) with 100-token overlap and top_k=6. (Applies during document indexing; queries search active index).",
             mutation_metadata=MutationMetadata(
                 mutation_type=MutationType.RETRIEVAL,
                 parent_workflow_id=base.workflow_id,
-                mutation_description="Configured compact chunk size (500 tokens) with 100-token overlap and top_k=6 for granular context retrieval.",
+                mutation_description="Configured compact chunk size (500 tokens) with 100-token overlap and top_k=6. (Applies during document indexing; queries search active index).",
                 generation_metadata={
                     "chunk_size": 500,
                     "chunk_overlap": 100,
                     "top_k": 6,
+                    "indexing_parameter": True,
                 },
             ),
         )
@@ -405,7 +406,7 @@ class CandidateGenerator:
         if new_overlap >= new_size:
             new_overlap = max(50, new_size // 5)
 
-        rationale = f"Reduced chunk_size from {curr_size} to {new_size} tokens (overlap: {new_overlap}) to minimize extraneous context noise."
+        rationale = f"Configured target chunk_size={new_size} tokens (overlap: {new_overlap}). (Note: Applies during document indexing; query runtime searches current vector index)."
         cand = parent.clone(
             new_id=f"cand_refine_chunk_{rand.randint(100, 999)}",
             new_name="Refined: Granular Chunk Size",

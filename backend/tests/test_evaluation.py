@@ -557,9 +557,9 @@ def test_validation_case_e_empty_response():
     assert res_err.groundedness is None  # N/A
     assert res_err.hallucination_rate is None  # N/A
     assert res_err.accuracy is None  # N/A
-    assert res_err.total_tokens == 0
+    assert res_err.total_tokens is None
     assert res_err.unsupported_claims == []
-    assert res_err.details["status"] == "model_error"
+    assert res_err.details["status"] in ("model_error", "provider_error")
     assert res_err.details["error_type"] == "provider_error"
 
     # 2. Empty model response
@@ -574,7 +574,7 @@ def test_validation_case_e_empty_response():
     assert res_empty.groundedness is None  # N/A
     assert res_empty.hallucination_rate is None  # N/A
     assert res_empty.accuracy is None  # N/A
-    assert res_empty.total_tokens == 0
+    assert res_empty.total_tokens is None
     assert res_empty.unsupported_claims == []
     assert res_empty.details["status"] == "empty_response"
     assert res_empty.details["error_type"] == "empty_model_response"

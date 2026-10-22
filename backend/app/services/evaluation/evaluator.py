@@ -37,15 +37,15 @@ class EvaluationResult(BaseModel):
     unsupported_claims: List[str] = Field(default_factory=list, description="List of unsupported or hallucinated claim statements")
     supported_claim_count: int = Field(0, description="Number of supported factual assertions")
     unsupported_claim_count: int = Field(0, description="Number of unsupported or hallucinated claims")
-    total_claims: int = Field(..., description="Total evaluated factual claims")
-    input_tokens: int = Field(..., description="Input token count")
-    output_tokens: int = Field(..., description="Output token count")
-    total_tokens: int = Field(..., description="Total tokens: input + output")
-    latency_ms: float = Field(..., description="LLM generation latency in ms")
-    execution_time_ms: float = Field(..., description="End-to-end execution time in ms")
-    input_cost: float = Field(..., description="Input token cost in USD")
-    output_cost: float = Field(..., description="Output token cost in USD")
-    total_cost: float = Field(..., description="Total cost in USD")
+    total_claims: int = Field(0, description="Total evaluated factual claims")
+    input_tokens: Optional[int] = Field(None, description="Input token count, or None if unavailable")
+    output_tokens: Optional[int] = Field(None, description="Output token count, or None if unavailable")
+    total_tokens: Optional[int] = Field(None, description="Total tokens: input + output, or None if unavailable")
+    latency_ms: Optional[float] = Field(None, description="LLM generation latency in ms, or None if unavailable")
+    execution_time_ms: Optional[float] = Field(None, description="End-to-end execution time in ms, or None if unavailable")
+    input_cost: Optional[float] = Field(None, description="Input token cost in USD, or None if unavailable")
+    output_cost: Optional[float] = Field(None, description="Output token cost in USD, or None if unavailable")
+    total_cost: Optional[float] = Field(None, description="Total cost in USD, or None if unavailable")
     details: Dict[str, Any] = Field(default_factory=dict, description="Fine-grained claim and evaluation diagnostics")
 
 
@@ -66,11 +66,54 @@ class EvaluationEngine:
         ans_clean = (input_data.generated_answer or "").strip()
         if not input_data.success or input_data.error or not ans_clean:
             eval_duration_ms = round((time.perf_counter() - start_eval_time) * 1000, 2)
-            exec_time = input_data.execution_time_ms if input_data.execution_time_ms is not None else 0.0
+            exec_time = input_data.execution_time_ms if input_data.execution_time_ms is not None else (input_data.latency_ms or 0.0)
             is_provider_error = not input_data.success or bool(input_data.error)
-            status_code = "model_error" if is_provider_error else "empty_response"
-            error_type = "provider_error" if is_provider_error else "empty_model_response"
             error_msg = input_data.error or ("Empty model response" if not ans_clean else None)
+
+            # Determine failure classification: Insufficient Credits vs Provider Error vs Empty Response
+            is_credit_err = False
+            if error_msg:
+                lower_err = error_msg.lower()
+                if "402" in lower_err or "credit" in lower_err or "payment required" in lower_err:
+                    is_credit_err = True
+
+            if is_credit_err:
+                status_code = "insufficient_credits"
+                error_type = "insufficient_credits"
+            elif is_provider_error:
+                status_code = "provider_error"
+                error_type = "provider_error"
+            else:
+                status_code = "empty_response"
+                error_type = "empty_model_response"
+
+            # Check if actual raw token usage was provided despite failure
+            raw_usage = input_data.raw_usage
+            if raw_usage and isinstance(raw_usage, dict) and any(k in raw_usage for k in ("prompt_tokens", "total_tokens", "candidatesTokenCount", "promptTokenCount")):
+                token_usage = extract_token_usage(
+                    raw_usage=raw_usage,
+                    generated_answer=input_data.generated_answer,
+                    retrieved_context=input_data.retrieved_context,
+                    query=input_data.question,
+                )
+                input_toks = token_usage.input_tokens
+                output_toks = token_usage.output_tokens
+                total_toks = token_usage.total_tokens
+                cost_breakdown = calculate_cost(
+                    model_name=input_data.model_name,
+                    input_tokens=input_toks,
+                    output_tokens=output_toks,
+                )
+                in_cost = cost_breakdown.input_cost
+                out_cost = cost_breakdown.output_cost
+                tot_cost = cost_breakdown.total_cost
+            else:
+                input_toks = None
+                output_toks = None
+                total_toks = None
+                in_cost = None
+                out_cost = None
+                tot_cost = None
 
             return EvaluationResult(
                 model=input_data.model_name,
@@ -82,14 +125,14 @@ class EvaluationEngine:
                 supported_claim_count=0,
                 unsupported_claim_count=0,
                 total_claims=0,
-                input_tokens=0,
-                output_tokens=0,
-                total_tokens=0,
-                latency_ms=round(input_data.latency_ms or 0.0, 2),
-                execution_time_ms=round(exec_time, 2),
-                input_cost=0.0,
-                output_cost=0.0,
-                total_cost=0.0,
+                input_tokens=input_toks,
+                output_tokens=output_toks,
+                total_tokens=total_toks,
+                latency_ms=round(input_data.latency_ms, 2) if input_data.latency_ms is not None else None,
+                execution_time_ms=round(exec_time, 2) if exec_time is not None else None,
+                input_cost=in_cost,
+                output_cost=out_cost,
+                total_cost=tot_cost,
                 details={
                     "evaluation_duration_ms": eval_duration_ms,
                     "status": status_code,
@@ -100,84 +143,117 @@ class EvaluationEngine:
                 },
             )
 
-        # 1. Groundedness Evaluation
-        groundedness_res: GroundednessResult = calculate_groundedness(
-            generated_answer=input_data.generated_answer,
-            retrieved_context=input_data.retrieved_context,
-        )
-
-        # 2. Hallucination Rate Evaluation (reuses claim breakdown for efficiency)
-        hallucination_res: HallucinationResult = calculate_hallucination_rate(
-            generated_answer=input_data.generated_answer,
-            retrieved_context=input_data.retrieved_context,
-            groundedness_result=groundedness_res,
-        )
-
-        # 3. Accuracy Evaluation (if expected answer is present)
-        accuracy_score = calculate_accuracy(
-            generated_answer=input_data.generated_answer,
-            expected_answer=input_data.expected_answer,
-        )
-
-        # 4. Token Usage Calculation
-        if input_data.input_tokens is not None and input_data.output_tokens is not None:
-            input_toks = max(0, input_data.input_tokens)
-            output_toks = max(0, input_data.output_tokens)
-            total_toks = input_toks + output_toks
-        else:
-            token_usage = extract_token_usage(
-                raw_usage=input_data.raw_usage,
+        try:
+            # 1. Groundedness Evaluation
+            groundedness_res: GroundednessResult = calculate_groundedness(
                 generated_answer=input_data.generated_answer,
                 retrieved_context=input_data.retrieved_context,
-                query=input_data.question,
             )
-            input_toks = token_usage.input_tokens
-            output_toks = token_usage.output_tokens
-            total_toks = token_usage.total_tokens
 
-        # 5. Cost Computation
-        cost_breakdown: CostBreakdown = calculate_cost(
-            model_name=input_data.model_name,
-            input_tokens=input_toks,
-            output_tokens=output_toks,
-        )
+            # 2. Hallucination Rate Evaluation (reuses claim breakdown for efficiency)
+            hallucination_res: HallucinationResult = calculate_hallucination_rate(
+                generated_answer=input_data.generated_answer,
+                retrieved_context=input_data.retrieved_context,
+                groundedness_result=groundedness_res,
+            )
 
-        # 6. Timing & Latency
-        latency = input_data.latency_ms if input_data.latency_ms is not None else 0.0
-        eval_duration_ms = round((time.perf_counter() - start_eval_time) * 1000, 2)
-        exec_time = (
-            input_data.execution_time_ms
-            if input_data.execution_time_ms is not None
-            else round(latency + eval_duration_ms, 2)
-        )
+            # 3. Accuracy Evaluation (if expected answer is present)
+            accuracy_score = calculate_accuracy(
+                generated_answer=input_data.generated_answer,
+                expected_answer=input_data.expected_answer,
+            )
 
-        # 7. Diagnostic Details
-        details: Dict[str, Any] = {
-            "evaluation_duration_ms": eval_duration_ms,
-            "claim_breakdown": [c.model_dump() for c in groundedness_res.claim_details],
-            "pricing_applied": input_data.model_name,
-        }
+            # 4. Token Usage Calculation
+            if input_data.input_tokens is not None and input_data.output_tokens is not None:
+                input_toks = max(0, input_data.input_tokens)
+                output_toks = max(0, input_data.output_tokens)
+                total_toks = input_toks + output_toks
+            else:
+                token_usage = extract_token_usage(
+                    raw_usage=input_data.raw_usage,
+                    generated_answer=input_data.generated_answer,
+                    retrieved_context=input_data.retrieved_context,
+                    query=input_data.question,
+                )
+                input_toks = token_usage.input_tokens
+                output_toks = token_usage.output_tokens
+                total_toks = token_usage.total_tokens
 
-        return EvaluationResult(
-            model=input_data.model_name,
-            accuracy=accuracy_score,
-            groundedness=groundedness_res.groundedness,
-            hallucination_rate=hallucination_res.hallucination_rate,
-            supported_claims=groundedness_res.supported_claims_list,
-            unsupported_claims=hallucination_res.unsupported_claims,
-            supported_claim_count=groundedness_res.supported_claims,
-            unsupported_claim_count=hallucination_res.hallucinated_claims,
-            total_claims=groundedness_res.total_claims,
-            input_tokens=input_toks,
-            output_tokens=output_toks,
-            total_tokens=total_toks,
-            latency_ms=round(latency, 2),
-            execution_time_ms=round(exec_time, 2),
-            input_cost=cost_breakdown.input_cost,
-            output_cost=cost_breakdown.output_cost,
-            total_cost=cost_breakdown.total_cost,
-            details=details,
-        )
+            # 5. Cost Computation
+            cost_breakdown: CostBreakdown = calculate_cost(
+                model_name=input_data.model_name,
+                input_tokens=input_toks,
+                output_tokens=output_toks,
+            )
+
+            # 6. Timing & Latency
+            latency = input_data.latency_ms if input_data.latency_ms is not None else 0.0
+            eval_duration_ms = round((time.perf_counter() - start_eval_time) * 1000, 2)
+            exec_time = (
+                input_data.execution_time_ms
+                if input_data.execution_time_ms is not None
+                else round(latency + eval_duration_ms, 2)
+            )
+
+            # 7. Diagnostic Details
+            details: Dict[str, Any] = {
+                "evaluation_duration_ms": eval_duration_ms,
+                "status": "success",
+                "claim_breakdown": [c.model_dump() for c in groundedness_res.claim_details],
+                "pricing_applied": input_data.model_name,
+            }
+
+            return EvaluationResult(
+                model=input_data.model_name,
+                accuracy=accuracy_score,
+                groundedness=groundedness_res.groundedness,
+                hallucination_rate=hallucination_res.hallucination_rate,
+                supported_claims=groundedness_res.supported_claims_list,
+                unsupported_claims=hallucination_res.unsupported_claims,
+                supported_claim_count=groundedness_res.supported_claims,
+                unsupported_claim_count=hallucination_res.hallucinated_claims,
+                total_claims=groundedness_res.total_claims,
+                input_tokens=input_toks,
+                output_tokens=output_toks,
+                total_tokens=total_toks,
+                latency_ms=round(latency, 2),
+                execution_time_ms=round(exec_time, 2),
+                input_cost=cost_breakdown.input_cost,
+                output_cost=cost_breakdown.output_cost,
+                total_cost=cost_breakdown.total_cost,
+                details=details,
+            )
+        except Exception as e:
+            logger.error(f"Evaluation failed for model {input_data.model_name}: {e}")
+            eval_duration_ms = round((time.perf_counter() - start_eval_time) * 1000, 2)
+            exec_time = input_data.execution_time_ms if input_data.execution_time_ms is not None else 0.0
+            return EvaluationResult(
+                model=input_data.model_name,
+                accuracy=None,
+                groundedness=None,
+                hallucination_rate=None,
+                supported_claims=[],
+                unsupported_claims=[],
+                supported_claim_count=0,
+                unsupported_claim_count=0,
+                total_claims=0,
+                input_tokens=None,
+                output_tokens=None,
+                total_tokens=None,
+                latency_ms=round(input_data.latency_ms, 2) if input_data.latency_ms is not None else None,
+                execution_time_ms=round(exec_time, 2) if exec_time is not None else None,
+                input_cost=None,
+                output_cost=None,
+                total_cost=None,
+                details={
+                    "evaluation_duration_ms": eval_duration_ms,
+                    "status": "evaluation_failed",
+                    "error_type": "evaluation_failed",
+                    "error_message": f"Evaluation engine error: {str(e)}",
+                    "claim_breakdown": [],
+                    "pricing_applied": input_data.model_name,
+                },
+            )
 
     def evaluate_batch(self, inputs: List[EvaluationInput]) -> List[EvaluationResult]:
         """Evaluate multiple LLM execution inputs in sequence."""

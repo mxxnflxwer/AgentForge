@@ -43,10 +43,14 @@ class QueryAnswerSource(BaseModel):
 
 
 class QueryAnswerResponse(BaseModel):
-    status: str = Field(..., description="'success', 'not_found', or 'error'")
+    status: str = Field(..., description="'success', 'not_found', 'insufficient_credits', or 'error'")
     query: str
     intent: str
     model: str
+    model_id: Optional[str] = Field(None, description="Actual model identifier used")
+    provider: Optional[str] = Field(None, description="Model provider name")
+    success: bool = Field(True, description="Whether model generation completed successfully")
+    error: Optional[str] = Field(None, description="Error message if generation failed")
     answer: str
     context: Optional[str] = Field(None, description="Retrieved document context sent to LLM.")
     sources: List[QueryAnswerSource] = []
@@ -58,6 +62,10 @@ class QueryAnswerResponse(BaseModel):
     )
     execution_id: Optional[str] = Field(None, description="Unique runtime execution identifier for telemetry & feedback")
     workflow_version_id: Optional[str] = Field(None, description="Active workflow version ID used for this execution")
+    task_category: Optional[str] = Field(None, description="Classified clinical task category for the query")
+    selection_reason: Optional[str] = Field(None, description="Explainable selection rationale for the chosen workflow")
+    groundedness: Optional[float] = Field(None, description="Groundedness score directly from evaluation")
+    execution_trace: Optional[Dict[str, Any]] = Field(None, description="Detailed stage execution trace")
 
 
 class QueryCompareRequest(BaseModel):
@@ -86,6 +94,7 @@ class QueryCompareRequest(BaseModel):
 
 class ModelComparisonResult(BaseModel):
     model: str
+    model_id: Optional[str] = None
     provider: str
     answer: str
     latency_ms: float

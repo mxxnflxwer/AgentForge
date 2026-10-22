@@ -61,6 +61,8 @@ class WorkflowExecution(Base):
     cost = Column(Float, default=0.0, nullable=False)
     llm_latency_ms = Column(Float, default=0.0, nullable=False)
     total_execution_time_ms = Column(Float, default=0.0, nullable=False)
+    groundedness = Column(Float, nullable=True)
+    execution_trace = Column(JSON, nullable=True)
     status = Column(String(32), default="success", nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

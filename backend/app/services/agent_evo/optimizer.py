@@ -6,7 +6,7 @@ import uuid
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.workflow_version import WorkflowVersion
+from app.models.workflow_version import WorkflowAuditEvent, WorkflowVersion
 from app.services.agent_evo.candidate_generator import generate_candidates
 from app.services.agent_evo.evaluator_adapter import EvaluatorAdapter
 from app.services.agent_evo.pareto import EvaluatedCandidate, ParetoArchive
@@ -110,6 +110,30 @@ class AgentEvoOptimizer:
         version_id = f"wf_v{version_number}_{uuid.uuid4().hex[:6]}"
         now_utc = datetime.datetime.now(datetime.timezone.utc)
 
+        # Determine evaluated task categories from run workload or query
+        from app.services.agent_evo.runtime_selector import RuntimeWorkflowSelector
+        task_cats: List[str] = []
+        if getattr(run, "workload", None) and isinstance(run.workload, list):
+            task_cats = list(dict.fromkeys(RuntimeWorkflowSelector.classify_query_task(q) for q in run.workload))
+        elif getattr(run, "query", None):
+            task_cats = [RuntimeWorkflowSelector.classify_query_task(run.query)]
+        else:
+            task_cats = ["specific_fact"]
+
+        config_dict = matching_cand.workflow.to_dict()
+        config_dict["task_categories"] = task_cats
+
+        if getattr(run, "scheduler_decision", None):
+            sched_dec = run.scheduler_decision
+            config_dict["scheduler_decision"] = sched_dec.model_dump() if hasattr(sched_dec, "model_dump") else sched_dec
+
+        if matching_cand.mutation_metadata:
+            mut_meta = matching_cand.mutation_metadata
+            config_dict["mutation_metadata"] = mut_meta.model_dump() if hasattr(mut_meta, "model_dump") else mut_meta
+
+        eval_snapshot_dict = matching_cand.metrics.model_dump()
+        eval_snapshot_dict["evaluated_task_categories"] = task_cats
+
         wf_version = WorkflowVersion(
             version_id=version_id,
             version_number=version_number,
@@ -119,8 +143,8 @@ class AgentEvoOptimizer:
             source_candidate_id=candidate_id,
             model_id=matching_cand.workflow.model.model_id,
             provider=matching_cand.workflow.model.provider,
-            configuration=matching_cand.workflow.to_dict(),
-            evaluation_snapshot=matching_cand.metrics.model_dump(),
+            configuration=config_dict,
+            evaluation_snapshot=eval_snapshot_dict,
             status="approved",
             approved_by=approved_by,
             approved_at=now_utc,
@@ -128,7 +152,23 @@ class AgentEvoOptimizer:
         )
 
         if db:
+            audit_event = WorkflowAuditEvent(
+                event_id=f"audit_{uuid.uuid4().hex[:10]}",
+                workflow_version_id=version_id,
+                event_type="APPROVAL",
+                performed_by=None,
+                user_email=approved_by,
+                details={
+                    "source_run_id": run_id,
+                    "source_candidate_id": candidate_id,
+                    "version_number": version_number,
+                    "scheduler_decision": config_dict.get("scheduler_decision"),
+                    "mutation_metadata": config_dict.get("mutation_metadata"),
+                },
+                created_at=now_utc,
+            )
             db.add(wf_version)
+            db.add(audit_event)
             db.commit()
             db.refresh(wf_version)
 

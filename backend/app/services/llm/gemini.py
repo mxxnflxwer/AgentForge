@@ -43,9 +43,12 @@ class GeminiAdapter(BaseLLMAdapter):
         query: str,
         context: str,
         system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> LLMResponse:
         """
         Calls Gemini 3.5 Flash-Lite API with anti-hallucination context and system prompt.
+        Accepts per-request generation overrides for temperature and max output tokens.
         """
         if not self.is_configured():
             logger.info("Gemini API key not configured. Returning fallback response.")
@@ -57,6 +60,17 @@ class GeminiAdapter(BaseLLMAdapter):
 
         sys_instruction = system_prompt or DEFAULT_MEDICAL_SYSTEM_PROMPT
         user_prompt = build_medical_prompt(query=query, context=context)
+
+        eff_temp = (
+            max(0.0, min(2.0, float(temperature)))
+            if temperature is not None
+            else getattr(settings, "LLM_TEMPERATURE", 0.1)
+        )
+        eff_max_tokens = (
+            max(16, min(8192, int(max_tokens)))
+            if max_tokens is not None
+            else getattr(settings, "LLM_MAX_TOKENS", 1024)
+        )
 
         url = f"{self.base_url}/models/{self.model_id}:generateContent?key={self.api_key}"
         headers = {
@@ -75,8 +89,8 @@ class GeminiAdapter(BaseLLMAdapter):
                 "parts": [{"text": sys_instruction}],
             },
             "generationConfig": {
-                "temperature": getattr(settings, "LLM_TEMPERATURE", 0.1),
-                "maxOutputTokens": getattr(settings, "LLM_MAX_TOKENS", 1024),
+                "temperature": eff_temp,
+                "maxOutputTokens": eff_max_tokens,
             },
         }
 
@@ -104,12 +118,27 @@ class GeminiAdapter(BaseLLMAdapter):
                         await asyncio.sleep(1.5)
                         continue
 
+                    if response.status_code == 402 or (response.status_code != 200 and "credit" in response.text.lower()):
+                        err_msg = f"Insufficient provider credits (HTTP {response.status_code}): {response.text[:200]}"
+                        logger.error(err_msg)
+                        return LLMResponse(
+                            model=self.name,
+                            provider=self.provider,
+                            model_id=self.model_id,
+                            answer="Insufficient provider credits: Google Gemini API quota or credits exhausted.",
+                            latency_ms=latency_ms,
+                            success=False,
+                            error=err_msg,
+                            raw_usage=None,
+                        )
+
                     if response.status_code != 200:
                         err_msg = f"Gemini API returned status {response.status_code}: {response.text[:200]}"
                         logger.error(err_msg)
                         return LLMResponse(
                             model=self.name,
                             provider=self.provider,
+                            model_id=self.model_id,
                             answer="",
                             latency_ms=latency_ms,
                             success=False,
@@ -122,6 +151,7 @@ class GeminiAdapter(BaseLLMAdapter):
                         return LLMResponse(
                             model=self.name,
                             provider=self.provider,
+                            model_id=self.model_id,
                             answer="",
                             latency_ms=latency_ms,
                             success=False,
@@ -139,6 +169,7 @@ class GeminiAdapter(BaseLLMAdapter):
                     return LLMResponse(
                         model=self.name,
                         provider=self.provider,
+                        model_id=self.model_id,
                         answer=answer_text or "The requested information was not found in the uploaded document.",
                         latency_ms=latency_ms,
                         success=True,
@@ -160,6 +191,7 @@ class GeminiAdapter(BaseLLMAdapter):
                 return LLMResponse(
                     model=self.name,
                     provider=self.provider,
+                    model_id=self.model_id,
                     answer="",
                     latency_ms=latency_ms,
                     success=False,
@@ -174,6 +206,7 @@ class GeminiAdapter(BaseLLMAdapter):
                 return LLMResponse(
                     model=self.name,
                     provider=self.provider,
+                    model_id=self.model_id,
                     answer="",
                     latency_ms=latency_ms,
                     success=False,
@@ -183,6 +216,7 @@ class GeminiAdapter(BaseLLMAdapter):
         return LLMResponse(
             model=self.name,
             provider=self.provider,
+            model_id=self.model_id,
             answer="",
             latency_ms=last_latency,
             success=False,

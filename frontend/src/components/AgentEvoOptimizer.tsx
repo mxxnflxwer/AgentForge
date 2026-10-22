@@ -294,6 +294,7 @@ export interface LineageNode {
   provider: string
   mutation_type?: string | null
   refinement_operation?: string | null
+  scheduler_strategy?: string | null
   fields_changed?: string[] | null
   rationale?: string | null
   before_configuration?: Record<string, any> | null
@@ -546,6 +547,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   const [isBenchmarking, setIsBenchmarking] = useState<boolean>(false)
   const [benchmarkReport, setBenchmarkReport] = useState<BenchmarkReport | null>(null)
   const [, setBenchmarkHistory] = useState<BenchmarkReport[]>([])
+  const [expandedBenchmarkVersion, setExpandedBenchmarkVersion] = useState<string | null>(null)
 
   // Lineage State
   const [lineageData, setLineageData] = useState<LineageData | null>(null)
@@ -2522,6 +2524,13 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                 </div>
               </div>
 
+              {/* Stale Benchmark Warning if any workflow version was approved after this benchmark run */}
+              {workflowVersions.some((v) => v.version_id !== 'baseline' && new Date(v.approved_at || v.created_at).getTime() > new Date(benchmarkReport.created_at).getTime()) && (
+                <div style={{ marginBottom: 16, padding: '10px 16px', background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: 6, color: '#92400e', fontSize: '0.86rem' }}>
+                  <strong>⚠️ Stale Benchmark Notice:</strong> Newer approved workflow versions exist in the database that were created after this benchmark was executed ({new Date(benchmarkReport.created_at).toLocaleString()}). Consider re-running the benchmark across all current active versions.
+                </div>
+              )}
+
               <div className="evo-summary-box" style={{ marginBottom: 16 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '8px' }}>
                   <div><strong>Benchmark ID:</strong> <code>{benchmarkReport.benchmark_id}</code></div>
@@ -2548,33 +2557,103 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                       <th>LLM Latency</th>
                       <th>Tokens</th>
                       <th>Pareto Status</th>
+                      <th>Evidence & Stages</th>
                     </tr>
                   </thead>
                   <tbody>
                     {benchmarkReport.results.map((r) => {
                       const isBase = r.version_id === 'baseline' || r.version === 'baseline'
                       const isPareto = r.is_pareto_optimal
+                      const isExpanded = expandedBenchmarkVersion === r.version_id
+                      const mutType = (r.configuration as any)?.mutation_metadata?.mutation_type || (isBase ? 'BASELINE' : 'MUTATION')
+                      const schedStrat = (r.configuration as any)?.scheduler_decision?.selected_strategy || (r.configuration as any)?.scheduler_decision?.strategy || 'ADAPTIVE'
+
                       return (
-                        <tr key={r.version_id} className="evo-table-row">
-                          <td>
-                            <span className="evo-version-tag" style={isBase ? { background: '#0284c7' } : undefined}>
-                              {isBase ? 'Base' : `v${r.version_number ?? ''}`}
-                            </span>
-                            <div className="evo-cell-sub"><code>{r.version_id}</code></div>
-                          </td>
-                          <td><strong>{r.workflow_name || r.workflow}</strong></td>
-                          <td><span className="evo-model-id">{r.model_id || r.model}</span></td>
-                          <td><strong className="evo-val-green">{(r.groundedness * 100).toFixed(1)}%</strong></td>
-                          <td><span className="evo-val-cyan">{((r.hallucination_rate ?? r.hallucination ?? 0) * 100).toFixed(1)}%</span></td>
-                          <td><span className="evo-cost-val">${(r.cost_per_query ?? r.cost).toFixed(6)}</span></td>
-                          <td><span className="evo-val-purple">{(r.llm_latency_ms ?? r.latency_ms ?? 0).toFixed(0)} ms</span></td>
-                          <td><span>{r.total_tokens}</span></td>
-                          <td>
-                            <span className={isPareto ? 'evo-pareto-optimal-badge' : 'evo-dominated-badge'}>
-                              {r.pareto_status}
-                            </span>
-                          </td>
-                        </tr>
+                        <React.Fragment key={r.version_id}>
+                          <tr className="evo-table-row">
+                            <td>
+                              <span className="evo-version-tag" style={isBase ? { background: '#0284c7' } : undefined}>
+                                {isBase ? 'Base' : `v${r.version_number ?? ''}`}
+                              </span>
+                              <div className="evo-cell-sub"><code>{r.version_id}</code></div>
+                            </td>
+                            <td><strong>{r.workflow_name || r.workflow}</strong></td>
+                            <td><span className="evo-model-id">{r.model_id || r.model}</span></td>
+                            <td><strong className="evo-val-green">{(r.groundedness * 100).toFixed(1)}%</strong></td>
+                            <td><span className="evo-val-cyan">{((r.hallucination_rate ?? r.hallucination ?? 0) * 100).toFixed(1)}%</span></td>
+                            <td><span className="evo-cost-val">${(r.cost_per_query ?? r.cost).toFixed(6)}</span></td>
+                            <td><span className="evo-val-purple">{(r.llm_latency_ms ?? r.latency_ms ?? 0).toFixed(0)} ms</span></td>
+                            <td><span>{r.total_tokens}</span></td>
+                            <td>
+                              <span className={isPareto ? 'evo-pareto-optimal-badge' : 'evo-dominated-badge'}>
+                                {r.pareto_status}
+                              </span>
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="evo-btn-inspect"
+                                style={{ padding: '3px 8px', fontSize: '0.72rem' }}
+                                onClick={() => setExpandedBenchmarkVersion(isExpanded ? null : r.version_id)}
+                              >
+                                {isExpanded ? 'Hide Trace' : '🔍 Evidence & Stages'}
+                              </button>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr className="evo-table-detail-row">
+                              <td colSpan={10} style={{ padding: '12px 16px', background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 12 }}>
+                                  <div style={{ padding: 10, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 6 }}>
+                                    <div style={{ fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>🧬 Mutation & Scheduler Provenance</div>
+                                    <div style={{ fontSize: '0.82rem' }}>Candidate Mutation: <strong>{String(mutType).toUpperCase()}</strong></div>
+                                    <div style={{ fontSize: '0.82rem' }}>Scheduler Strategy: <strong>{String(schedStrat).toUpperCase()}</strong></div>
+                                    {r.parent_workflow_id && <div style={{ fontSize: '0.82rem' }}>Parent: <code>{r.parent_workflow_id}</code></div>}
+                                  </div>
+                                  <div style={{ padding: 10, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 6 }}>
+                                    <div style={{ fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>⚙️ Executed Stages</div>
+                                    <div style={{ fontSize: '0.82rem' }}>Retrieval: top_k={r.retrieval?.top_k ?? 5}, rerank={r.retrieval?.reranking ? 'Active' : 'Bypassed'}</div>
+                                    <div style={{ fontSize: '0.82rem' }}>Compression: {r.context_compression ? 'Active' : 'Bypassed'}</div>
+                                    <div style={{ fontSize: '0.82rem' }}>Prompt: {r.prompt_template || 'default'}</div>
+                                  </div>
+                                  <div style={{ padding: 10, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 6 }}>
+                                    <div style={{ fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>📊 Latency & Timing Breakdown</div>
+                                    <div style={{ fontSize: '0.82rem' }}>LLM Latency: {(r.llm_latency_ms ?? 0).toFixed(0)} ms</div>
+                                    <div style={{ fontSize: '0.82rem' }}>Total Pipeline: {(r.execution_time_ms ?? 0).toFixed(0)} ms</div>
+                                    <div style={{ fontSize: '0.82rem' }}>Total Cost: ${(r.cost_per_query ?? r.cost).toFixed(6)}</div>
+                                  </div>
+                                </div>
+
+                                {r.claim_breakdown && r.claim_breakdown.length > 0 && (
+                                  <div style={{ marginTop: 8 }}>
+                                    <div style={{ fontWeight: 700, fontSize: '0.84rem', marginBottom: 6 }}>📑 Factual Evidence Claims ({r.claim_breakdown.length}):</div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
+                                      {r.claim_breakdown.map((claimItem: any, idx: number) => (
+                                        <div
+                                          key={idx}
+                                          style={{
+                                            padding: '6px 10px',
+                                            borderRadius: 4,
+                                            fontSize: '0.8rem',
+                                            background: claimItem.status === 'supported' ? '#f0fdf4' : '#fef2f2',
+                                            border: `1px solid ${claimItem.status === 'supported' ? '#86efac' : '#fca5a5'}`
+                                          }}
+                                        >
+                                          <div><strong>Claim:</strong> {claimItem.claim}</div>
+                                          {claimItem.matched_context_snippet && (
+                                            <div style={{ color: '#475569', fontSize: '0.76rem', marginTop: 2 }}>
+                                              <em>Evidence Quote:</em> "{claimItem.matched_context_snippet}"
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
                       )
                     })}
                   </tbody>
@@ -2634,9 +2713,14 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                           <span>Version ID: <code>{node.version_id}</code></span>
                           <span>Candidate: <code>{node.source_candidate_id}</code></span>
                           <span>
-                            Strategy: <strong>{isCrossover ? 'CROSSOVER' : node.mutation_type?.toUpperCase()}</strong>{' '}
+                            Mutation: <strong>{isCrossover ? 'CROSSOVER' : (node.mutation_type?.toUpperCase() || 'MUTATION')}</strong>{' '}
                             {node.refinement_operation ? `(${node.refinement_operation})` : ''}
                           </span>
+                          {(node.scheduler_strategy || (node.configuration as any)?.scheduler_decision?.selected_strategy || (node.configuration as any)?.scheduler_decision?.strategy) && (
+                            <span>
+                              Scheduler Strategy: <strong>{(node.scheduler_strategy || (node.configuration as any)?.scheduler_decision?.selected_strategy || (node.configuration as any)?.scheduler_decision?.strategy)?.toUpperCase()}</strong>
+                            </span>
+                          )}
                           {isCrossover && node.crossover_map && (
                             <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                               {Object.entries(node.crossover_map).map(([comp, par]) => (

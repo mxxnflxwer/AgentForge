@@ -193,13 +193,85 @@ AgentForge usess **secure server-side sessions** stored in PostgreSQL and delive
 
 ---
 
+## Quickstart on Ubuntu / Debian Linux
+
+### 1. Install System Prerequisites
+```bash
+sudo apt update && sudo apt install -y python3 python3-venv python3-pip docker.io docker-compose-v2 nodejs npm curl git
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+# Log out and back in if running non-root docker for the first time
+```
+
+### 2. Start PostgreSQL Container
+```bash
+docker compose up -d
+```
+PostgreSQL will run on port `5432` with database `agentforge`.
+
+### 3. Setup Backend Environment
+```bash
+cd backend
+cp ../.env.example .env
+# Edit .env to add your LLM API keys:
+# GEMINI_API_KEY=...
+# OPENROUTER_API_KEY=...
+# HUGGINGFACE_API_KEY=...
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+alembic upgrade head
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 4. Setup Frontend Application
+In a separate terminal:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open [http://localhost:5173](http://localhost:5173) in your browser.
+
+### 5. Production Build Verification
+To test frontend production bundle build:
+```bash
+cd frontend
+npm run build
+```
+
+---
+
+## Authentication & User Governance
+
+AgentForge uses **secure server-side sessions** stored in PostgreSQL and delivered to the browser via an `HttpOnly`, `SameSite=Lax` cookie (`session_id`).
+
+### Roles & Security
+- **USER:** Standard role for querying documents and analyzing clinical records.
+- **DEVELOPER:** Elevated governance role for workflow approval, activation, rollback, and evolutionary optimization. Public registration as `DEVELOPER` requires a `developer_secret` key.
+- Passwords are encrypted with `bcrypt` (12 rounds) and never returned in responses.
+
+---
+
 ## Running Automated Tests
 
-Run the test suite with `pytest`:
+Run the full automated test suite (160 tests):
 
 ```bash
 cd backend
+source .venv/bin/activate
 pytest -v
 ```
 
-All 12 authentication and authorization test cases execute in an isolated environment.
+Test coverage includes:
+- **LLM Routing & Real Parameter Injection:** `tests/test_llm.py`
+- **Fact-Based Claim Verification & Groundedness:** `tests/test_evaluation.py`
+- **AgentEvo Evolutionary Optimization & Pareto Front:** `tests/test_agent_evo.py`
+- **Workflow Versioning, Approval, & Activation Lifecycle:** `tests/test_workflow_lifecycle.py`
+- **Session Authentication & Role Governance:** `tests/test_auth.py`
+- **Evolutionary Crossover & Genome Recombination:** `tests/test_agent_evo_crossover.py`
+- **Runtime Selector, Workload Adaptation, & Evidence:** `tests/test_runtime_selector_and_evidence.py`
+- **Single-Model Routing & Error Resilience:** `tests/test_single_model_and_errors.py`
+- **Adaptive Workload Scheduling:** `tests/test_agent_evo_adaptive_workload.py`

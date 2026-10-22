@@ -13,6 +13,8 @@ from app.schemas.agent_evo import (
     ActiveWorkflowResponse,
     ApproveWorkflowRequest,
     ApproveWorkflowResponse,
+    BaselineVsOptimizedComparisonRequest,
+    BaselineVsOptimizedComparisonResponse,
     BenchmarkReportResponse,
     BenchmarkRunListResponse,
     BenchmarkRunRequest,
@@ -71,6 +73,12 @@ def format_version_response(version: WorkflowVersion) -> WorkflowVersionResponse
         if getattr(version, "activated_at", None) and hasattr(version.activated_at, "isoformat")
         else str(version.activated_at) if getattr(version, "activated_at", None) else None
     )
+    task_cats = None
+    if isinstance(version.configuration, dict):
+        task_cats = version.configuration.get("task_categories")
+    if not task_cats and isinstance(version.evaluation_snapshot, dict):
+        task_cats = version.evaluation_snapshot.get("evaluated_task_categories")
+
     return WorkflowVersionResponse(
         id=str(version.id),
         version_id=version.version_id,
@@ -88,6 +96,7 @@ def format_version_response(version: WorkflowVersion) -> WorkflowVersionResponse
         approved_at=approved_at_str,
         activated_at=activated_at_str,
         created_at=created_at_str,
+        task_categories=task_cats,
     )
 
 
@@ -358,11 +367,13 @@ async def run_version_benchmark(
     report = await BenchmarkService.run_benchmark(
         version_ids=request.version_ids,
         query=request.query,
+        workload=request.workload,
         user_id=current_user.id,
         user_email=current_user.email,
         document_id=request.document_id,
         document_ids=request.document_ids,
         expected_answer=request.expected_answer,
+        expected_answers=request.expected_answers,
         preset_name=request.preset_name,
         name=request.name or "Version Benchmark Comparison",
         description=request.description,
@@ -371,6 +382,44 @@ async def run_version_benchmark(
         db=db,
     )
     return report
+
+
+@router.post(
+    "/compare-evaluation",
+    response_model=BaselineVsOptimizedComparisonResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Controlled workload evaluation comparing baseline and optimized workflows",
+)
+@workflows_router.post(
+    "/compare-evaluation",
+    response_model=BaselineVsOptimizedComparisonResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Controlled workload evaluation comparing baseline and optimized workflows (workflows alias)",
+)
+async def compare_baseline_vs_optimized_endpoint(
+    request: BaselineVsOptimizedComparisonRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BaselineVsOptimizedComparisonResponse:
+    """
+    Controlled workload evaluation comparing baseline and an approved optimized workflow:
+    - Evaluates identical workload for both workflows.
+    - Records per-query response, groundedness, claims, tokens, cost, latency, provider, and model ID.
+    - Computes aggregate metrics from raw unrounded metrics.
+    - Reports cost reduction and groundedness difference honestly.
+    - Strictly prevents execution of unapproved candidates.
+    - Distinguishes live provider evaluations from mocked tests.
+    """
+    return await BenchmarkService.compare_baseline_vs_optimized(
+        optimized_version_id=request.optimized_version_id,
+        workload=request.workload,
+        user_id=current_user.id,
+        user_email=current_user.email,
+        baseline_version_id=request.baseline_version_id,
+        document_id=request.document_id,
+        expected_answers=request.expected_answers,
+        db=db,
+    )
 
 
 @router.get(

@@ -384,3 +384,139 @@ def test_api_query_compare_success(client: TestClient, mock_auth_user):
             assert len(data["sources"]) == 1
     finally:
         app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.mark.asyncio
+async def test_gemini_adapter_respects_custom_temperature_and_max_tokens():
+    adapter = GeminiAdapter(api_key="test_key_gemini")
+    captured_payload = None
+
+    async def mock_post(url, json=None, headers=None):
+        nonlocal captured_payload
+        captured_payload = json
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": "Deterministic response."}]},
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {"promptTokenCount": 50, "candidatesTokenCount": 20, "totalTokenCount": 70},
+        }
+        return mock_resp
+
+    with patch("httpx.AsyncClient.post", side_effect=mock_post):
+        resp = await adapter.generate(
+            query="Clinical query",
+            context="Clinical context",
+            temperature=0.0,
+            max_tokens=512,
+        )
+        assert resp.success is True
+        assert captured_payload is not None
+        assert captured_payload["generationConfig"]["temperature"] == 0.0
+        assert captured_payload["generationConfig"]["maxOutputTokens"] == 512
+
+
+@pytest.mark.asyncio
+async def test_qwen_adapter_respects_custom_temperature_and_max_tokens():
+    adapter = QwenAdapter(api_key="test_key_qwen")
+    captured_payload = None
+
+    async def mock_post(url, json=None, headers=None):
+        nonlocal captured_payload
+        captured_payload = json
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "{}"
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "Qwen custom response."}}],
+            "usage": {"prompt_tokens": 40, "completion_tokens": 15, "total_tokens": 55},
+        }
+        return mock_resp
+
+    with patch("httpx.AsyncClient.post", side_effect=mock_post):
+        resp = await adapter.generate(
+            query="Clinical query",
+            context="Clinical context",
+            temperature=0.35,
+            max_tokens=256,
+        )
+        assert resp.success is True
+        assert captured_payload is not None
+        assert captured_payload["temperature"] == 0.35
+        assert captured_payload["max_tokens"] == 256
+
+
+@pytest.mark.asyncio
+async def test_gpt_oss_adapter_respects_custom_temperature_and_max_tokens():
+    adapter = GPTOSSAdapter(api_key="test_key_gpt_oss")
+    captured_payload = None
+
+    async def mock_post(url, json=None, headers=None):
+        nonlocal captured_payload
+        captured_payload = json
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "{}"
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "GPT-OSS custom response."}}],
+            "usage": {"prompt_tokens": 45, "completion_tokens": 25, "total_tokens": 70},
+        }
+        return mock_resp
+
+    with patch("httpx.AsyncClient.post", side_effect=mock_post):
+        resp = await adapter.generate(
+            query="Clinical query",
+            context="Clinical context",
+            temperature=0.7,
+            max_tokens=2048,
+        )
+        assert resp.success is True
+        assert captured_payload is not None
+        assert captured_payload["temperature"] == 0.7
+        assert captured_payload["max_tokens"] == 2048
+
+
+def test_retrieval_service_honors_enable_reranking():
+    from app.services.retrieval_service import execute_rag_retrieval
+
+    mock_store = MagicMock()
+    mock_store.query_similar_chunks.return_value = [
+        {"chunk_id": "c1", "document_id": "d1", "chunk_index": 0, "content": "Text 1", "similarity_score": 0.85, "distance": 0.15},
+        {"chunk_id": "c2", "document_id": "d1", "chunk_index": 1, "content": "Text 2", "similarity_score": 0.75, "distance": 0.25},
+    ]
+    mock_ranker = MagicMock()
+    mock_ranker.rerank.return_value = [
+        {"chunk_id": "c1", "document_id": "d1", "chunk_index": 0, "content": "Text 1", "similarity_score": 0.85, "distance": 0.15, "relevance_score": 0.95}
+    ]
+
+    # 1. With enable_reranking = True (default)
+    res_true = execute_rag_retrieval(
+        user_id="user1",
+        query="patient history",
+        top_k=2,
+        relevance_threshold=0.35,
+        vector_store=mock_store,
+        reranker=mock_ranker,
+        enable_reranking=True,
+    )
+    assert mock_ranker.rerank.called is True
+    assert res_true.total_results == 1
+
+    # 2. With enable_reranking = False
+    mock_ranker.reset_mock()
+    res_false = execute_rag_retrieval(
+        user_id="user1",
+        query="patient history",
+        top_k=2,
+        relevance_threshold=0.35,
+        vector_store=mock_store,
+        reranker=mock_ranker,
+        enable_reranking=False,
+    )
+    assert mock_ranker.rerank.called is False
+    assert res_false.total_results == 2
+

@@ -40,6 +40,8 @@ class CandidateMetrics(BaseModel):
         cost_score = eval_result.total_cost if eval_result.total_cost is not None else 0.0
 
         eval_status = eval_result.details.get("status", status)
+        if eval_status == "provider_error":
+            eval_status = "model_error"
         eval_err = eval_result.details.get("error_message") or error_message
 
         return cls(
@@ -50,11 +52,11 @@ class CandidateMetrics(BaseModel):
             groundedness=eval_result.groundedness,
             hallucination_rate=eval_result.hallucination_rate,
             accuracy=eval_result.accuracy,
-            total_tokens=eval_result.total_tokens,
-            input_tokens=eval_result.input_tokens,
-            output_tokens=eval_result.output_tokens,
-            llm_latency_ms=eval_result.latency_ms,
-            execution_time_ms=eval_result.execution_time_ms,
+            total_tokens=eval_result.total_tokens or 0,
+            input_tokens=eval_result.input_tokens or 0,
+            output_tokens=eval_result.output_tokens or 0,
+            llm_latency_ms=eval_result.latency_ms or 0.0,
+            execution_time_ms=eval_result.execution_time_ms or 0.0,
             status=eval_status,
             error_message=eval_err,
             raw_details=eval_result.details,

@@ -106,6 +106,7 @@ class WorkflowVersionResponse(BaseModel):
     approved_at: str = Field(..., description="ISO 8601 approval timestamp")
     activated_at: Optional[str] = Field(None, description="ISO 8601 activation timestamp if active")
     created_at: str = Field(..., description="ISO 8601 creation timestamp")
+    task_categories: Optional[List[str]] = Field(None, description="Clinical task categories this workflow is evaluated or optimized for")
 
 
 class WorkflowVersionListResponse(BaseModel):
@@ -196,6 +197,10 @@ class WorkflowExecutionResponse(BaseModel):
     total_execution_time_ms: float = 0.0
     status: str = "success"
     created_at: str
+    task_category: Optional[str] = Field(None, description="Classified clinical task category for the query")
+    selection_reason: Optional[str] = Field(None, description="Explainable selection rationale for the chosen workflow")
+    groundedness: Optional[float] = Field(None, description="Evaluated factual groundedness ratio [0.0 - 1.0]")
+    execution_trace: Optional[Dict[str, Any]] = Field(None, description="Structured runtime stage execution trace")
 
 
 class WorkflowExecutionListResponse(BaseModel):
@@ -274,11 +279,14 @@ class BenchmarkRunRequest(BaseModel):
         "clinical",
         description="Preset identifier or custom benchmark description.",
     )
-    query: str = Field(
-        ...,
-        min_length=1,
+    query: Optional[str] = Field(
+        None,
         description="The identical query to evaluate across all selected workflow versions.",
         examples=["What is the primary clinical diagnosis and assessment for this patient?"],
+    )
+    workload: Optional[List[str]] = Field(
+        None,
+        description="Optional evaluation workload of multiple queries to benchmark identically across versions.",
     )
     document_id: Optional[str] = Field(
         None,
@@ -291,6 +299,10 @@ class BenchmarkRunRequest(BaseModel):
     expected_answer: Optional[str] = Field(
         None,
         description="Ground truth reference answer for accuracy computation.",
+    )
+    expected_answers: Optional[List[Optional[str]]] = Field(
+        None,
+        description="Optional ground truth reference answers for workload queries.",
     )
     iterations: int = Field(
         1,
@@ -417,6 +429,7 @@ class VersionLineageNode(BaseModel):
     provider: str
     mutation_type: Optional[str] = None
     refinement_operation: Optional[str] = None
+    scheduler_strategy: Optional[str] = None
     fields_changed: Optional[List[str]] = None
     rationale: Optional[str] = None
     before_configuration: Optional[Dict[str, Any]] = None
@@ -588,3 +601,90 @@ class CrossoverCandidateResponse(BaseModel):
             self.cost_per_query = self.cost
         if self.llm_latency_ms is None:
             self.llm_latency_ms = self.latency_ms
+
+
+# ---------------------------------------------------------------------------
+# Reproducible Baseline vs Optimized Evidence Comparison Schemas
+# ---------------------------------------------------------------------------
+
+class PerQueryComparisonRecord(BaseModel):
+    """Granular per-query comparative evidence record."""
+    query_id: str
+    query: str
+    task_category: str
+    baseline_response: str
+    baseline_groundedness: float
+    baseline_hallucination_rate: float
+    baseline_claims: List[Any] = []
+    baseline_supported_claim_count: int = 0
+    baseline_unsupported_claim_count: int = 0
+    baseline_input_tokens: int = 0
+    baseline_output_tokens: int = 0
+    baseline_total_tokens: int = 0
+    baseline_cost: float = 0.0
+    baseline_latency_ms: float = 0.0
+    baseline_provider: str = "Google"
+    baseline_model_id: str = "gemini-3.5-flash-lite"
+    baseline_status: str = "success"
+
+    optimized_response: str
+    optimized_groundedness: float
+    optimized_hallucination_rate: float
+    optimized_claims: List[Any] = []
+    optimized_supported_claim_count: int = 0
+    optimized_unsupported_claim_count: int = 0
+    optimized_input_tokens: int = 0
+    optimized_output_tokens: int = 0
+    optimized_total_tokens: int = 0
+    optimized_cost: float = 0.0
+    optimized_latency_ms: float = 0.0
+    optimized_provider: str = "Google"
+    optimized_model_id: str = "gemini-3.5-flash-lite"
+    optimized_status: str = "success"
+
+    cost_reduction: float = 0.0
+    groundedness_delta: float = 0.0
+
+
+class BaselineVsOptimizedComparisonRequest(BaseModel):
+    """Request payload to execute a controlled baseline vs optimized workflow workload comparison."""
+    baseline_version_id: Optional[str] = Field("baseline", description="Version ID for reference baseline (default: 'baseline')")
+    optimized_version_id: str = Field(..., description="Version ID for evaluated optimized workflow")
+    workload: List[str] = Field(..., min_length=1, description="List of queries to evaluate identically against baseline and optimized workflows")
+    document_id: Optional[str] = Field(None, description="Document ID to scope retrieval")
+    expected_answers: Optional[List[Optional[str]]] = Field(None, description="Optional ground truth reference answers")
+
+
+class BaselineVsOptimizedComparisonResponse(BaseModel):
+    """
+    Structured, reproducible experimental evidence comparing baseline and optimized workflow configurations
+    across an identical evaluation workload.
+    """
+    baseline_version_id: str
+    optimized_version_id: str
+    optimized_version_number: Optional[int] = None
+    optimized_workflow_name: str
+    evaluation_mode: str  # "live_provider" or "mocked_or_saved_response"
+    is_mocked: bool
+    mode_disclaimer: str
+    scope_claim: str
+    total_queries_evaluated: int
+    successful_evaluations: int
+    failed_evaluations: int
+    baseline_groundedness: float
+    optimized_groundedness: float
+    groundedness_diff_pp: float
+    groundedness_retained: bool
+    baseline_hallucination_rate: float
+    optimized_hallucination_rate: float
+    baseline_cost_per_query: float
+    optimized_cost_per_query: float
+    cost_reduction_pct: float
+    cost_reduced: bool
+    baseline_tokens_per_query: float
+    optimized_tokens_per_query: float
+    baseline_latency_ms: float
+    optimized_latency_ms: float
+    per_query_evidence: List[PerQueryComparisonRecord]
+    finding_summary: str
+    created_at: str

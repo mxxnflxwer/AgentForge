@@ -48,21 +48,21 @@ interface RAGSearchResponse {
 export interface EvaluationMetrics {
   model: string
   accuracy: number | null
-  groundedness: number
-  hallucination_rate: number
+  groundedness: number | null
+  hallucination_rate: number | null
   supported_claims: string[]
   unsupported_claims: string[]
   supported_claim_count?: number
   unsupported_claim_count?: number
   total_claims: number
-  input_tokens: number
-  output_tokens: number
-  total_tokens: number
-  latency_ms: number
-  execution_time_ms: number
-  input_cost: number
-  output_cost: number
-  total_cost: number
+  input_tokens: number | null
+  output_tokens: number | null
+  total_tokens: number | null
+  latency_ms: number | null
+  execution_time_ms: number | null
+  input_cost: number | null
+  output_cost: number | null
+  total_cost: number | null
   details?: Record<string, any>
 }
 
@@ -71,19 +71,30 @@ interface QueryAnswerResponse {
   query: string
   intent: string
   model: string
+  model_id?: string
+  provider?: string
+  success?: boolean
+  error?: string | null
   answer: string
   context?: string | null
   sources: QuerySource[]
-  latency_ms: number
+  latency_ms: number | null
   disclaimer: string
   evaluation?: EvaluationMetrics
+  execution_id?: string | null
+  workflow_version_id?: string | null
+  task_category?: string | null
+  selection_reason?: string | null
+  groundedness?: number | null
+  execution_trace?: Record<string, any>
 }
 
 interface ModelComparisonResult {
   model: string
+  model_id?: string
   provider: string
   answer: string
-  latency_ms: number
+  latency_ms: number | null
   success: boolean
   error?: string | null
   evaluation?: EvaluationMetrics
@@ -102,9 +113,9 @@ interface QueryCompareResponse {
 const API_BASE = 'http://localhost:8000'
 
 const AVAILABLE_MODELS = [
-  { id: 'gemini', name: 'Gemini 3.5 Flash-Lite', provider: 'Google', badge: 'Fast & Grounded' },
-  { id: 'qwen', name: 'Qwen 3.6 27B', provider: 'OpenRouter', badge: 'High Accuracy' },
-  { id: 'gpt_oss', name: 'GPT-OSS 120B', provider: 'Hugging Face', badge: 'Reasoning' },
+  { id: 'gemini', model_id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', provider: 'Google', badge: 'Fast & Grounded' },
+  { id: 'qwen', model_id: 'qwen/qwen3.6-27b', name: 'Qwen 3.6 27B', provider: 'OpenRouter', badge: 'High Accuracy' },
+  { id: 'gpt_oss', model_id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'Hugging Face', badge: 'Reasoning' },
 ]
 
 // Formatting helpers for Evaluation telemetry
@@ -114,7 +125,7 @@ const formatPercent = (val: number | null | undefined): string => {
 }
 
 const formatMs = (ms: number | null | undefined): string => {
-  if (ms === null || ms === undefined) return '0.0 ms'
+  if (ms === null || ms === undefined) return 'N/A'
   if (ms >= 1000) {
     return `${(ms / 1000).toFixed(2)}s (${ms.toFixed(0)} ms)`
   }
@@ -122,13 +133,14 @@ const formatMs = (ms: number | null | undefined): string => {
 }
 
 const formatCost = (cost: number | null | undefined): string => {
-  if (cost === null || cost === undefined || cost === 0) return '$0.000000'
+  if (cost === null || cost === undefined) return 'N/A'
+  if (cost === 0) return '$0.000000'
   if (cost < 0.0001) return `$${cost.toFixed(6)}`
   return `$${cost.toFixed(4)}`
 }
 
 const formatTokens = (tokens: number | null | undefined): string => {
-  if (tokens === null || tokens === undefined) return '0'
+  if (tokens === null || tokens === undefined) return 'N/A'
   return tokens.toLocaleString()
 }
 
@@ -195,8 +207,11 @@ function MainApp() {
   // Auth state
   const [userEmail, setUserEmail] = useState('demo@agentforge.dev')
   const [password, setPassword] = useState('StrongPassword123!')
+  const [userName, setUserName] = useState('Clinical Evaluator')
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [currentUser, setCurrentUser] = useState<string | null>(null)
+  const [userRole, setUserRole] = useState<string | null>(null)
 
   // Document state
   const [documents, setDocuments] = useState<DocumentItem[]>([])
@@ -242,10 +257,12 @@ function MainApp() {
       if (res.ok) {
         const data = await res.json()
         setIsLoggedIn(true)
-        setCurrentUser(data?.email || 'Authenticated User')
+        setCurrentUser(data?.name ? `${data.name} (${data.email})` : data?.email || 'Authenticated User')
+        setUserRole(data?.role || 'DEVELOPER')
         fetchDocuments()
       } else {
         setIsLoggedIn(false)
+        setUserRole(null)
       }
     } catch (err) {
       console.warn('Backend connection notice:', err)
@@ -256,6 +273,19 @@ function MainApp() {
     e.preventDefault()
     setAuthError(null)
     try {
+      if (authMode === 'register') {
+        const regRes = await fetch(`${API_BASE}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email: userEmail, password, name: userName || 'Developer User' }),
+        })
+        if (!regRes.ok) {
+          const errData = await regRes.json().catch(() => ({}))
+          throw new Error(errData.detail || 'Registration failed')
+        }
+      }
+
       let res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -263,12 +293,13 @@ function MainApp() {
         body: JSON.stringify({ email: userEmail, password }),
       })
 
-      if (res.status === 401 || res.status === 404) {
+      if (!res.ok && authMode === 'login' && userEmail === 'demo@agentforge.dev') {
+        // Fallback convenience registration for demo account
         await fetch(`${API_BASE}/api/auth/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ email: userEmail, password, name: 'Developer User' }),
+          body: JSON.stringify({ email: userEmail, password, name: 'Demo Developer' }),
         })
         res = await fetch(`${API_BASE}/api/auth/login`, {
           method: 'POST',
@@ -280,14 +311,16 @@ function MainApp() {
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}))
-        throw new Error(errData.detail || 'Authentication failed')
+        throw new Error(errData.detail || 'Authentication failed. Please check credentials.')
       }
 
+      const userData = await res.json()
       setIsLoggedIn(true)
-      setCurrentUser(userEmail)
+      setCurrentUser(userData?.name ? `${userData.name} (${userData.email})` : userData.email)
+      setUserRole(userData?.role || 'DEVELOPER')
       fetchDocuments()
     } catch (err: any) {
-      setAuthError(err.message || 'Login failed')
+      setAuthError(err.message || 'Authentication error')
     }
   }
 
@@ -300,6 +333,7 @@ function MainApp() {
     } catch {}
     setIsLoggedIn(false)
     setCurrentUser(null)
+    setUserRole(null)
     setDocuments([])
     setSingleAnswer(null)
     setCompareResults(null)
@@ -523,6 +557,22 @@ function MainApp() {
           {isLoggedIn ? (
             <div className="rag-user-controls">
               <span className="rag-user-badge">🟢 {currentUser || 'Authenticated'}</span>
+              {userRole && (
+                <span
+                  className={`rag-role-badge ${userRole === 'DEVELOPER' ? 'role-dev' : 'role-user'}`}
+                  style={{
+                    fontSize: '0.72rem',
+                    padding: '2px 8px',
+                    borderRadius: 4,
+                    fontWeight: 700,
+                    background: userRole === 'DEVELOPER' ? '#ede9fe' : '#e0f2fe',
+                    color: userRole === 'DEVELOPER' ? '#6d28d9' : '#0369a1',
+                    border: '1px solid currentColor',
+                  }}
+                >
+                  {userRole}
+                </span>
+              )}
               <button onClick={handleLogout} className="rag-btn-secondary rag-btn-sm">
                 Logout
               </button>
@@ -536,12 +586,41 @@ function MainApp() {
       {/* Auth Card */}
       {!isLoggedIn && (
         <div className="rag-card rag-auth-card">
-          <div className="rag-card-header">
-            <h2>🔐 Developer Authentication</h2>
+          <div className="rag-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2>🔐 {authMode === 'login' ? 'User & Developer Sign In' : 'Create New Account'}</h2>
+            <div className="rag-auth-tabs" style={{ display: 'flex', gap: 6 }}>
+              <button
+                type="button"
+                className={`rag-btn-sm ${authMode === 'login' ? 'rag-btn-primary' : 'rag-btn-secondary'}`}
+                onClick={() => { setAuthMode('login'); setAuthError(null); }}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                className={`rag-btn-sm ${authMode === 'register' ? 'rag-btn-primary' : 'rag-btn-secondary'}`}
+                onClick={() => { setAuthMode('register'); setAuthError(null); }}
+              >
+                Register
+              </button>
+            </div>
           </div>
-          <p className="rag-card-desc">Log in with your developer account to access document analysis and LLM comparison.</p>
+          <p className="rag-card-desc">
+            {authMode === 'login'
+              ? 'Connect session with authenticated credentials to execute queries, upload documents, and manage evolutionary optimization.'
+              : 'Create an authorized user account for clinical document evaluation.'}
+          </p>
           {authError && <div className="rag-alert rag-alert-error">⚠️ {authError}</div>}
           <form onSubmit={handleLogin} className="rag-auth-form">
+            {authMode === 'register' && (
+              <input
+                type="text"
+                placeholder="Full Name"
+                value={userName}
+                onChange={(e) => setUserName(e.target.value)}
+                required
+              />
+            )}
             <input
               type="email"
               placeholder="Email address"
@@ -551,13 +630,13 @@ function MainApp() {
             />
             <input
               type="password"
-              placeholder="Password"
+              placeholder="Password (min 8 chars)"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
             />
             <button type="submit" className="rag-btn rag-btn-primary">
-              Connect Session
+              {authMode === 'login' ? 'Sign In' : 'Register & Connect'}
             </button>
           </form>
         </div>
@@ -751,13 +830,20 @@ function MainApp() {
                           <div
                             key={m.id}
                             className={`rag-model-card ${selectedModel === m.id ? 'rag-model-selected' : ''}`}
-                            onClick={() => setSelectedModel(m.id)}
+                            onClick={() => {
+                              if (selectedModel !== m.id) {
+                                setSelectedModel(m.id)
+                                setSingleAnswer(null)
+                                setQueryError(null)
+                              }
+                            }}
                           >
                             <div className="rag-model-header">
                               <span className="rag-model-name">{m.name}</span>
                               <span className="rag-model-badge">{m.badge}</span>
                             </div>
                             <span className="rag-model-provider">Provider: {m.provider}</span>
+                            <span className="rag-model-id-sub"><code>{m.model_id}</code></span>
                           </div>
                         ))}
                       </div>
@@ -769,7 +855,12 @@ function MainApp() {
                     <label>Document Scope:</label>
                     <select
                       value={selectedDocId}
-                      onChange={(e) => setSelectedDocId(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedDocId(e.target.value)
+                        setSingleAnswer(null)
+                        setCompareResults(null)
+                        setQueryError(null)
+                      }}
                       className="rag-select"
                     >
                       <option value="">🌐 All Uploaded Documents</option>
@@ -788,7 +879,12 @@ function MainApp() {
                       rows={3}
                       placeholder="e.g. What is the clinical diagnosis? What medications are prescribed?"
                       value={query}
-                      onChange={(e) => setQuery(e.target.value)}
+                      onChange={(e) => {
+                        setQuery(e.target.value)
+                        if (singleAnswer) setSingleAnswer(null)
+                        if (compareResults) setCompareResults(null)
+                        if (queryError) setQueryError(null)
+                      }}
                       className="rag-textarea"
                       required
                     />
@@ -798,21 +894,36 @@ function MainApp() {
                       <button
                         type="button"
                         className="rag-chip"
-                        onClick={() => setQuery('What is the clinical diagnosis?')}
+                        onClick={() => {
+                          setQuery('What is the clinical diagnosis?')
+                          setSingleAnswer(null)
+                          setCompareResults(null)
+                          setQueryError(null)
+                        }}
                       >
                         💡 Clinical Diagnosis
                       </button>
                       <button
                         type="button"
                         className="rag-chip"
-                        onClick={() => setQuery('What medications are prescribed and what is the treatment plan?')}
+                        onClick={() => {
+                          setQuery('What medications are prescribed and what is the treatment plan?')
+                          setSingleAnswer(null)
+                          setCompareResults(null)
+                          setQueryError(null)
+                        }}
                       >
                         💊 Medications & Plan
                       </button>
                       <button
                         type="button"
                         className="rag-chip"
-                        onClick={() => setQuery('What is the patient\'s phone number?')}
+                        onClick={() => {
+                          setQuery('What is the patient\'s phone number?')
+                          setSingleAnswer(null)
+                          setCompareResults(null)
+                          setQueryError(null)
+                        }}
                       >
                         🛡️ Phone Number (Out-of-Domain Test)
                       </button>
@@ -827,7 +938,11 @@ function MainApp() {
                         type="text"
                         placeholder="e.g. Stable angina pectoris (leave empty if evaluating open-ended retrieval)"
                         value={expectedAnswer}
-                        onChange={(e) => setExpectedAnswer(e.target.value)}
+                        onChange={(e) => {
+                          setExpectedAnswer(e.target.value)
+                          if (singleAnswer) setSingleAnswer(null)
+                          if (compareResults) setCompareResults(null)
+                        }}
                         className="rag-text-input"
                       />
                     </div>
@@ -852,9 +967,29 @@ function MainApp() {
                     <h2>🎯 Generated Grounded Answer & Evaluation</h2>
                     {singleAnswer && (
                       <div className="rag-header-metrics">
-                        <span className="rag-metric-tag">⚡ {singleAnswer.latency_ms} ms</span>
-                        <span className={`rag-status-chip rag-status-${singleAnswer.status}`}>
-                          {singleAnswer.status === 'not_found' ? '⚠️ Not Found in Document' : '🟢 Grounded'}
+                        {singleAnswer.latency_ms !== null && singleAnswer.latency_ms !== undefined && (
+                          <span className="rag-metric-tag">⚡ {formatMs(singleAnswer.latency_ms)}</span>
+                        )}
+                        <span className={`rag-status-chip ${
+                          singleAnswer.status === 'insufficient_credits'
+                            ? 'rag-status-insufficient_credits'
+                            : singleAnswer.status === 'error'
+                            ? 'rag-status-error'
+                            : singleAnswer.status === 'not_found'
+                            ? 'rag-status-not_found'
+                            : singleAnswer.success === false
+                            ? 'rag-status-error'
+                            : 'rag-status-success'
+                        }`}>
+                          {singleAnswer.status === 'insufficient_credits'
+                            ? '💳 Insufficient Provider Credits'
+                            : singleAnswer.status === 'error'
+                            ? '❌ Provider Error'
+                            : singleAnswer.status === 'not_found'
+                            ? '⚠️ Not Found in Document'
+                            : singleAnswer.success === false
+                            ? '❌ Generation Failed'
+                            : '🟢 Grounded'}
                         </span>
                       </div>
                     )}
@@ -878,11 +1013,24 @@ function MainApp() {
                     <div className="rag-answer-container">
                       <div className="rag-answer-box">
                         <div className="rag-answer-model-tag">
-                          <span>🤖 {singleAnswer.model}</span>
+                          <span>🤖 {singleAnswer.model} {singleAnswer.provider ? `(${singleAnswer.provider})` : ''}</span>
+                          {singleAnswer.model_id && (
+                            <span className="rag-model-id-badge" title="Model Identifier"><code>{singleAnswer.model_id}</code></span>
+                          )}
                           <span className="rag-intent-badge">Intent: {singleAnswer.intent}</span>
                         </div>
+                        {singleAnswer.status === 'insufficient_credits' && (
+                          <div className="rag-eval-status-banner credits" style={{ marginBottom: 12 }}>
+                            <strong>💳 Insufficient Provider Credits:</strong> {singleAnswer.error || 'The model provider returned HTTP 402: Insufficient credits. Please fund credits to continue.'}
+                          </div>
+                        )}
+                        {singleAnswer.status === 'error' && (
+                          <div className="rag-eval-status-banner error" style={{ marginBottom: 12 }}>
+                            <strong>❌ Provider Error:</strong> {singleAnswer.error || 'The model provider returned an error.'}
+                          </div>
+                        )}
                         <div className="rag-answer-text">
-                          <p>{singleAnswer.answer}</p>
+                          <p className={!singleAnswer.success ? 'text-error' : ''}>{singleAnswer.answer}</p>
                         </div>
                         {singleAnswer.disclaimer && (
                           <div className="rag-disclaimer-box">
@@ -914,22 +1062,26 @@ function MainApp() {
                             {/* Groundedness */}
                             <div className="rag-eval-metric-card">
                               <span className="rag-eval-metric-label">Groundedness</span>
-                              <span className={`rag-eval-metric-value ${singleAnswer.evaluation.groundedness >= 0.8 ? 'text-green' : singleAnswer.evaluation.groundedness >= 0.5 ? 'text-yellow' : 'text-red'}`}>
+                              <span className={`rag-eval-metric-value ${singleAnswer.evaluation.groundedness !== null && singleAnswer.evaluation.groundedness !== undefined ? (singleAnswer.evaluation.groundedness >= 0.8 ? 'text-green' : singleAnswer.evaluation.groundedness >= 0.5 ? 'text-yellow' : 'text-red') : 'text-muted'}`}>
                                 {formatPercent(singleAnswer.evaluation.groundedness)}
                               </span>
                               <span className="rag-eval-metric-sub">
-                                {singleAnswer.evaluation.supported_claims?.length || singleAnswer.evaluation.supported_claim_count || 0} / {singleAnswer.evaluation.total_claims} verified claims
+                                {singleAnswer.evaluation.groundedness !== null && singleAnswer.evaluation.groundedness !== undefined
+                                  ? `${singleAnswer.evaluation.supported_claims?.length || singleAnswer.evaluation.supported_claim_count || 0} / ${singleAnswer.evaluation.total_claims} verified claims`
+                                  : 'Evaluation unavailable'}
                               </span>
                             </div>
 
                             {/* Hallucination Rate */}
                             <div className="rag-eval-metric-card">
                               <span className="rag-eval-metric-label">Hallucination Rate</span>
-                              <span className={`rag-eval-metric-value ${singleAnswer.evaluation.hallucination_rate === 0 ? 'text-green' : singleAnswer.evaluation.hallucination_rate <= 0.2 ? 'text-yellow' : 'text-red'}`}>
+                              <span className={`rag-eval-metric-value ${singleAnswer.evaluation.hallucination_rate !== null && singleAnswer.evaluation.hallucination_rate !== undefined ? (singleAnswer.evaluation.hallucination_rate === 0 ? 'text-green' : singleAnswer.evaluation.hallucination_rate <= 0.2 ? 'text-yellow' : 'text-red') : 'text-muted'}`}>
                                 {formatPercent(singleAnswer.evaluation.hallucination_rate)}
                               </span>
                               <span className="rag-eval-metric-sub">
-                                {singleAnswer.evaluation.unsupported_claims?.length || singleAnswer.evaluation.unsupported_claim_count || 0} unsupported claim(s)
+                                {singleAnswer.evaluation.hallucination_rate !== null && singleAnswer.evaluation.hallucination_rate !== undefined
+                                  ? `${singleAnswer.evaluation.unsupported_claims?.length || singleAnswer.evaluation.unsupported_claim_count || 0} unsupported claim(s)`
+                                  : 'Evaluation unavailable'}
                               </span>
                             </div>
 
@@ -1028,15 +1180,55 @@ function MainApp() {
                           )}
 
                           {/* Status banners */}
+                          {singleAnswer.evaluation.details?.status === "insufficient_credits" && (
+                            <div className="rag-eval-status-banner credits">
+                              💳 Insufficient provider credits: {singleAnswer.evaluation.details?.error_message || "Account credits exhausted."}
+                            </div>
+                          )}
                           {singleAnswer.evaluation.details?.status === "empty_response" && (
                             <div className="rag-eval-status-banner warning">
                               ⚠️ Empty model response.
                             </div>
                           )}
-                          {singleAnswer.evaluation.details?.status === "model_error" && (
+                          {(singleAnswer.evaluation.details?.status === "model_error" || singleAnswer.evaluation.details?.status === "provider_error") && (
                             <div className="rag-eval-status-banner error">
                               ❌ Provider/API error: {singleAnswer.evaluation.details?.error_message || "API generation failed."}
                             </div>
+                          )}
+
+                          {/* Structured Runtime Stage Execution Trace */}
+                          {singleAnswer.execution_trace?.stages && (
+                            <details className="rag-compare-claims-details" style={{ marginTop: 12 }}>
+                              <summary>🔍 Structured Execution Stages Trace ({singleAnswer.task_category || 'Clinical Fact'})</summary>
+                              <div style={{ padding: '10px 12px', fontSize: '0.82rem', background: '#f8fafc', borderRadius: 6, marginTop: 8, border: '1px solid #e2e8f0' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8 }}>
+                                  <div style={{ padding: 8, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 4 }}>
+                                    <div style={{ fontWeight: 700, color: '#0369a1', marginBottom: 4 }}>1. Retrieval Stage</div>
+                                    <div>Latency: <strong>{singleAnswer.execution_trace.stages.retrieval?.latency_ms ?? 0} ms</strong></div>
+                                    <div>Chunks: <strong>{singleAnswer.execution_trace.stages.retrieval?.chunks_retrieved ?? 0}</strong></div>
+                                    <div>Reranking: <strong>{singleAnswer.execution_trace.stages.retrieval?.reranking_enabled ? 'Active' : 'Bypassed'}</strong></div>
+                                    <div>Threshold: <strong>{singleAnswer.execution_trace.stages.retrieval?.similarity_threshold ?? '0.35'}</strong></div>
+                                  </div>
+                                  <div style={{ padding: 8, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 4 }}>
+                                    <div style={{ fontWeight: 700, color: '#0369a1', marginBottom: 4 }}>2. Context Compression</div>
+                                    <div>Status: <strong>{singleAnswer.execution_trace.stages.compression?.enabled ? 'Active' : 'Bypassed'}</strong></div>
+                                    <div>Chars: <strong>{singleAnswer.execution_trace.stages.compression?.effective_context_length ?? 0}</strong></div>
+                                  </div>
+                                  <div style={{ padding: 8, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 4 }}>
+                                    <div style={{ fontWeight: 700, color: '#0369a1', marginBottom: 4 }}>3. Model Generation</div>
+                                    <div>Model: <strong>{singleAnswer.execution_trace.stages.llm_generation?.model || singleAnswer.model}</strong></div>
+                                    <div>Latency: <strong>{singleAnswer.execution_trace.stages.llm_generation?.latency_ms ?? 0} ms</strong></div>
+                                    <div>Tokens: <strong>{(singleAnswer.execution_trace.stages.llm_generation?.input_tokens ?? 0) + (singleAnswer.execution_trace.stages.llm_generation?.output_tokens ?? 0)}</strong></div>
+                                  </div>
+                                  <div style={{ padding: 8, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 4 }}>
+                                    <div style={{ fontWeight: 700, color: '#0369a1', marginBottom: 4 }}>4. Evidence Verification</div>
+                                    <div>Groundedness: <strong>{formatPercent(singleAnswer.execution_trace.stages.evidence_verification?.groundedness)}</strong></div>
+                                    <div>Claims: <strong>{singleAnswer.execution_trace.stages.evidence_verification?.total_claims ?? 0}</strong></div>
+                                    <div>Supported: <strong>{singleAnswer.execution_trace.stages.evidence_verification?.supported_claims ?? 0}</strong></div>
+                                  </div>
+                                </div>
+                              </div>
+                            </details>
                           )}
                         </div>
                       ) : (
@@ -1117,17 +1309,32 @@ function MainApp() {
                               <div>
                                 <h3 className="rag-compare-model-name">{res.model}</h3>
                                 <span className="rag-compare-provider">{res.provider}</span>
+                                {res.model_id && (
+                                  <span className="rag-model-id-sub"><code>{res.model_id}</code></span>
+                                )}
                               </div>
                               <div className="rag-compare-badges">
-                                <span className="rag-metric-tag" title="Model API Network & Inference Latency">⚡ {res.latency_ms} ms</span>
-                                <span className={`rag-status-chip ${res.success ? 'rag-status-success' : 'rag-status-error'}`}>
-                                  {res.success ? 'Success' : 'Notice'}
+                                {res.latency_ms !== null && res.latency_ms !== undefined && (
+                                  <span className="rag-metric-tag" title="Model API Network & Inference Latency">⚡ {formatMs(res.latency_ms)}</span>
+                                )}
+                                <span className={`rag-status-chip ${
+                                  !res.success && (res.evaluation?.details?.status === 'insufficient_credits' || (res.error && res.error.toLowerCase().includes('credit')))
+                                    ? 'rag-status-insufficient_credits'
+                                    : res.success
+                                    ? 'rag-status-success'
+                                    : 'rag-status-error'
+                                }`}>
+                                  {!res.success && (res.evaluation?.details?.status === 'insufficient_credits' || (res.error && res.error.toLowerCase().includes('credit')))
+                                    ? '💳 Insufficient Credits'
+                                    : res.success
+                                    ? 'Success'
+                                    : 'Provider Error'}
                                 </span>
                               </div>
                             </div>
 
                             <div className="rag-compare-body">
-                              <p className="rag-compare-answer">{res.answer}</p>
+                              <p className={`rag-compare-answer ${!res.success ? 'text-error' : ''}`}>{res.answer}</p>
                               {res.error && (
                                 <div className="rag-compare-error">
                                   <span>Error / Notice:</span> {res.error}
@@ -1144,13 +1351,13 @@ function MainApp() {
                                   <div className="rag-compare-eval-metrics">
                                     <div className="rag-compare-eval-item">
                                       <span className="rag-compare-eval-label">Groundedness</span>
-                                      <span className={`rag-compare-eval-val ${res.evaluation.groundedness >= 0.8 ? 'text-green' : res.evaluation.groundedness >= 0.5 ? 'text-yellow' : 'text-red'}`}>
+                                      <span className={`rag-compare-eval-val ${res.evaluation.groundedness !== null && res.evaluation.groundedness !== undefined ? (res.evaluation.groundedness >= 0.8 ? 'text-green' : res.evaluation.groundedness >= 0.5 ? 'text-yellow' : 'text-red') : 'text-muted'}`}>
                                         {formatPercent(res.evaluation.groundedness)}
                                       </span>
                                     </div>
                                     <div className="rag-compare-eval-item">
                                       <span className="rag-compare-eval-label">Hallucination</span>
-                                      <span className={`rag-compare-eval-val ${res.evaluation.hallucination_rate === 0 ? 'text-green' : res.evaluation.hallucination_rate <= 0.2 ? 'text-yellow' : 'text-red'}`}>
+                                      <span className={`rag-compare-eval-val ${res.evaluation.hallucination_rate !== null && res.evaluation.hallucination_rate !== undefined ? (res.evaluation.hallucination_rate === 0 ? 'text-green' : res.evaluation.hallucination_rate <= 0.2 ? 'text-yellow' : 'text-red') : 'text-muted'}`}>
                                         {formatPercent(res.evaluation.hallucination_rate)}
                                       </span>
                                     </div>
@@ -1213,12 +1420,17 @@ function MainApp() {
                                   )}
 
                                   {/* Status banners */}
+                                  {res.evaluation.details?.status === "insufficient_credits" && (
+                                    <div className="rag-eval-status-banner credits">
+                                      💳 Insufficient provider credits: {res.evaluation.details?.error_message || "Account credits exhausted."}
+                                    </div>
+                                  )}
                                   {res.evaluation.details?.status === "empty_response" && (
                                     <div className="rag-eval-status-banner warning">
                                       ⚠️ Empty model response.
                                     </div>
                                   )}
-                                  {res.evaluation.details?.status === "model_error" && (
+                                  {(res.evaluation.details?.status === "model_error" || res.evaluation.details?.status === "provider_error") && (
                                     <div className="rag-eval-status-banner error">
                                       ❌ Provider/API error: {res.evaluation.details?.error_message || "API generation failed."}
                                     </div>

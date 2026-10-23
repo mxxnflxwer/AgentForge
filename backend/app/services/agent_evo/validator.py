@@ -11,6 +11,12 @@ SUPPORTED_MODELS = {
     "gemini-2.5-flash-lite": "Google",
     "qwen/qwen3.6-27b": "OpenRouter",
     "qwen-3.6-27b": "OpenRouter",
+    "google/gemma-4-26b-a4b-it:free": "OpenRouter",
+    "gemma-4-26b-a4b-it:free": "OpenRouter",
+    "gemma 4 26b a4b (openrouter)": "OpenRouter",
+    "gemma-4-26b": "OpenRouter",
+    "gemma": "OpenRouter",
+    # Legacy models preserved for historical workflow validation
     "openai/gpt-oss-120b": "Hugging Face",
     "gpt-oss-120b": "Hugging Face",
 }

@@ -1,0 +1,3 @@
+SECTION: PATIENT DIAGNOSIS
+The patient was diagnosed with severe acute bronchitis.
+Antibiotic treatment with amoxicillin was initiated for 10 days.

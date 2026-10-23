@@ -119,10 +119,19 @@ interface QueryCompareResponse {
 
 const API_BASE = 'http://localhost:8000'
 
-const AVAILABLE_MODELS = [
-  { id: 'gemini', model_id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', provider: 'Google', badge: 'Fast & Grounded' },
-  { id: 'qwen', model_id: 'qwen/qwen3.6-27b', name: 'Qwen 3.6 27B', provider: 'OpenRouter', badge: 'High Accuracy' },
-  { id: 'gpt_oss', model_id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'Hugging Face', badge: 'Reasoning' },
+export interface AvailableModelItem {
+  id: string
+  model_id: string
+  name: string
+  provider: string
+  badge: string
+  is_configured?: boolean
+}
+
+const DEFAULT_AVAILABLE_MODELS: AvailableModelItem[] = [
+  { id: 'gemini', model_id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', provider: 'Google', badge: 'Fast & Grounded', is_configured: true },
+  { id: 'qwen', model_id: 'qwen/qwen3.6-27b', name: 'Qwen 3.6 27B', provider: 'OpenRouter', badge: 'High Accuracy', is_configured: true },
+  { id: 'gemma', model_id: 'google/gemma-4-26b-a4b-it:free', name: 'Gemma 4 26B A4B (OpenRouter)', provider: 'OpenRouter', badge: 'Free Open-Weights', is_configured: true },
 ]
 
 // Formatting helpers for Evaluation telemetry
@@ -141,7 +150,7 @@ const formatMs = (ms: number | null | undefined): string => {
 
 const formatCost = (cost: number | null | undefined): string => {
   if (cost === null || cost === undefined) return 'N/A'
-  if (cost === 0) return '$0.000000'
+  if (cost === 0) return '$0.00 (Free)'
   if (cost < 0.0001) return `$${cost.toFixed(6)}`
   return `$${cost.toFixed(4)}`
 }
@@ -234,6 +243,7 @@ function MainApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   // Query & Model settings
+  const [availableModels, setAvailableModels] = useState(DEFAULT_AVAILABLE_MODELS)
   const [selectedDocId, setSelectedDocId] = useState<string>('')
   const [selectedModel, setSelectedModel] = useState<string>('gemini')
   const [queryMode, setQueryMode] = useState<'single' | 'compare'>('single')
@@ -296,7 +306,49 @@ function MainApp() {
 
   useEffect(() => {
     checkCurrentUser()
+    fetchModels()
   }, [])
+
+  const fetchModels = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/query/models`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data && Array.isArray(data.models) && data.models.length > 0) {
+          setAvailableModels(
+            data.models.map((m: any) => {
+              const lowerName = (m.name || '').toLowerCase()
+              const lowerId = (m.model_id || '').toLowerCase()
+              let id = 'gemini'
+              let badge = 'Fast & Grounded'
+              if (lowerName.includes('qwen') || lowerId.includes('qwen')) {
+                id = 'qwen'
+                badge = 'High Accuracy'
+              } else if (
+                lowerName.includes('gemma') ||
+                lowerId.includes('gemma') ||
+                lowerName.includes('gpt') ||
+                lowerId.includes('gpt')
+              ) {
+                id = 'gemma'
+                badge = 'Free Open-Weights'
+              }
+              return {
+                id,
+                model_id: m.model_id,
+                name: m.name,
+                provider: m.provider,
+                badge,
+                is_configured: m.is_configured ?? true,
+              }
+            })
+          )
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch backend model metadata:', err)
+    }
+  }
 
   const checkCurrentUser = async () => {
     try {
@@ -594,13 +646,13 @@ function MainApp() {
           <div className="rag-logo-badge">⚡ AgentForge</div>
           <h1>Medical Document Analyzer & Model Comparison</h1>
           <p className="rag-subtitle">
-            RAG Ingestion Pipeline ➔ 3-LLM Integration (Gemini 3.5 Flash-Lite, Qwen 3.6 27B, GPT-OSS 120B) ➔ AgentEvo Foundation
+            RAG Ingestion Pipeline ➔ 3-LLM Integration (Gemini 3.5 Flash-Lite, Qwen 3.6 27B, Gemma 4 26B A4B) ➔ AgentEvo Foundation
           </p>
         </div>
         <div className="rag-header-right">
           <span className="rag-tag">Gemini 3.5 Flash-Lite</span>
           <span className="rag-tag">Qwen 3.6 27B</span>
-          <span className="rag-tag">GPT-OSS 120B</span>
+          <span className="rag-tag">Gemma 4 26B A4B (OpenRouter)</span>
           {isLoggedIn ? (
             <div className="rag-user-controls">
               <span className="rag-user-badge">🟢 {currentUser || 'Authenticated'}</span>
@@ -883,7 +935,7 @@ function MainApp() {
                     <div className="rag-form-group">
                       <label>Select LLM Engine:</label>
                       <div className="rag-model-grid">
-                        {AVAILABLE_MODELS.map((m) => (
+                        {availableModels.map((m) => (
                           <div
                             key={m.id}
                             className={`rag-model-card ${selectedModel === m.id ? 'rag-model-selected' : ''}`}
@@ -1011,7 +1063,7 @@ function MainApp() {
                     className="rag-btn rag-btn-primary rag-btn-block rag-btn-lg"
                   >
                     {generating
-                      ? (queryMode === 'compare' ? '⚡ Querying 3 Models Concurrently & Evaluating...' : `⚡ Generating with ${AVAILABLE_MODELS.find(m => m.id === selectedModel)?.name} & Evaluating...`)
+                      ? (queryMode === 'compare' ? '⚡ Querying 3 Models Concurrently & Evaluating...' : `⚡ Generating with ${availableModels.find((m) => m.id === selectedModel)?.name || 'Model'} & Evaluating...`)
                       : (queryMode === 'compare' ? '⚖️ Run 3-Model Comparative Evaluation' : '✨ Generate Grounded Answer')}
                   </button>
                 </form>
@@ -1030,6 +1082,10 @@ function MainApp() {
                         <span className={`rag-status-chip ${
                           singleAnswer.status === 'insufficient_credits'
                             ? 'rag-status-insufficient_credits'
+                            : (singleAnswer.error && (singleAnswer.error.toLowerCase().includes('429') || singleAnswer.error.toLowerCase().includes('rate limit')))
+                            ? 'rag-status-warning'
+                            : (singleAnswer.error && (singleAnswer.error.toLowerCase().includes('401') || singleAnswer.error.toLowerCase().includes('unauthorized')))
+                            ? 'rag-status-error'
                             : singleAnswer.status === 'error'
                             ? 'rag-status-error'
                             : singleAnswer.status === 'not_found'
@@ -1040,6 +1096,10 @@ function MainApp() {
                         }`}>
                           {singleAnswer.status === 'insufficient_credits'
                             ? '💳 Insufficient Provider Credits'
+                            : (singleAnswer.error && (singleAnswer.error.toLowerCase().includes('429') || singleAnswer.error.toLowerCase().includes('rate limit')))
+                            ? '⏳ Rate Limited (HTTP 429)'
+                            : (singleAnswer.error && (singleAnswer.error.toLowerCase().includes('401') || singleAnswer.error.toLowerCase().includes('unauthorized')))
+                            ? '🔑 Auth Error (HTTP 401)'
                             : singleAnswer.status === 'error'
                             ? '❌ Provider Error'
                             : singleAnswer.status === 'not_found'
@@ -1093,7 +1153,17 @@ function MainApp() {
                             <strong>💳 Insufficient Provider Credits:</strong> {singleAnswer.error || 'The model provider returned HTTP 402: Insufficient credits. Please fund credits to continue.'}
                           </div>
                         )}
-                        {singleAnswer.status === 'error' && (
+                        {singleAnswer.error && (singleAnswer.error.toLowerCase().includes('429') || singleAnswer.error.toLowerCase().includes('rate limit')) && (
+                          <div className="rag-eval-status-banner warning" style={{ marginBottom: 12 }}>
+                            <strong>⏳ OpenRouter Rate Limit Exceeded (HTTP 429):</strong> The free-tier model is currently throttled by the provider. Please wait a moment and retry.
+                          </div>
+                        )}
+                        {singleAnswer.error && (singleAnswer.error.toLowerCase().includes('401') || singleAnswer.error.toLowerCase().includes('unauthorized')) && (
+                          <div className="rag-eval-status-banner error" style={{ marginBottom: 12 }}>
+                            <strong>🔑 Authentication Error (HTTP 401):</strong> Invalid or missing API key. Please check OPENROUTER_API_KEY in backend configuration.
+                          </div>
+                        )}
+                        {singleAnswer.status === 'error' && !singleAnswer.error?.toLowerCase().includes('429') && !singleAnswer.error?.toLowerCase().includes('rate limit') && !singleAnswer.error?.toLowerCase().includes('401') && !singleAnswer.error?.toLowerCase().includes('unauthorized') && (
                           <div className="rag-eval-status-banner error" style={{ marginBottom: 12 }}>
                             <strong>❌ Provider Error:</strong> {singleAnswer.error || 'The model provider returned an error.'}
                           </div>
@@ -1357,7 +1427,7 @@ function MainApp() {
                   {generating && (
                     <div className="rag-placeholder">
                       <div className="rag-spinner"></div>
-                      <p>Executing RAG retrieval once & querying Gemini 3.5 Flash-Lite, Qwen 3.6 27B, and GPT-OSS 120B concurrently with AgentEvo evaluation...</p>
+                      <p>Executing RAG retrieval once & querying Gemini 3.5 Flash-Lite, Qwen 3.6 27B, and Gemma 4 26B A4B (OpenRouter) concurrently with AgentEvo evaluation...</p>
                     </div>
                   )}
 
@@ -1397,12 +1467,20 @@ function MainApp() {
                                 <span className={`rag-status-chip ${
                                   !res.success && (res.evaluation?.details?.status === 'insufficient_credits' || (res.error && res.error.toLowerCase().includes('credit')))
                                     ? 'rag-status-insufficient_credits'
+                                    : !res.success && (res.error && (res.error.toLowerCase().includes('429') || res.error.toLowerCase().includes('rate limit')))
+                                    ? 'rag-status-warning'
+                                    : !res.success && (res.error && (res.error.toLowerCase().includes('401') || res.error.toLowerCase().includes('unauthorized')))
+                                    ? 'rag-status-error'
                                     : res.success
                                     ? 'rag-status-success'
                                     : 'rag-status-error'
                                 }`}>
                                   {!res.success && (res.evaluation?.details?.status === 'insufficient_credits' || (res.error && res.error.toLowerCase().includes('credit')))
                                     ? '💳 Insufficient Credits'
+                                    : !res.success && (res.error && (res.error.toLowerCase().includes('429') || res.error.toLowerCase().includes('rate limit')))
+                                    ? '⏳ Rate Limited (429)'
+                                    : !res.success && (res.error && (res.error.toLowerCase().includes('401') || res.error.toLowerCase().includes('unauthorized')))
+                                    ? '🔑 Auth Error (401)'
                                     : res.success
                                     ? 'Success'
                                     : 'Provider Error'}

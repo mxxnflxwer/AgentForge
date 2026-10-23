@@ -155,7 +155,7 @@ async def query_answer(
     if not adapter:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Model adapter for '{model_to_use}' is not supported or unavailable. Supported models: gemini, qwen, gpt_oss",
+            detail=f"Model adapter for '{model_to_use}' is not supported or unavailable. Supported models: gemini, qwen, gemma (or legacy gpt_oss)",
         )
     model_display_name = adapter.name
     model_provider = adapter.provider

@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from app.services.llm.base import BaseLLMAdapter, LLMResponse
 from app.services.llm.gemini import GeminiAdapter
+from app.services.llm.gemma import GemmaAdapter
 from app.services.llm.gpt_oss import GPTOSSAdapter
 from app.services.llm.qwen import QwenAdapter
 
@@ -13,7 +14,10 @@ logger = logging.getLogger("agentforge.services.llm.router")
 class LLMRouter:
     """
     Central router for LLM generation and multi-model comparative evaluation.
-    Enforces unified interfaces and concurrent multi-model comparisons.
+    Enforces unified interfaces and concurrent multi-model comparisons across:
+    1. Gemini 3.5 Flash-Lite (Google)
+    2. Qwen 3.6 27B (OpenRouter)
+    3. Gemma 4 26B A4B (OpenRouter Free Tier)
     """
 
     def __init__(self):
@@ -23,7 +27,7 @@ class LLMRouter:
     def _initialize_adapters(self):
         gemini = GeminiAdapter()
         qwen = QwenAdapter()
-        gpt_oss = GPTOSSAdapter()
+        gemma = GemmaAdapter()
 
         self.register_adapter("gemini", gemini)
         self.register_adapter("gemini-3.5-flash-lite", gemini)
@@ -35,9 +39,19 @@ class LLMRouter:
         self.register_adapter("qwen-2.5-72b", qwen)
         self.register_adapter("qwen/qwen-2.5-72b-instruct", qwen)
 
-        self.register_adapter("gpt_oss", gpt_oss)
-        self.register_adapter("gpt-oss", gpt_oss)
-        self.register_adapter("gpt-oss-120b", gpt_oss)
+        # Gemma 4 26B A4B (OpenRouter Free Model)
+        self.register_adapter("gemma", gemma)
+        self.register_adapter("gemma-4-26b", gemma)
+        self.register_adapter("gemma-4-26b-a4b-it:free", gemma)
+        self.register_adapter("google/gemma-4-26b-a4b-it:free", gemma)
+        self.register_adapter("openrouter_gemma", gemma)
+        self.register_adapter("openrouter", gemma)
+
+        # Legacy aliases mapped to Gemma for backward compatibility
+        self.register_adapter("gpt_oss", gemma)
+        self.register_adapter("gpt-oss", gemma)
+        self.register_adapter("gpt-oss-120b", gemma)
+        self.register_adapter("openai/gpt-oss-120b", gemma)
 
     def register_adapter(self, key: str, adapter: BaseLLMAdapter):
         normalized_key = key.lower().strip()

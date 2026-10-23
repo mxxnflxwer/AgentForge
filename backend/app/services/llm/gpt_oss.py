@@ -33,6 +33,7 @@ class GPTOSSAdapter(BaseLLMAdapter):
         self.api_key = api_key if api_key is not None else getattr(settings, "GPT_OSS_API_KEY", None)
         self.base_url = (base_url or getattr(settings, "GPT_OSS_API_BASE_URL", "https://router.huggingface.co/v1")).rstrip("/")
         self.timeout = timeout or getattr(settings, "LLM_TIMEOUT_SECONDS", 30.0)
+        logger.info("GPTOSSAdapter is legacy/deprecated. GemmaAdapter (OpenRouter) is the active replacement.")
 
     def is_configured(self) -> bool:
         return bool(self.api_key and self.api_key.strip())

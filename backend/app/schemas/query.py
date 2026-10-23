@@ -18,7 +18,7 @@ class QueryAnswerRequest(BaseModel):
     )
     model: str = Field(
         "gemini",
-        description="Selected LLM: 'gemini', 'qwen', or 'gpt_oss'.",
+        description="Selected LLM: 'gemini', 'qwen', or 'gemma' (legacy 'gpt_oss' mapped to gemma).",
         examples=["gemini"],
     )
     expected_answer: Optional[str] = Field(

@@ -1,0 +1,8 @@
+CHIEF COMPLAINT:
+Patient presents with fever and cough.
+
+HISTORY OF PRESENT ILLNESS:
+Started 3 days ago with mild symptoms.
+
+ASSESSMENT & PLAN:
+Prescribe rest and hydration.

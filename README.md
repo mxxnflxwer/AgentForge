@@ -214,9 +214,10 @@ PostgreSQL will run on port `5432` with database `agentforge`.
 cd backend
 cp ../.env.example .env
 # Edit .env to add your LLM API keys:
-# GEMINI_API_KEY=...
-# OPENROUTER_API_KEY=...
-# HUGGINGFACE_API_KEY=...
+# GEMINI_API_KEY=your_gemini_api_key
+# OPENROUTER_API_KEY=your_openrouter_api_key
+# OPENROUTER_API_BASE_URL=https://openrouter.ai/api/v1
+# OPENROUTER_MODEL_ID=google/gemma-4-26b-a4b-it:free
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -244,6 +245,41 @@ npm run build
 
 ---
 
+## Supported LLM Providers & Model Configuration
+
+AgentForge evaluates groundedness, hallucination rates, tokens, cost, and latency across three primary LLM architectures:
+
+1. **Gemini 3.5 Flash-Lite** (Google Generative AI)
+   - Fast, grounded clinical synthesis with direct structured output.
+   - Configured via `GEMINI_API_KEY`, `GEMINI_API_BASE_URL`, `GEMINI_MODEL_NAME`.
+2. **Qwen 3.6 27B** (OpenRouter)
+   - High-accuracy open-weights model hosted via OpenRouter.
+   - Configured via `QWEN_API_KEY`, `QWEN_API_BASE_URL`, `QWEN_MODEL_NAME`.
+3. **Gemma 4 26B A4B** (OpenRouter Free Tier)
+   - Configurable free open-weights model accessed via OpenRouter chat completions.
+   - Default model: `google/gemma-4-26b-a4b-it:free` (verified in OpenRouter catalog with $0.00 pricing).
+   - Configured via `OPENROUTER_API_KEY`, `OPENROUTER_API_BASE_URL`, `OPENROUTER_MODEL_ID`.
+
+### OpenRouter Key Setup
+
+1. Obtain a free API key at [openrouter.ai](https://openrouter.ai/keys).
+2. Add the key to `backend/.env`:
+   ```env
+   OPENROUTER_API_KEY=sk-or-v1-...
+   OPENROUTER_API_BASE_URL=https://openrouter.ai/api/v1
+   OPENROUTER_MODEL_ID=google/gemma-4-26b-a4b-it:free
+   ```
+3. If `OPENROUTER_API_KEY` is not explicitly set, the adapter will automatically fall back to `QWEN_API_KEY` if present.
+
+### Troubleshooting Provider Errors
+
+- **HTTP 401 Unauthorized:** Invalid or missing `OPENROUTER_API_KEY`. Check `backend/.env` and verify key validity at OpenRouter.
+- **HTTP 402 Payment Required / Out of Credits:** Provider account has exhausted free or paid credits. Fund account or switch to a verified free endpoint.
+- **HTTP 429 Rate Limit Exceeded:** The OpenRouter free tier applies concurrency and request-per-minute limits. When throttled, AgentForge cleanly reports the rate limit status without crashing or faking successful metrics. Wait a few moments before retrying.
+- **Model Unavailable / 404:** If `google/gemma-4-26b-a4b-it:free` is temporarily offline or in maintenance, configure another available free endpoint in `backend/.env` using `OPENROUTER_MODEL_ID`.
+
+---
+
 ## Authentication & User Governance
 
 AgentForge uses **secure server-side sessions** stored in PostgreSQL and delivered to the browser via an `HttpOnly`, `SameSite=Lax` cookie (`session_id`).
@@ -257,21 +293,28 @@ AgentForge uses **secure server-side sessions** stored in PostgreSQL and deliver
 
 ## Running Automated Tests
 
-Run the full automated test suite (160 tests):
+Run the full automated test suite (203 tests):
 
 ```bash
+# On Linux / macOS:
 cd backend
 source .venv/bin/activate
+pytest -v
+
+# On Windows PowerShell:
+cd backend
+..\.venv\Scripts\Activate.ps1
 pytest -v
 ```
 
 Test coverage includes:
-- **LLM Routing & Real Parameter Injection:** `tests/test_llm.py`
+- **LLM Routing & Adapter Normalization:** `tests/test_llm.py`
 - **Fact-Based Claim Verification & Groundedness:** `tests/test_evaluation.py`
 - **AgentEvo Evolutionary Optimization & Pareto Front:** `tests/test_agent_evo.py`
 - **Workflow Versioning, Approval, & Activation Lifecycle:** `tests/test_workflow_lifecycle.py`
 - **Session Authentication & Role Governance:** `tests/test_auth.py`
 - **Evolutionary Crossover & Genome Recombination:** `tests/test_agent_evo_crossover.py`
 - **Runtime Selector, Workload Adaptation, & Evidence:** `tests/test_runtime_selector_and_evidence.py`
-- **Single-Model Routing & Error Resilience:** `tests/test_single_model_and_errors.py`
+- **Single-Model Routing & Error Resilience (401, 402, 429):** `tests/test_single_model_and_errors.py`
 - **Adaptive Workload Scheduling:** `tests/test_agent_evo_adaptive_workload.py`
+

@@ -31,7 +31,12 @@ class Settings(BaseSettings):
     QWEN_API_BASE_URL: str = "https://openrouter.ai/api/v1"
     QWEN_MODEL_NAME: str = "qwen/qwen3.6-27b"
 
-    # LLM Settings: GPT-OSS 120B (via Hugging Face Inference Providers OpenAI-compatible endpoint)
+    # LLM Settings: OpenRouter Free Model (Default: Google Gemma 4 26B A4B)
+    OPENROUTER_API_KEY: str | None = None
+    OPENROUTER_API_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_MODEL_ID: str = "google/gemma-4-26b-a4b-it:free"
+
+    # Legacy LLM Settings: GPT-OSS 120B (retained for backward compatibility)
     GPT_OSS_API_KEY: str | None = None
     GPT_OSS_API_BASE_URL: str = "https://router.huggingface.co/v1"
     GPT_OSS_MODEL_NAME: str = "openai/gpt-oss-120b"

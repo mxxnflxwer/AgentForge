@@ -102,7 +102,7 @@ def test_groundedness_safe_not_found_response():
     answer = "The requested information was not found in the uploaded document."
 
     result = calculate_groundedness(generated_answer=answer, retrieved_context=context)
-    assert result.groundedness == 1.0
+    assert result.groundedness is None
     assert result.total_claims == 0
 
 
@@ -530,12 +530,12 @@ def test_validation_case_d_out_of_domain():
     answer = "The requested information was not found in the uploaded document."
 
     res = calculate_groundedness(answer, context)
-    assert res.groundedness == 1.0
+    assert res.groundedness is None
     assert res.supported_claims == 0
     assert res.unsupported_claims == 0
 
     h_res = calculate_hallucination_rate(answer, context, res)
-    assert h_res.hallucination_rate == 0.0
+    assert h_res.hallucination_rate is None
     assert h_res.unsupported_claims == []
 
 

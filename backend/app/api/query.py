@@ -450,21 +450,58 @@ async def query_compare(
 ) -> QueryCompareResponse:
     """
     Fair multi-model comparative evaluation:
-    1. Executes RAG retrieval ONCE to obtain the ground-truth document context.
-    2. Sends the exact same query, context, and system prompt concurrently to all 3 LLMs.
-    3. Evaluates groundedness, hallucination rate, tokens, cost, latency, and accuracy per model.
-    4. Measures individual model latencies and returns structured side-by-side results.
+    1. Resolves target workflow: active AgentEvo workflow (e.g. wf_v13), baseline, or explicit version.
+    2. Executes RAG retrieval ONCE using workflow's retrieval config (top_k, similarity threshold, reranking).
+    3. Computes SHA-256 context hash of the shared context.
+    4. Sends the exact same query, context, and system prompt concurrently to all 3 LLMs.
+    5. Evaluates groundedness, hallucination rate, tokens, cost, latency, and accuracy per model.
+    6. Measures individual model latencies and returns structured side-by-side results with trace provenance.
     """
     overall_start = time.perf_counter()
     retrieval_start = time.perf_counter()
+
+    comparison_mode = (request.comparison_mode or "active_workflow").strip()
+    version_override = request.workflow_version_id
+    if comparison_mode.lower() == "baseline":
+        version_override = "baseline"
+
+    from app.services.agent_evo.runtime_selector import RuntimeWorkflowSelector
+    selection = RuntimeWorkflowSelector.select_workflow_for_query(
+        query=request.query,
+        db=db,
+        candidate_version_id_override=version_override,
+    )
+
+    active_version_id = selection.version_id
+    task_category = selection.task_category
+    selection_reason = selection.selection_reason
+    workflow_name = selection.workflow_name
+    cfg = selection.configuration or {}
+
+    pipeline_type = "comparison_baseline" if active_version_id == "baseline" else "comparison_workflow"
+    wf_version_id_for_record = None if active_version_id == "baseline" else active_version_id
+
+    effective_top_k = cfg.get("retrieval", {}).get("top_k", request.top_k)
+    sim_threshold = cfg.get("retrieval", {}).get("similarity_threshold", 0.35)
+    enable_reranking = bool(cfg.get("retrieval", {}).get("reranking", True))
+    context_compression = cfg.get("execution", {}).get("context_compression", False)
+
+    prompt_template_name = cfg.get("prompt", {}).get("template_name", "default_medical")
+    custom_instructions = cfg.get("prompt", {}).get("custom_instructions")
+    wf_temperature = cfg.get("model", {}).get("temperature")
+    wf_max_tokens = cfg.get("model", {}).get("max_tokens")
 
     retrieval = execute_rag_retrieval(
         user_id=current_user.id,
         query=request.query,
         document_id=request.document_id,
-        top_k=request.top_k,
+        top_k=effective_top_k,
+        relevance_threshold=sim_threshold,
         db=db,
+        enable_reranking=enable_reranking,
     )
+    if retrieval.results and len(retrieval.results) > effective_top_k:
+        retrieval.results = retrieval.results[:effective_top_k]
     retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
 
     llm_router = get_llm_router()
@@ -474,7 +511,7 @@ async def query_compare(
     if retrieval.status == "not_found" or not retrieval.results:
         logger.info(f"Comparison query '{request.query[:30]}' returned no relevant chunks.")
         total_exec_ms = round((time.perf_counter() - overall_start) * 1000, 2)
-        
+
         not_found_results = []
         for m in llm_router.list_models():
             eval_input = EvaluationInput(
@@ -491,16 +528,25 @@ async def query_compare(
             e_res = eval_engine.evaluate(eval_input)
 
             nf_trace = {
-                "pipeline_type": "comparison_shared_retrieval",
-                "workflow_name": "Multi-LLM Comparative Baseline",
-                "workflow_version_id": None,
+                "pipeline_type": pipeline_type,
+                "workflow_name": workflow_name,
+                "workflow_version_id": wf_version_id_for_record,
                 "context_type": "shared",
+                "context_hash": None,
+                "task_category": task_category,
+                "selection_reason": selection_reason,
                 "stages": {
                     "retrieval": {
                         "type": "shared_context",
                         "chunks_retrieved": 0,
                         "latency_ms": retrieval_ms,
-                        "top_k": request.top_k,
+                        "top_k": effective_top_k,
+                        "similarity_threshold": sim_threshold,
+                        "reranking_enabled": enable_reranking,
+                    },
+                    "prompt": {
+                        "template": prompt_template_name,
+                        "custom_instructions_applied": bool(custom_instructions),
                     },
                     "llm_generation": {
                         "model": m["name"],
@@ -511,14 +557,20 @@ async def query_compare(
                     },
                     "evidence_verification": {
                         "groundedness": e_res.groundedness,
+                        "hallucination_rate": e_res.hallucination_rate,
                         "total_claims": 0,
                         "supported_claims": 0,
                         "unsupported_claims": 0,
-                        "claim_breakdown": [],
+                        "claim_breakdown": e_res.details.get("claim_breakdown", []),
                     },
                 },
                 "effective_configuration": {
-                    "retrieval": {"top_k": request.top_k, "mode": "shared_retrieval"},
+                    "retrieval": {
+                        "top_k": effective_top_k,
+                        "similarity_threshold": sim_threshold,
+                        "reranking": enable_reranking,
+                        "mode": "shared_retrieval",
+                    },
                     "model": {"model": m["name"], "provider": m["provider"]},
                 },
             }
@@ -532,10 +584,11 @@ async def query_compare(
                     latency_ms=0.0,
                     success=True,
                     error=None,
-                    pipeline_type="comparison_shared_retrieval",
-                    workflow_version_id=None,
-                    workflow_name="Multi-LLM Comparative Baseline",
+                    pipeline_type=pipeline_type,
+                    workflow_version_id=wf_version_id_for_record,
+                    workflow_name=workflow_name,
                     context_type="shared",
+                    context_hash=None,
                     execution_trace=nf_trace,
                     evaluation=convert_eval_result_to_response(e_res),
                 )
@@ -546,15 +599,38 @@ async def query_compare(
             query=request.query,
             intent=retrieval.intent,
             context=None,
+            context_hash=None,
+            workflow_version_id=wf_version_id_for_record,
+            workflow_name=workflow_name,
+            comparison_mode=comparison_mode,
             sources=[],
             results=not_found_results,
             disclaimer=MEDICAL_DISCLAIMER,
         )
 
-    context_str = build_context_from_retrieval(retrieval)
+    import hashlib
+    raw_context_str = build_context_from_retrieval(retrieval)
+    context_str = raw_context_str
+    if context_compression:
+        from app.services.agent_evo.evaluator_adapter import apply_context_compression_operator
+        context_str = apply_context_compression_operator(raw_context_str)
+
+    context_hash = hashlib.sha256(context_str.encode("utf-8")).hexdigest()
+
+    from app.services.agent_evo.evaluator_adapter import build_candidate_prompt
+    sys_prompt = build_candidate_prompt(
+        template_name=prompt_template_name,
+        query=request.query,
+        context=context_str,
+        custom_instructions=custom_instructions,
+    )
+
     llm_responses = await llm_router.compare_all(
         query=request.query,
         context=context_str,
+        system_prompt=sys_prompt,
+        temperature=wf_temperature,
+        max_tokens=wf_max_tokens,
     )
 
     total_batch_wall_ms = round((time.perf_counter() - overall_start) * 1000, 2)
@@ -562,7 +638,7 @@ async def query_compare(
 
     comparison_results: List[ModelComparisonResult] = []
     for r in llm_responses:
-        # Calculate dedicated per-model execution time: retrieval time + model latency
+        # Dedicated per-model execution time: retrieval time + model latency
         model_exec_time_ms = round(retrieval_ms + (r.latency_ms or 0.0), 2)
 
         eval_input = EvaluationInput(
@@ -582,16 +658,30 @@ async def query_compare(
         e_res.details["retrieval_latency_ms"] = retrieval_ms
 
         model_trace = {
-            "pipeline_type": "comparison_shared_retrieval",
-            "workflow_name": "Multi-LLM Comparative Baseline",
-            "workflow_version_id": None,
+            "pipeline_type": pipeline_type,
+            "workflow_name": workflow_name,
+            "workflow_version_id": wf_version_id_for_record,
             "context_type": "shared",
+            "context_hash": context_hash,
+            "task_category": task_category,
+            "selection_reason": selection_reason,
             "stages": {
                 "retrieval": {
                     "type": "shared_context",
                     "chunks_retrieved": len(sources),
                     "latency_ms": retrieval_ms,
-                    "top_k": request.top_k,
+                    "top_k": effective_top_k,
+                    "similarity_threshold": sim_threshold,
+                    "reranking_enabled": enable_reranking,
+                },
+                "compression": {
+                    "enabled": context_compression,
+                    "original_context_length": len(raw_context_str),
+                    "effective_context_length": len(context_str),
+                },
+                "prompt": {
+                    "template": prompt_template_name,
+                    "custom_instructions_applied": bool(custom_instructions),
                 },
                 "llm_generation": {
                     "model": r.model,
@@ -601,11 +691,14 @@ async def query_compare(
                     "input_tokens": e_res.input_tokens if r.success else None,
                     "output_tokens": e_res.output_tokens if r.success else None,
                     "cost": e_res.total_cost if r.success else None,
+                    "temperature": wf_temperature,
+                    "max_tokens": wf_max_tokens,
                     "success": r.success,
                     "error": r.error,
                 },
                 "evidence_verification": {
                     "groundedness": e_res.groundedness,
+                    "hallucination_rate": e_res.hallucination_rate,
                     "total_claims": e_res.total_claims,
                     "supported_claims": e_res.supported_claim_count,
                     "unsupported_claims": e_res.unsupported_claim_count,
@@ -613,7 +706,12 @@ async def query_compare(
                 },
             },
             "effective_configuration": {
-                "retrieval": {"top_k": request.top_k, "mode": "shared_retrieval"},
+                "retrieval": {
+                    "top_k": effective_top_k,
+                    "similarity_threshold": sim_threshold,
+                    "reranking": enable_reranking,
+                    "mode": "shared_retrieval",
+                },
                 "model": {"model": r.model, "provider": r.provider},
             },
         }
@@ -627,10 +725,11 @@ async def query_compare(
                 latency_ms=r.latency_ms or 0.0,
                 success=r.success,
                 error=r.error,
-                pipeline_type="comparison_shared_retrieval",
-                workflow_version_id=None,
-                workflow_name="Multi-LLM Comparative Baseline",
+                pipeline_type=pipeline_type,
+                workflow_version_id=wf_version_id_for_record,
+                workflow_name=workflow_name,
                 context_type="shared",
+                context_hash=context_hash,
                 execution_trace=model_trace,
                 evaluation=convert_eval_result_to_response(e_res),
             )
@@ -641,6 +740,10 @@ async def query_compare(
         query=request.query,
         intent=retrieval.intent,
         context=context_str,
+        context_hash=context_hash,
+        workflow_version_id=wf_version_id_for_record,
+        workflow_name=workflow_name,
+        comparison_mode=comparison_mode,
         sources=sources,
         results=comparison_results,
         disclaimer=MEDICAL_DISCLAIMER,

@@ -288,8 +288,18 @@ class RuntimeWorkflowSelector:
 
         # Step 4: If specialized matching versions exist, choose Pareto best (Groundedness max, Cost min)
         if matched_candidates:
-            # Sort by groundedness descending, then cost ascending
-            matched_candidates.sort(key=lambda item: (-item[1], item[2]))
+            # Sort by groundedness descending, then cost ascending.
+            # Tie-breakers:
+            # 1. Active status (currently ACTIVE workflow preferred over non-active approved workflows)
+            # 2. Version number descending (more recent approved versions preferred over older versions)
+            matched_candidates.sort(
+                key=lambda item: (
+                    -item[1],
+                    item[2],
+                    0 if (item[0].status or "").upper() == "ACTIVE" else 1,
+                    -(item[0].version_number or 0),
+                )
+            )
             best_ver, best_g, best_c = matched_candidates[0]
 
             reason = (

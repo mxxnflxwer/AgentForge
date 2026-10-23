@@ -35,6 +35,33 @@ async def lifespan(app: FastAPI):
         get_embedding_service()
     except Exception as e:
         logger.warning(f"Embedding service warm-up warning: {e}")
+
+    logger.info("Verifying ChromaDB vector synchronization with PostgreSQL...")
+    try:
+        from app.core.database import SessionLocal
+        from app.models.document import Document, DocumentChunk, DocumentProcessingStatus
+        from app.services.vector_store import get_vector_store
+        from app.services.reindex_service import reindex_all_documents
+
+        sync_db = SessionLocal()
+        try:
+            store = get_vector_store()
+            chroma_count = store.count()
+            sql_chunks = (
+                sync_db.query(DocumentChunk)
+                .join(Document, Document.id == DocumentChunk.document_id)
+                .filter(Document.processing_status == DocumentProcessingStatus.COMPLETED)
+                .count()
+            )
+            if chroma_count < sql_chunks:
+                logger.info(f"ChromaDB vector count ({chroma_count}) is less than PostgreSQL COMPLETED chunks ({sql_chunks}). Synchronizing...")
+                reindex_all_documents(db=sync_db, vector_store=store)
+            else:
+                logger.info(f"ChromaDB vectors ({chroma_count}) synchronized with PostgreSQL chunks ({sql_chunks}).")
+        finally:
+            sync_db.close()
+    except Exception as e:
+        logger.warning(f"ChromaDB startup synchronization warning: {e}")
     yield
 
 

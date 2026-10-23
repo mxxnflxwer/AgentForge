@@ -13,7 +13,7 @@ from app.services.document.pdf_processor import PDFProcessor
 from app.services.document.section_detector import SectionDetector
 from app.services.document.txt_processor import TxtProcessor
 from app.services.storage import get_storage_backend
-from app.services.vector_store import get_vector_store
+from app.services.vector_store import VectorStore, get_vector_store
 
 logger = logging.getLogger("agentforge.document.pipeline")
 
@@ -23,15 +23,23 @@ class DocumentPipeline:
     End-to-end ingestion and processing pipeline for AgentForge documents.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        chunk_size: Optional[int] = None,
+        chunk_overlap: Optional[int] = None,
+        vector_store: Optional[VectorStore] = None,
+    ):
         self.pdf_processor = PDFProcessor()
         self.docx_processor = DocxProcessor()
         self.txt_processor = TxtProcessor()
         self.cleaner = TextCleaner()
         self.section_detector = SectionDetector()
-        self.chunker = DocumentChunker()
+        self.chunker = DocumentChunker(
+            chunk_size=chunk_size if chunk_size is not None else 1000,
+            chunk_overlap=chunk_overlap if chunk_overlap is not None else 200,
+        )
         self.storage = get_storage_backend()
-        self.vector_store = get_vector_store()
+        self.vector_store = vector_store or get_vector_store()
 
     def get_processor_for_type(self, file_type: str) -> BaseDocumentProcessor:
         normalized_type = file_type.lower().lstrip(".")

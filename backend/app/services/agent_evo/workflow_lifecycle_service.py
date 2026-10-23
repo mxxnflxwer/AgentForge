@@ -1,3 +1,4 @@
+
 import datetime
 import logging
 import time
@@ -23,6 +24,7 @@ from app.schemas.agent_evo import (
 from app.services.agent_evo.evaluator_adapter import (
     apply_context_compression_operator,
     build_candidate_prompt,
+    get_or_create_candidate_vector_store,
 )
 from app.services.agent_evo.workflow import get_baseline_workflow
 from app.services.evaluation import (
@@ -269,6 +271,18 @@ class WorkflowLifecycleService:
 
         # 2. Execute RAG Retrieval with exact active configuration
         retrieval_start = time.perf_counter()
+        cand_store = None
+        target_chunk_size = retrieval_cfg.get("chunk_size", 1000)
+        target_chunk_overlap = retrieval_cfg.get("chunk_overlap", 200)
+        if target_chunk_size != 1000 or target_chunk_overlap != 200:
+            cand_store = get_or_create_candidate_vector_store(
+                user_id=user_id,
+                chunk_size=target_chunk_size,
+                chunk_overlap=target_chunk_overlap,
+                document_id=document_id,
+                db=db,
+            )
+
         retrieval = execute_rag_retrieval(
             user_id=user_id,
             query=query,
@@ -277,6 +291,7 @@ class WorkflowLifecycleService:
             relevance_threshold=sim_threshold,
             db=db,
             enable_reranking=enable_reranking,
+            vector_store=cand_store,
         )
         retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
 

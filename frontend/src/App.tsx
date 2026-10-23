@@ -103,6 +103,7 @@ interface ModelComparisonResult {
   workflow_version_id?: string | null
   workflow_name?: string | null
   context_type?: string
+  context_hash?: string | null
   execution_trace?: Record<string, any>
   evaluation?: EvaluationMetrics
 }
@@ -112,6 +113,10 @@ interface QueryCompareResponse {
   query: string
   intent: string
   context?: string | null
+  context_hash?: string | null
+  workflow_version_id?: string | null
+  workflow_name?: string | null
+  comparison_mode?: string | null
   sources: QuerySource[]
   results: ModelComparisonResult[]
   disclaimer: string
@@ -247,6 +252,7 @@ function MainApp() {
   const [selectedDocId, setSelectedDocId] = useState<string>('')
   const [selectedModel, setSelectedModel] = useState<string>('gemini')
   const [queryMode, setQueryMode] = useState<'single' | 'compare'>('single')
+  const [compareMode, setCompareMode] = useState<'active_workflow' | 'baseline'>('active_workflow')
   const [query, setQuery] = useState('What is the clinical diagnosis?')
   const [expectedAnswer, setExpectedAnswer] = useState('')
   const [topK, setTopK] = useState<number>(5)
@@ -558,9 +564,11 @@ function MainApp() {
           document_id?: string
           top_k: number
           expected_answer?: string
+          comparison_mode?: string
         } = {
           query: query.trim(),
           top_k: topK,
+          comparison_mode: compareMode,
         }
         if (selectedDocId) {
           payload.document_id = selectedDocId
@@ -929,6 +937,55 @@ function MainApp() {
                       <span>⚖️ Compare All 3 Models Concurrently</span>
                     </label>
                   </div>
+
+                  {/* Comparison Workflow Selector (Visible in Compare Mode) */}
+                  {queryMode === 'compare' && (
+                    <div className="rag-form-group">
+                      <label className="rag-label-with-hint">
+                        <span>Comparison Execution Workflow:</span>
+                        <span className="rag-input-hint">Select workflow configuration applied for shared retrieval and prompt generation</span>
+                      </label>
+                      <div className="rag-mode-switcher" style={{ marginTop: '4px' }}>
+                        <label
+                          className={`rag-mode-opt ${compareMode === 'active_workflow' ? 'rag-mode-opt-active' : ''}`}
+                          onClick={() => {
+                            setCompareMode('active_workflow')
+                            setCompareResults(null)
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            name="compareMode"
+                            checked={compareMode === 'active_workflow'}
+                            onChange={() => {
+                              setCompareMode('active_workflow')
+                              setCompareResults(null)
+                            }}
+                          />
+                          <span>🚀 Active AgentEvo Workflow (Optimized RAG & Prompt)</span>
+                        </label>
+
+                        <label
+                          className={`rag-mode-opt ${compareMode === 'baseline' ? 'rag-mode-opt-active' : ''}`}
+                          onClick={() => {
+                            setCompareMode('baseline')
+                            setCompareResults(null)
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            name="compareMode"
+                            checked={compareMode === 'baseline'}
+                            onChange={() => {
+                              setCompareMode('baseline')
+                              setCompareResults(null)
+                            }}
+                          />
+                          <span>⚖️ Multi-LLM Comparative Baseline (Default RAG)</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Model Selector (Visible in Single Mode) */}
                   {queryMode === 'single' && (
@@ -1443,7 +1500,19 @@ function MainApp() {
                       {/* Common Context Preview */}
                       {compareResults.context && (
                         <details className="rag-context-accordion" open>
-                          <summary>📋 Shared Retrieved Document Context (Sent to all 3 models)</summary>
+                          <summary style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                            <span>📋 Shared Retrieved Document Context (Sent to all 3 models)</span>
+                            {compareResults.workflow_name && (
+                              <span style={{ fontSize: '0.75rem', background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>
+                                {compareResults.workflow_name}
+                              </span>
+                            )}
+                            {compareResults.context_hash && (
+                              <span style={{ fontSize: '0.72rem', color: '#64748b', background: '#f1f5f9', padding: '2px 6px', borderRadius: 4, fontFamily: 'monospace' }} title={`Full SHA-256: ${compareResults.context_hash}`}>
+                                Hash: {compareResults.context_hash.slice(0, 12)}...
+                              </span>
+                            )}
+                          </summary>
                           <pre className="rag-context-pre">{compareResults.context}</pre>
                         </details>
                       )}
@@ -1590,13 +1659,17 @@ function MainApp() {
                                       ❌ Provider/API error: {res.evaluation.details?.error_message || "API generation failed."}
                                     </div>
                                   )}
+
                                   {/* Model Workflow Provenance & Execution Trace */}
                                   <details className="rag-compare-claims-details" style={{ marginTop: 10 }}>
                                     <summary>🔍 Provenance & Trace ({res.pipeline_type || 'comparison_shared_retrieval'})</summary>
                                     <div style={{ padding: '8px 10px', fontSize: '0.78rem', background: '#f8fafc', borderRadius: 4, marginTop: 6, border: '1px solid #e2e8f0', color: '#1e293b' }}>
                                       <div style={{ marginBottom: 4 }}><strong>Pipeline:</strong> <span style={{ color: '#0369a1', fontWeight: 600 }}>{res.pipeline_type || 'comparison_shared_retrieval'}</span></div>
-                                      <div style={{ marginBottom: 4 }}><strong>Workflow:</strong> {res.workflow_name || 'Multi-LLM Comparative Baseline'}</div>
+                                      <div style={{ marginBottom: 4 }}><strong>Workflow:</strong> {res.workflow_name || 'Multi-LLM Comparative Baseline'} {res.workflow_version_id ? `(${res.workflow_version_id})` : ''}</div>
                                       <div style={{ marginBottom: 4 }}><strong>Context Type:</strong> {res.context_type || 'shared'} ({compareResults.sources?.length ?? 0} shared chunks)</div>
+                                      {(res.context_hash || compareResults.context_hash) && (
+                                        <div style={{ marginBottom: 4 }}><strong>Context Hash:</strong> <code style={{ fontSize: '0.72rem' }}>{(res.context_hash || compareResults.context_hash)?.slice(0, 16)}...</code></div>
+                                      )}
                                       <div style={{ marginBottom: 4 }}><strong>Model ID:</strong> <code>{res.model_id || res.model}</code></div>
                                       <div style={{ marginBottom: 4 }}><strong>Latency:</strong> {formatMs(res.latency_ms)} | <strong>Tokens:</strong> {formatTokens(res.evaluation?.total_tokens)}</div>
                                       <div style={{ marginBottom: 4 }}><strong>Cost:</strong> {formatCost(res.evaluation?.total_cost)}</div>

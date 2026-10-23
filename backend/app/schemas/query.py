@@ -96,6 +96,14 @@ class QueryCompareRequest(BaseModel):
         le=20,
         description="Number of chunks to retrieve for the common context.",
     )
+    comparison_mode: Optional[str] = Field(
+        "active_workflow",
+        description="Comparison mode: 'active_workflow', 'baseline', or 'explicit_version'",
+    )
+    workflow_version_id: Optional[str] = Field(
+        None,
+        description="Optional explicit workflow version ID or 'baseline' override.",
+    )
 
 
 class ModelComparisonResult(BaseModel):
@@ -110,6 +118,7 @@ class ModelComparisonResult(BaseModel):
     workflow_version_id: Optional[str] = Field(None, description="Actual workflow version ID (None for comparative baseline)")
     workflow_name: str = Field("Multi-LLM Comparative Baseline", description="Actual workflow name")
     context_type: str = Field("shared", description="Whether context is shared or independent")
+    context_hash: Optional[str] = Field(None, description="SHA-256 hash of the shared context")
     execution_trace: Optional[Dict[str, Any]] = Field(None, description="Detailed stage execution trace for this model")
     evaluation: Optional[EvaluationResponse] = Field(
         None,
@@ -122,6 +131,10 @@ class QueryCompareResponse(BaseModel):
     query: str
     intent: str
     context: Optional[str] = None
+    context_hash: Optional[str] = None
+    workflow_version_id: Optional[str] = None
+    workflow_name: Optional[str] = None
+    comparison_mode: Optional[str] = None
     sources: List[QueryAnswerSource] = []
     results: List[ModelComparisonResult] = []
     disclaimer: str

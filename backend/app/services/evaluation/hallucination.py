@@ -14,7 +14,7 @@ logger = logging.getLogger("agentforge.services.evaluation.hallucination")
 
 class HallucinationResult(BaseModel):
     """Hallucination evaluation metrics and catalog of unsupported claims."""
-    hallucination_rate: float = Field(..., description="Ratio of unsupported claims: unsupported / total")
+    hallucination_rate: Optional[float] = Field(None, description="Ratio of unsupported claims: unsupported / total")
     hallucinated_claims: int = Field(..., description="Number of unsupported or hallucinated claims")
     total_claims: int = Field(..., description="Total evaluated claims")
     unsupported_claims: List[str] = Field(default_factory=list, description="List of unsupported claim strings")
@@ -40,9 +40,9 @@ def calculate_hallucination_rate(
         retrieved_context=retrieved_context,
     )
 
-    if g_res.total_claims == 0:
+    if g_res.total_claims == 0 or g_res.groundedness is None:
         return HallucinationResult(
-            hallucination_rate=0.0,
+            hallucination_rate=None,
             hallucinated_claims=0,
             total_claims=0,
             unsupported_claims=[],

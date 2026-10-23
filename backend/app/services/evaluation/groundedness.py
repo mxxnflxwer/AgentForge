@@ -376,19 +376,26 @@ def calculate_groundedness(
     cleaned_context = clean_text(retrieved_context)
     cleaned_answer = clean_text(generated_answer)
 
-    # Handle safe "not found" response
-    if "not found in the uploaded document" in cleaned_answer.lower() or "information was not found" in cleaned_answer.lower():
+    # Handle safe "not found" response or missing context
+    is_not_found = (
+        "not found in the uploaded document" in cleaned_answer.lower()
+        or "information was not found" in cleaned_answer.lower()
+        or not cleaned_context.strip()
+    )
+    if is_not_found and ("not found" in cleaned_answer.lower() or not cleaned_context.strip()):
         return GroundednessResult(
-            groundedness=1.0,
+            groundedness=None,
             supported_claims=0,
             unsupported_claims=0,
+            supported_claims_list=[],
+            unsupported_claims_list=[],
             total_claims=0,
             claim_details=[
                 ClaimDetail(
                     claim="Information not found in document",
-                    status=ClaimStatus.SUPPORTED,
+                    status=ClaimStatus.INSUFFICIENT_EVIDENCE,
                     confidence=1.0,
-                    reason="Accurate recognition of missing document context.",
+                    reason="Accurate recognition of missing document context; no verifiable factual claims to evaluate.",
                 )
             ],
         )
@@ -400,6 +407,8 @@ def calculate_groundedness(
             groundedness=None,
             supported_claims=0,
             unsupported_claims=0,
+            supported_claims_list=[],
+            unsupported_claims_list=[],
             total_claims=0,
             claim_details=[
                 ClaimDetail(
@@ -424,7 +433,7 @@ def calculate_groundedness(
             unsupported_count += 1
 
     total = len(claims)
-    groundedness_score = round(supported_count / float(total), 4) if total > 0 else 1.0
+    groundedness_score = round(supported_count / float(total), 4) if total > 0 else None
 
     supp_list = [c.claim for c in claim_details if c.status == ClaimStatus.SUPPORTED]
     unsupp_list = [c.claim for c in claim_details if c.status in (ClaimStatus.UNSUPPORTED, ClaimStatus.INSUFFICIENT_EVIDENCE)]

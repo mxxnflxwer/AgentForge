@@ -3,14 +3,21 @@ import time
 from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
+import uuid
+from app.models.document import Document, DocumentChunk, DocumentProcessingStatus
 from app.services.agent_evo.objective import CandidateMetrics
 from app.services.agent_evo.pareto import EvaluatedCandidate
 from app.services.agent_evo.validator import validate_workflow
 from app.services.agent_evo.workflow import AgentWorkflow
+from app.services.document.base import DocumentSection
+from app.services.document.chunker import DocumentChunker
+from app.services.document.pipeline import get_document_pipeline
 from app.services.evaluation import EvaluationInput, EvaluationResult, get_evaluation_engine
 from app.services.llm import MEDICAL_DISCLAIMER, get_llm_router
 from app.services.llm.base import build_medical_prompt
 from app.services.retrieval_service import build_extractive_summary_context, execute_rag_retrieval
+from app.services.storage import get_storage_backend
+from app.services.vector_store import VectorStore
 
 logger = logging.getLogger("agentforge.services.agent_evo.evaluator_adapter")
 
@@ -87,6 +94,114 @@ def apply_context_compression_operator(context_str: str) -> str:
     return "\n".join(compressed_lines)
 
 
+def get_or_create_candidate_vector_store(
+    user_id: str,
+    chunk_size: int = 1000,
+    chunk_overlap: int = 200,
+    document_id: Optional[str] = None,
+    db: Optional[Session] = None,
+) -> Optional[VectorStore]:
+    """
+    Build or retrieve an isolated candidate-specific vector store collection
+    for a workflow candidate with non-baseline chunking settings.
+    Guarantees production collection ('agentforge_medical_docs') and database
+    records are never modified or overwritten.
+    """
+    if chunk_size == 1000 and chunk_overlap == 200:
+        return None
+
+    coll_name = f"cand_chunks_{chunk_size}_{chunk_overlap}"
+    cand_store = VectorStore(collection_name=coll_name)
+
+    if not db:
+        return cand_store
+
+    try:
+        where_filter = {"user_id": {"$eq": str(user_id)}}
+        if document_id:
+            where_filter = {
+                "$and": [
+                    {"user_id": {"$eq": str(user_id)}},
+                    {"document_id": {"$eq": str(document_id)}},
+                ]
+            }
+        existing = cand_store._collection.get(where=where_filter, limit=1)
+        if existing and existing.get("ids") and len(existing["ids"]) > 0:
+            return cand_store
+
+        if document_id:
+            docs = db.query(Document).filter(Document.id == document_id).all()
+        else:
+            docs = (
+                db.query(Document)
+                .filter(
+                    Document.owner_id == user_id,
+                    Document.processing_status == DocumentProcessingStatus.COMPLETED,
+                )
+                .all()
+            )
+
+        storage = get_storage_backend()
+        pipeline = get_document_pipeline()
+        chunker = DocumentChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+        for doc in docs:
+            sections: List[DocumentSection] = []
+            try:
+                file_bytes = storage.read(doc.stored_filename)
+                processor = pipeline.get_processor_for_type(doc.file_type)
+                extracted = processor.extract(file_bytes)
+                cleaned = pipeline.cleaner.clean(extracted.raw_text)
+                sections = pipeline.section_detector.detect_sections(cleaned)
+            except Exception:
+                if doc.chunks:
+                    sections_map: Dict[str, List[str]] = {}
+                    for chk in sorted(doc.chunks, key=lambda c: c.chunk_index):
+                        sec = chk.section_title or "General"
+                        if sec not in sections_map:
+                            sections_map[sec] = []
+                        sections_map[sec].append(chk.content)
+                    for sec, pieces in sections_map.items():
+                        full_sec = "\n\n".join(pieces)
+                        sections.append(
+                            DocumentSection(
+                                title=sec,
+                                content=full_sec,
+                                start_char=0,
+                                end_char=len(full_sec),
+                            )
+                        )
+
+            if not sections:
+                continue
+
+            chunks_data = chunker.chunk_sections(sections)
+            transient_chunks: List[DocumentChunk] = []
+            for cd in chunks_data:
+                transient_chunks.append(
+                    DocumentChunk(
+                        id=str(uuid.uuid4()),
+                        document_id=doc.id,
+                        chunk_index=cd.chunk_index,
+                        content=cd.content,
+                        section_title=cd.section_title,
+                        token_count=cd.token_count,
+                        character_count=cd.character_count,
+                    )
+                )
+
+            cand_store.upsert_document_chunks(
+                user_id=user_id,
+                document_id=doc.id,
+                chunks=transient_chunks,
+            )
+
+        return cand_store
+    except Exception as e:
+        logger.warning(f"Could not build candidate vector store for {chunk_size}/{chunk_overlap}: {e}")
+        return cand_store
+
+
 class EvaluatorAdapter:
     """
     Adapter bridging AgentEvo workflow execution with the Phase 6 Evaluation Engine.
@@ -130,6 +245,18 @@ class EvaluatorAdapter:
         # 2. RAG Retrieval Stage with candidate retrieval parameters
         retrieval_start = time.perf_counter()
         try:
+            cand_store = None
+            cand_chunk_size = getattr(workflow.retrieval, "chunk_size", 1000)
+            cand_chunk_overlap = getattr(workflow.retrieval, "chunk_overlap", 200)
+            if cand_chunk_size != 1000 or cand_chunk_overlap != 200:
+                cand_store = get_or_create_candidate_vector_store(
+                    user_id=user_id,
+                    chunk_size=cand_chunk_size,
+                    chunk_overlap=cand_chunk_overlap,
+                    document_id=document_id,
+                    db=db,
+                )
+
             retrieval = execute_rag_retrieval(
                 user_id=user_id,
                 query=query,
@@ -138,6 +265,7 @@ class EvaluatorAdapter:
                 relevance_threshold=workflow.retrieval.similarity_threshold,
                 db=db,
                 enable_reranking=getattr(workflow.retrieval, "reranking", True),
+                vector_store=cand_store,
             )
             retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
         except Exception as e:
@@ -340,6 +468,18 @@ class EvaluatorAdapter:
             # RAG Retrieval
             retrieval_start = time.perf_counter()
             try:
+                cand_store = None
+                cand_chunk_size = getattr(workflow.retrieval, "chunk_size", 1000)
+                cand_chunk_overlap = getattr(workflow.retrieval, "chunk_overlap", 200)
+                if cand_chunk_size != 1000 or cand_chunk_overlap != 200:
+                    cand_store = get_or_create_candidate_vector_store(
+                        user_id=user_id,
+                        chunk_size=cand_chunk_size,
+                        chunk_overlap=cand_chunk_overlap,
+                        document_id=document_id,
+                        db=db,
+                    )
+
                 retrieval = execute_rag_retrieval(
                     user_id=user_id,
                     query=q,
@@ -348,6 +488,7 @@ class EvaluatorAdapter:
                     relevance_threshold=workflow.retrieval.similarity_threshold,
                     db=db,
                     enable_reranking=getattr(workflow.retrieval, "reranking", True),
+                    vector_store=cand_store,
                 )
                 retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
             except Exception as e:

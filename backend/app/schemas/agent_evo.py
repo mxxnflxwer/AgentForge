@@ -178,6 +178,7 @@ class WorkflowExecutionRequest(BaseModel):
     query: str = Field(..., min_length=1, description="User query to process")
     document_id: Optional[str] = Field(None, description="Optional document ID for retrieval")
     expected_answer: Optional[str] = Field(None, description="Optional ground truth reference")
+    workflow_version_id: Optional[str] = Field(None, description="Optional workflow version ID override")
 
 
 class WorkflowExecutionResponse(BaseModel):
@@ -189,11 +190,11 @@ class WorkflowExecutionResponse(BaseModel):
     sources: List[Dict[str, Any]] = []
     model: str
     provider: str
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-    cost: float = 0.0
-    llm_latency_ms: float = 0.0
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    cost: Optional[float] = None
+    llm_latency_ms: Optional[float] = None
     total_execution_time_ms: float = 0.0
     status: str = "success"
     created_at: str
@@ -233,18 +234,22 @@ class WorkflowFeedbackListResponse(BaseModel):
 
 class WorkflowAuditEventResponse(BaseModel):
     """Audit log entry for lifecycle governance actions."""
+    id: Optional[str] = None
     event_id: str
     workflow_version_id: str
     event_type: str
     user_email: str
     details: Optional[Dict[str, Any]] = None
     created_at: str
+    triggered_by: Optional[str] = None
+    previous_version_id: Optional[str] = None
 
 
 class WorkflowAuditListResponse(BaseModel):
     """List of audit events."""
     total_events: int
     events: List[WorkflowAuditEventResponse]
+    audit_events: Optional[List[WorkflowAuditEventResponse]] = None
 
 
 class WorkflowReoptimizeRequest(BaseModel):
@@ -328,14 +333,14 @@ class BenchmarkItemResult(BaseModel):
     source_run_id: Optional[str] = None
     model_id: str
     provider: str
-    groundedness: float
-    hallucination_rate: float
-    cost: float
-    total_tokens: int
-    input_tokens: int
-    output_tokens: int
-    llm_latency_ms: float
-    execution_time_ms: float
+    groundedness: Optional[float] = None
+    hallucination_rate: Optional[float] = None
+    cost: Optional[float] = None
+    total_tokens: Optional[int] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    llm_latency_ms: Optional[float] = None
+    execution_time_ms: Optional[float] = None
     retrieval: Dict[str, Any]
     retrieval_config_summary: Optional[str] = None
     prompt_template: str

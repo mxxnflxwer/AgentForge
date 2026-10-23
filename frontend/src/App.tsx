@@ -80,9 +80,11 @@ interface QueryAnswerResponse {
   sources: QuerySource[]
   latency_ms: number | null
   disclaimer: string
+  pipeline_type?: string
   evaluation?: EvaluationMetrics
   execution_id?: string | null
   workflow_version_id?: string | null
+  workflow_name?: string | null
   task_category?: string | null
   selection_reason?: string | null
   groundedness?: number | null
@@ -97,6 +99,11 @@ interface ModelComparisonResult {
   latency_ms: number | null
   success: boolean
   error?: string | null
+  pipeline_type?: string
+  workflow_version_id?: string | null
+  workflow_name?: string | null
+  context_type?: string
+  execution_trace?: Record<string, any>
   evaluation?: EvaluationMetrics
 }
 
@@ -224,6 +231,7 @@ function MainApp() {
 
   // Active Main Tab: 'llm' | 'vector' | 'optimizer'
   const [activeTab, setActiveTab] = useState<'llm' | 'vector' | 'optimizer'>('llm')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   // Query & Model settings
   const [selectedDocId, setSelectedDocId] = useState<string>('')
@@ -235,8 +243,47 @@ function MainApp() {
 
   // Execution states
   const [generating, setGenerating] = useState(false)
-  const [singleAnswer, setSingleAnswer] = useState<QueryAnswerResponse | null>(null)
-  const [compareResults, setCompareResults] = useState<QueryCompareResponse | null>(null)
+  const [singleAnswer, setSingleAnswer] = useState<QueryAnswerResponse | null>(() => {
+    try {
+      const saved = sessionStorage.getItem('agentforge_single_answer')
+      return saved ? JSON.parse(saved) : null
+    } catch {
+      return null
+    }
+  })
+  const [compareResults, setCompareResults] = useState<QueryCompareResponse | null>(() => {
+    try {
+      const saved = sessionStorage.getItem('agentforge_compare_results')
+      return saved ? JSON.parse(saved) : null
+    } catch {
+      return null
+    }
+  })
+
+  // Synchronize execution results with sessionStorage so they survive page refresh
+  useEffect(() => {
+    try {
+      if (singleAnswer) {
+        sessionStorage.setItem('agentforge_single_answer', JSON.stringify(singleAnswer))
+      } else {
+        sessionStorage.removeItem('agentforge_single_answer')
+      }
+    } catch (e) {
+      console.warn('Could not save singleAnswer to sessionStorage', e)
+    }
+  }, [singleAnswer])
+
+  useEffect(() => {
+    try {
+      if (compareResults) {
+        sessionStorage.setItem('agentforge_compare_results', JSON.stringify(compareResults))
+      } else {
+        sessionStorage.removeItem('agentforge_compare_results')
+      }
+    } catch (e) {
+      console.warn('Could not save compareResults to sessionStorage', e)
+    }
+  }, [compareResults])
 
   // Vector Search state
   const [searching, setSearching] = useState(false)
@@ -578,8 +625,16 @@ function MainApp() {
               </button>
             </div>
           ) : (
-            <span className="rag-user-badge-off">🔴 Not Authenticated</span>
+            <span className="rag-user-badge-off">Not Authenticated</span>
           )}
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="rag-btn-secondary rag-btn-sm"
+            title="Toggle Documents Ingestion Sidebar"
+          >
+            {sidebarCollapsed ? 'Show Ingestion' : 'Hide Ingestion'}
+          </button>
         </div>
       </header>
 
@@ -587,7 +642,7 @@ function MainApp() {
       {!isLoggedIn && (
         <div className="rag-card rag-auth-card">
           <div className="rag-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2>🔐 {authMode === 'login' ? 'User & Developer Sign In' : 'Create New Account'}</h2>
+            <h2>{authMode === 'login' ? 'User & Developer Sign In' : 'Create New Account'}</h2>
             <div className="rag-auth-tabs" style={{ display: 'flex', gap: 6 }}>
               <button
                 type="button"
@@ -643,110 +698,112 @@ function MainApp() {
       )}
 
       {/* Main Grid */}
-      <div className="rag-grid-main">
+      <div className={`rag-grid-main ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
         {/* Left Column: Documents & Ingestion */}
-        <div className="rag-col-left">
-          {/* Ingest Card */}
-          <div className="rag-card">
-            <div className="rag-card-header">
-              <h2>📤 Ingest Document</h2>
-            </div>
-            <p className="rag-card-desc">Upload clinical records (.pdf, .docx, .txt) for chunking and BGE-M3 vector indexing.</p>
-
-            {uploadError && <div className="rag-alert rag-alert-error">⚠️ {uploadError}</div>}
-            {uploadSuccess && <div className="rag-alert rag-alert-success">✅ {uploadSuccess}</div>}
-
-            <form onSubmit={handleFileUpload} className="rag-upload-form">
-              <div className="rag-form-group">
-                <label>Select File:</label>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept=".pdf,.docx,.txt"
-                  onChange={(e) => setSelectedFile(e.target.files ? e.target.files[0] : null)}
-                  className="rag-file-input"
-                  required
-                />
+        {!sidebarCollapsed && (
+          <div className="rag-col-left">
+            {/* Ingest Card */}
+            <div className="rag-card">
+              <div className="rag-card-header">
+                <h2>Ingest Document</h2>
               </div>
+              <p className="rag-card-desc">Upload clinical records (.pdf, .docx, .txt) for chunking and BGE-M3 vector indexing.</p>
 
-              <div className="rag-form-group">
-                <label>Specialty / Tag (Optional):</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Cardiology, Oncology, General"
-                  value={uploadSpecialty}
-                  onChange={(e) => setUploadSpecialty(e.target.value)}
-                  className="rag-text-input"
-                />
-              </div>
+              {uploadError && <div className="rag-alert rag-alert-error">⚠️ {uploadError}</div>}
+              {uploadSuccess && <div className="rag-alert rag-alert-success">✓ {uploadSuccess}</div>}
 
-              <button
-                type="submit"
-                disabled={uploading || !isLoggedIn}
-                className="rag-btn rag-btn-primary rag-btn-block"
-              >
-                {uploading ? '⏳ Uploading & Indexing...' : '📤 Upload & Index Document'}
-              </button>
-            </form>
-          </div>
+              <form onSubmit={handleFileUpload} className="rag-upload-form">
+                <div className="rag-form-group">
+                  <label>Select File:</label>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept=".pdf,.docx,.txt"
+                    onChange={(e) => setSelectedFile(e.target.files ? e.target.files[0] : null)}
+                    className="rag-file-input"
+                    required
+                  />
+                </div>
 
-          {/* Ingested Documents Card */}
-          <div className="rag-card">
-            <div className="rag-card-header">
-              <h2>📚 Ingested Documents ({documents.length})</h2>
-              <button
-                onClick={fetchDocuments}
-                className="rag-btn-secondary rag-btn-sm"
-                disabled={loadingDocs || !isLoggedIn}
-              >
-                {loadingDocs ? '...' : '🔄 Refresh'}
-              </button>
+                <div className="rag-form-group">
+                  <label>Specialty / Tag (Optional):</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Cardiology, Oncology, General"
+                    value={uploadSpecialty}
+                    onChange={(e) => setUploadSpecialty(e.target.value)}
+                    className="rag-text-input"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={uploading || !isLoggedIn}
+                  className="rag-btn rag-btn-primary rag-btn-block"
+                >
+                  {uploading ? 'Uploading & Indexing...' : 'Upload & Index Document'}
+                </button>
+              </form>
             </div>
 
-            {documents.length === 0 ? (
-              <div className="rag-placeholder-sm">
-                <p>No documents indexed yet. Upload a sample document to start.</p>
+            {/* Ingested Documents Card */}
+            <div className="rag-card">
+              <div className="rag-card-header">
+                <h2>Ingested Documents ({documents.length})</h2>
+                <button
+                  onClick={fetchDocuments}
+                  className="rag-btn-secondary rag-btn-sm"
+                  disabled={loadingDocs || !isLoggedIn}
+                >
+                  {loadingDocs ? '...' : 'Refresh'}
+                </button>
               </div>
-            ) : (
-              <div className="rag-doc-list">
-                {documents.map((doc) => {
-                  const statusStr = getDocStatus(doc)
-                  const isSelected = selectedDocId === doc.id
-                  const fileSizeKb = doc.file_size ? (doc.file_size / 1024).toFixed(1) : '0'
 
-                  return (
-                    <div
-                      key={doc.id}
-                      className={`rag-doc-item ${isSelected ? 'rag-doc-selected' : ''}`}
-                      onClick={() => setSelectedDocId(isSelected ? '' : doc.id)}
-                    >
-                      <div className="rag-doc-item-header">
-                        <span className="rag-doc-title">📄 {getDocFilename(doc)}</span>
-                        <span className={`rag-status-badge rag-status-${statusStr.toLowerCase()}`}>
-                          {statusStr}
-                        </span>
-                      </div>
-                      <div className="rag-doc-item-meta">
-                        <span>{fileSizeKb} KB</span>
-                        <span>•</span>
-                        <span>{doc.chunk_count ?? 0} Chunks</span>
-                        {doc.specialty && (
-                          <>
-                            <span>•</span>
-                            <span className="rag-doc-tag">{doc.specialty}</span>
-                          </>
+              {documents.length === 0 ? (
+                <div className="rag-placeholder-sm">
+                  <p>No documents indexed yet. Upload a sample document to start.</p>
+                </div>
+              ) : (
+                <div className="rag-doc-list">
+                  {documents.map((doc) => {
+                    const statusStr = getDocStatus(doc)
+                    const isSelected = selectedDocId === doc.id
+                    const fileSizeKb = doc.file_size ? (doc.file_size / 1024).toFixed(1) : '0'
+
+                    return (
+                      <div
+                        key={doc.id}
+                        className={`rag-doc-item ${isSelected ? 'rag-doc-selected' : ''}`}
+                        onClick={() => setSelectedDocId(isSelected ? '' : doc.id)}
+                      >
+                        <div className="rag-doc-item-header">
+                          <span className="rag-doc-title">{getDocFilename(doc)}</span>
+                          <span className={`rag-status-badge rag-status-${statusStr.toLowerCase()}`}>
+                            {statusStr}
+                          </span>
+                        </div>
+                        <div className="rag-doc-item-meta">
+                          <span>{fileSizeKb} KB</span>
+                          <span>•</span>
+                          <span>{doc.chunk_count ?? 0} Chunks</span>
+                          {doc.specialty && (
+                            <>
+                              <span>•</span>
+                              <span className="rag-doc-tag">{doc.specialty}</span>
+                            </>
+                          )}
+                        </div>
+                        {doc.processing_error && (
+                          <div className="rag-doc-error">Error: {doc.processing_error}</div>
                         )}
                       </div>
-                      {doc.processing_error && (
-                        <div className="rag-doc-error">Error: {doc.processing_error}</div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Right Column: LLM Generation & Multi-Model Comparison */}
         <div className="rag-col-right">
@@ -756,19 +813,19 @@ function MainApp() {
               className={`rag-tab-btn ${activeTab === 'llm' ? 'rag-tab-active' : ''}`}
               onClick={() => setActiveTab('llm')}
             >
-              ✨ LLM Analysis & 3-Model Comparison
+              LLM Analysis & Comparison
             </button>
             <button
               className={`rag-tab-btn ${activeTab === 'vector' ? 'rag-tab-active' : ''}`}
               onClick={() => setActiveTab('vector')}
             >
-              🔍 Vector Search (RAG Chunks)
+              Vector Search (RAG Chunks)
             </button>
             <button
               className={`rag-tab-btn ${activeTab === 'optimizer' ? 'rag-tab-active' : ''}`}
               onClick={() => setActiveTab('optimizer')}
             >
-              🧬 AgentEvo Optimizer (Pareto Evolution)
+              AgentEvo Optimizer
             </button>
           </div>
 
@@ -1018,6 +1075,18 @@ function MainApp() {
                             <span className="rag-model-id-badge" title="Model Identifier"><code>{singleAnswer.model_id}</code></span>
                           )}
                           <span className="rag-intent-badge">Intent: {singleAnswer.intent}</span>
+                          <span
+                            className="rag-intent-badge"
+                            style={{
+                              background: singleAnswer.pipeline_type === 'baseline' ? 'rgba(100, 116, 139, 0.2)' : 'rgba(14, 165, 233, 0.2)',
+                              color: singleAnswer.pipeline_type === 'baseline' ? '#94a3b8' : '#38bdf8',
+                              borderColor: singleAnswer.pipeline_type === 'baseline' ? '#475569' : '#0284c7',
+                            }}
+                          >
+                            {singleAnswer.pipeline_type === 'baseline'
+                              ? 'Pipeline: Baseline (Isolated)'
+                              : `Active Workflow: ${singleAnswer.workflow_version_id || 'v10'}`}
+                          </span>
                         </div>
                         {singleAnswer.status === 'insufficient_credits' && (
                           <div className="rag-eval-status-banner credits" style={{ marginBottom: 12 }}>
@@ -1196,40 +1265,48 @@ function MainApp() {
                             </div>
                           )}
 
-                          {/* Structured Runtime Stage Execution Trace */}
-                          {singleAnswer.execution_trace?.stages && (
-                            <details className="rag-compare-claims-details" style={{ marginTop: 12 }}>
-                              <summary>🔍 Structured Execution Stages Trace ({singleAnswer.task_category || 'Clinical Fact'})</summary>
-                              <div style={{ padding: '10px 12px', fontSize: '0.82rem', background: '#f8fafc', borderRadius: 6, marginTop: 8, border: '1px solid #e2e8f0' }}>
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8 }}>
-                                  <div style={{ padding: 8, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 4 }}>
-                                    <div style={{ fontWeight: 700, color: '#0369a1', marginBottom: 4 }}>1. Retrieval Stage</div>
-                                    <div>Latency: <strong>{singleAnswer.execution_trace.stages.retrieval?.latency_ms ?? 0} ms</strong></div>
-                                    <div>Chunks: <strong>{singleAnswer.execution_trace.stages.retrieval?.chunks_retrieved ?? 0}</strong></div>
-                                    <div>Reranking: <strong>{singleAnswer.execution_trace.stages.retrieval?.reranking_enabled ? 'Active' : 'Bypassed'}</strong></div>
-                                    <div>Threshold: <strong>{singleAnswer.execution_trace.stages.retrieval?.similarity_threshold ?? '0.35'}</strong></div>
-                                  </div>
-                                  <div style={{ padding: 8, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 4 }}>
-                                    <div style={{ fontWeight: 700, color: '#0369a1', marginBottom: 4 }}>2. Context Compression</div>
-                                    <div>Status: <strong>{singleAnswer.execution_trace.stages.compression?.enabled ? 'Active' : 'Bypassed'}</strong></div>
-                                    <div>Chars: <strong>{singleAnswer.execution_trace.stages.compression?.effective_context_length ?? 0}</strong></div>
-                                  </div>
-                                  <div style={{ padding: 8, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 4 }}>
-                                    <div style={{ fontWeight: 700, color: '#0369a1', marginBottom: 4 }}>3. Model Generation</div>
-                                    <div>Model: <strong>{singleAnswer.execution_trace.stages.llm_generation?.model || singleAnswer.model}</strong></div>
-                                    <div>Latency: <strong>{singleAnswer.execution_trace.stages.llm_generation?.latency_ms ?? 0} ms</strong></div>
-                                    <div>Tokens: <strong>{(singleAnswer.execution_trace.stages.llm_generation?.input_tokens ?? 0) + (singleAnswer.execution_trace.stages.llm_generation?.output_tokens ?? 0)}</strong></div>
-                                  </div>
-                                  <div style={{ padding: 8, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 4 }}>
-                                    <div style={{ fontWeight: 700, color: '#0369a1', marginBottom: 4 }}>4. Evidence Verification</div>
-                                    <div>Groundedness: <strong>{formatPercent(singleAnswer.execution_trace.stages.evidence_verification?.groundedness)}</strong></div>
-                                    <div>Claims: <strong>{singleAnswer.execution_trace.stages.evidence_verification?.total_claims ?? 0}</strong></div>
-                                    <div>Supported: <strong>{singleAnswer.execution_trace.stages.evidence_verification?.supported_claims ?? 0}</strong></div>
-                                  </div>
+                          {/* Structured Runtime Stage Execution Trace & Provenance */}
+                          <details className="rag-compare-claims-details" style={{ marginTop: 12 }} open>
+                            <summary>
+                              🔍 Execution Workflow & Provenance ({singleAnswer.pipeline_type === 'baseline' ? 'Baseline Pipeline' : `Active Workflow: ${singleAnswer.workflow_version_id || 'v10'}`})
+                            </summary>
+                            <div style={{ padding: '10px 12px', fontSize: '0.82rem', background: '#f8fafc', borderRadius: 6, marginTop: 8, border: '1px solid #e2e8f0', color: '#1e293b' }}>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginBottom: 10, paddingBottom: 8, borderBottom: '1px solid #cbd5e1' }}>
+                                <div><strong>Pipeline:</strong> <span style={{ color: '#0369a1', fontWeight: 600 }}>{singleAnswer.pipeline_type || 'production'}</span></div>
+                                <div><strong>Workflow ID:</strong> <code>{singleAnswer.workflow_version_id || (singleAnswer.pipeline_type === 'baseline' ? 'baseline' : 'v10')}</code></div>
+                                <div><strong>Strategy / Name:</strong> <span>{singleAnswer.workflow_name || (singleAnswer.pipeline_type === 'baseline' ? 'Baseline RAG' : 'Retrieval Reduction')}</span></div>
+                                <div><strong>Configured Top-K:</strong> <span style={{ color: '#16a34a', fontWeight: 700 }}>{singleAnswer.execution_trace?.stages?.retrieval?.configured_top_k ?? (singleAnswer.pipeline_type === 'baseline' ? 5 : 3)}</span></div>
+                                <div><strong>Retrieved Chunks:</strong> <span>{singleAnswer.sources?.length ?? 0}</span></div>
+                                <div><strong>Task Category:</strong> <span>{singleAnswer.task_category || 'Clinical Query'}</span></div>
+                              </div>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8 }}>
+                                <div style={{ padding: 8, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 4 }}>
+                                  <div style={{ fontWeight: 700, color: '#0369a1', marginBottom: 4 }}>1. Retrieval Stage</div>
+                                  <div>Latency: <strong>{singleAnswer.execution_trace?.stages?.retrieval?.latency_ms ?? 0} ms</strong></div>
+                                  <div>Chunks: <strong>{singleAnswer.sources?.length ?? singleAnswer.execution_trace?.stages?.retrieval?.chunks_retrieved ?? 0}</strong></div>
+                                  <div>Reranking: <strong>{singleAnswer.execution_trace?.stages?.retrieval?.reranking_enabled ? 'Active' : 'Bypassed'}</strong></div>
+                                  <div>Threshold: <strong>{singleAnswer.execution_trace?.stages?.retrieval?.similarity_threshold ?? '0.35'}</strong></div>
+                                </div>
+                                <div style={{ padding: 8, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 4 }}>
+                                  <div style={{ fontWeight: 700, color: '#0369a1', marginBottom: 4 }}>2. Context Compression</div>
+                                  <div>Status: <strong>{singleAnswer.execution_trace?.stages?.compression?.enabled ? 'Active' : 'Bypassed'}</strong></div>
+                                  <div>Chars: <strong>{singleAnswer.execution_trace?.stages?.compression?.effective_context_length ?? singleAnswer.context?.length ?? 0}</strong></div>
+                                </div>
+                                <div style={{ padding: 8, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 4 }}>
+                                  <div style={{ fontWeight: 700, color: '#0369a1', marginBottom: 4 }}>3. Model Generation</div>
+                                  <div>Model: <strong>{singleAnswer.execution_trace?.stages?.llm_generation?.model || singleAnswer.model}</strong></div>
+                                  <div>Latency: <strong>{singleAnswer.latency_ms !== null ? formatMs(singleAnswer.latency_ms) : 'N/A'}</strong></div>
+                                  <div>Tokens: <strong>{formatTokens(singleAnswer.evaluation?.total_tokens)}</strong></div>
+                                </div>
+                                <div style={{ padding: 8, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 4 }}>
+                                  <div style={{ fontWeight: 700, color: '#0369a1', marginBottom: 4 }}>4. Evidence Verification</div>
+                                  <div>Groundedness: <strong>{formatPercent(singleAnswer.evaluation?.groundedness)}</strong></div>
+                                  <div>Claims: <strong>{singleAnswer.evaluation?.total_claims ?? 0}</strong></div>
+                                  <div>Supported: <strong>{singleAnswer.evaluation?.supported_claims?.length ?? 0}</strong></div>
                                 </div>
                               </div>
-                            </details>
-                          )}
+                            </div>
+                          </details>
                         </div>
                       ) : (
                         <div className="rag-eval-unavailable">
@@ -1435,6 +1512,19 @@ function MainApp() {
                                       ❌ Provider/API error: {res.evaluation.details?.error_message || "API generation failed."}
                                     </div>
                                   )}
+                                  {/* Model Workflow Provenance & Execution Trace */}
+                                  <details className="rag-compare-claims-details" style={{ marginTop: 10 }}>
+                                    <summary>🔍 Provenance & Trace ({res.pipeline_type || 'comparison_shared_retrieval'})</summary>
+                                    <div style={{ padding: '8px 10px', fontSize: '0.78rem', background: '#f8fafc', borderRadius: 4, marginTop: 6, border: '1px solid #e2e8f0', color: '#1e293b' }}>
+                                      <div style={{ marginBottom: 4 }}><strong>Pipeline:</strong> <span style={{ color: '#0369a1', fontWeight: 600 }}>{res.pipeline_type || 'comparison_shared_retrieval'}</span></div>
+                                      <div style={{ marginBottom: 4 }}><strong>Workflow:</strong> {res.workflow_name || 'Multi-LLM Comparative Baseline'}</div>
+                                      <div style={{ marginBottom: 4 }}><strong>Context Type:</strong> {res.context_type || 'shared'} ({compareResults.sources?.length ?? 0} shared chunks)</div>
+                                      <div style={{ marginBottom: 4 }}><strong>Model ID:</strong> <code>{res.model_id || res.model}</code></div>
+                                      <div style={{ marginBottom: 4 }}><strong>Latency:</strong> {formatMs(res.latency_ms)} | <strong>Tokens:</strong> {formatTokens(res.evaluation?.total_tokens)}</div>
+                                      <div style={{ marginBottom: 4 }}><strong>Cost:</strong> {formatCost(res.evaluation?.total_cost)}</div>
+                                      <div><strong>Groundedness:</strong> {formatPercent(res.evaluation?.groundedness)}</div>
+                                    </div>
+                                  </details>
                                 </div>
                               ) : (
                                 <div className="rag-compare-eval-unavailable">

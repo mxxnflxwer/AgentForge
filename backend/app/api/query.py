@@ -122,23 +122,29 @@ async def query_answer(
     overall_start = time.perf_counter()
     retrieval_start = time.perf_counter()
 
+    requested_model = (request.model or "").strip()
+    version_override = request.workflow_version_id
+    if requested_model.lower() == "baseline":
+        version_override = "baseline"
+
     from app.services.agent_evo.runtime_selector import RuntimeWorkflowSelector
     selection = RuntimeWorkflowSelector.select_workflow_for_query(
         query=request.query,
         db=db,
+        candidate_version_id_override=version_override,
     )
 
     active_version_id = selection.version_id
     task_category = selection.task_category
     selection_reason = selection.selection_reason
     cfg = selection.configuration or {}
+    pipeline_type = "baseline" if active_version_id == "baseline" else "production"
 
     effective_top_k = cfg.get("retrieval", {}).get("top_k", request.top_k)
     sim_threshold = cfg.get("retrieval", {}).get("similarity_threshold", 0.35)
     enable_reranking = bool(cfg.get("retrieval", {}).get("reranking", True))
     context_compression = cfg.get("execution", {}).get("context_compression", False)
     
-    requested_model = (request.model or "").strip()
     if not requested_model or requested_model.lower() in ("default", "baseline"):
         model_to_use = cfg.get("model", {}).get("model_id", "gemini")
     else:
@@ -168,6 +174,9 @@ async def query_answer(
         db=db,
         enable_reranking=enable_reranking,
     )
+    # Strictly enforce configured top_k limit into final context and source list
+    if retrieval.results and len(retrieval.results) > effective_top_k:
+        retrieval.results = retrieval.results[:effective_top_k]
     retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 2)
 
     eval_engine = get_evaluation_engine()
@@ -190,6 +199,7 @@ async def query_answer(
 
         exec_id = f"exec_{int(time.time()*1000)}"
         trace_not_found = {
+            "pipeline_type": pipeline_type,
             "stages": {
                 "retrieval": {
                     "latency_ms": retrieval_ms,
@@ -237,9 +247,11 @@ async def query_answer(
             sources=[],
             latency_ms=0.0,
             disclaimer=MEDICAL_DISCLAIMER,
+            pipeline_type=pipeline_type,
             evaluation=convert_eval_result_to_response(eval_result),
             execution_id=exec_id,
             workflow_version_id=active_version_id,
+            workflow_name=selection.workflow_name,
             task_category=task_category,
             selection_reason=selection_reason,
             groundedness=eval_result.groundedness,
@@ -298,6 +310,7 @@ async def query_answer(
 
     # Construct structured runtime execution trace
     execution_trace = {
+        "pipeline_type": pipeline_type,
         "stages": {
             "retrieval": {
                 "latency_ms": retrieval_ms,
@@ -305,6 +318,7 @@ async def query_answer(
                 "reranking_enabled": enable_reranking,
                 "similarity_threshold": sim_threshold,
                 "top_k": effective_top_k,
+                "configured_top_k": effective_top_k,
             },
             "compression": {
                 "enabled": context_compression,
@@ -320,8 +334,8 @@ async def query_answer(
                 "model_id": llm_resp.model_id or model_id,
                 "provider": llm_resp.provider or adapter.provider,
                 "latency_ms": llm_resp.latency_ms or 0.0,
-                "input_tokens": eval_result.input_tokens or 0,
-                "output_tokens": eval_result.output_tokens or 0,
+                "input_tokens": eval_result.input_tokens if llm_resp.success else None,
+                "output_tokens": eval_result.output_tokens if llm_resp.success else None,
                 "temperature": wf_temperature,
                 "max_tokens": wf_max_tokens,
                 "success": llm_resp.success,
@@ -374,11 +388,11 @@ async def query_answer(
                 retrieved_chunks=[s.model_dump() for s in sources],
                 model=llm_resp.model,
                 provider=llm_resp.provider or adapter.provider,
-                input_tokens=eval_result.input_tokens or 0,
-                output_tokens=eval_result.output_tokens or 0,
-                total_tokens=eval_result.total_tokens or 0,
-                cost=eval_result.total_cost or 0.0,
-                llm_latency_ms=llm_resp.latency_ms or 0.0,
+                input_tokens=eval_result.input_tokens if llm_resp.success else None,
+                output_tokens=eval_result.output_tokens if llm_resp.success else None,
+                total_tokens=eval_result.total_tokens if llm_resp.success else None,
+                cost=eval_result.total_cost if llm_resp.success else None,
+                llm_latency_ms=llm_resp.latency_ms if (llm_resp.success and llm_resp.latency_ms is not None) else None,
                 total_execution_time_ms=total_exec_ms,
                 groundedness=eval_result.groundedness,
                 execution_trace=execution_trace,
@@ -411,9 +425,11 @@ async def query_answer(
         sources=sources,
         latency_ms=llm_resp.latency_ms or 0.0,
         disclaimer=MEDICAL_DISCLAIMER,
+        pipeline_type=pipeline_type,
         evaluation=convert_eval_result_to_response(eval_result),
         execution_id=exec_id,
         workflow_version_id=active_version_id,
+        workflow_name=selection.workflow_name,
         task_category=task_category,
         selection_reason=selection_reason,
         groundedness=eval_result.groundedness,
@@ -474,6 +490,39 @@ async def query_compare(
             )
             e_res = eval_engine.evaluate(eval_input)
 
+            nf_trace = {
+                "pipeline_type": "comparison_shared_retrieval",
+                "workflow_name": "Multi-LLM Comparative Baseline",
+                "workflow_version_id": None,
+                "context_type": "shared",
+                "stages": {
+                    "retrieval": {
+                        "type": "shared_context",
+                        "chunks_retrieved": 0,
+                        "latency_ms": retrieval_ms,
+                        "top_k": request.top_k,
+                    },
+                    "llm_generation": {
+                        "model": m["name"],
+                        "model_id": m["model_id"],
+                        "provider": m["provider"],
+                        "latency_ms": 0.0,
+                        "status": "skipped_not_found",
+                    },
+                    "evidence_verification": {
+                        "groundedness": e_res.groundedness,
+                        "total_claims": 0,
+                        "supported_claims": 0,
+                        "unsupported_claims": 0,
+                        "claim_breakdown": [],
+                    },
+                },
+                "effective_configuration": {
+                    "retrieval": {"top_k": request.top_k, "mode": "shared_retrieval"},
+                    "model": {"model": m["name"], "provider": m["provider"]},
+                },
+            }
+
             not_found_results.append(
                 ModelComparisonResult(
                     model=m["name"],
@@ -483,6 +532,11 @@ async def query_compare(
                     latency_ms=0.0,
                     success=True,
                     error=None,
+                    pipeline_type="comparison_shared_retrieval",
+                    workflow_version_id=None,
+                    workflow_name="Multi-LLM Comparative Baseline",
+                    context_type="shared",
+                    execution_trace=nf_trace,
                     evaluation=convert_eval_result_to_response(e_res),
                 )
             )
@@ -504,6 +558,7 @@ async def query_compare(
     )
 
     total_batch_wall_ms = round((time.perf_counter() - overall_start) * 1000, 2)
+    sources = extract_sources(retrieval)
 
     comparison_results: List[ModelComparisonResult] = []
     for r in llm_responses:
@@ -526,6 +581,43 @@ async def query_compare(
         e_res.details["batch_comparison_wall_time_ms"] = total_batch_wall_ms
         e_res.details["retrieval_latency_ms"] = retrieval_ms
 
+        model_trace = {
+            "pipeline_type": "comparison_shared_retrieval",
+            "workflow_name": "Multi-LLM Comparative Baseline",
+            "workflow_version_id": None,
+            "context_type": "shared",
+            "stages": {
+                "retrieval": {
+                    "type": "shared_context",
+                    "chunks_retrieved": len(sources),
+                    "latency_ms": retrieval_ms,
+                    "top_k": request.top_k,
+                },
+                "llm_generation": {
+                    "model": r.model,
+                    "model_id": r.model_id,
+                    "provider": r.provider,
+                    "latency_ms": r.latency_ms if r.success else None,
+                    "input_tokens": e_res.input_tokens if r.success else None,
+                    "output_tokens": e_res.output_tokens if r.success else None,
+                    "cost": e_res.total_cost if r.success else None,
+                    "success": r.success,
+                    "error": r.error,
+                },
+                "evidence_verification": {
+                    "groundedness": e_res.groundedness,
+                    "total_claims": e_res.total_claims,
+                    "supported_claims": e_res.supported_claim_count,
+                    "unsupported_claims": e_res.unsupported_claim_count,
+                    "claim_breakdown": e_res.details.get("claim_breakdown", []),
+                },
+            },
+            "effective_configuration": {
+                "retrieval": {"top_k": request.top_k, "mode": "shared_retrieval"},
+                "model": {"model": r.model, "provider": r.provider},
+            },
+        }
+
         comparison_results.append(
             ModelComparisonResult(
                 model=r.model,
@@ -535,11 +627,14 @@ async def query_compare(
                 latency_ms=r.latency_ms or 0.0,
                 success=r.success,
                 error=r.error,
+                pipeline_type="comparison_shared_retrieval",
+                workflow_version_id=None,
+                workflow_name="Multi-LLM Comparative Baseline",
+                context_type="shared",
+                execution_trace=model_trace,
                 evaluation=convert_eval_result_to_response(e_res),
             )
         )
-
-    sources = extract_sources(retrieval)
 
     return QueryCompareResponse(
         status="success",

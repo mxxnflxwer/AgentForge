@@ -23,9 +23,11 @@ body {
 }
 
 .rag-app-container {
-  max-width: 1380px;
+  width: 100%;
+  max-width: 1440px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 20px 24px;
+  box-sizing: border-box;
   text-align: left;
 }
 
@@ -143,14 +145,30 @@ body {
 /* Grid Layout */
 .rag-grid-main {
   display: grid;
-  grid-template-columns: 380px 1fr;
-  gap: 24px;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 20px;
   align-items: start;
+  width: 100%;
+}
+
+.rag-grid-main.sidebar-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.rag-col-left {
+  min-width: 0;
+  width: 100%;
+}
+
+.rag-col-right {
+  min-width: 0;
+  width: 100%;
 }
 
 @media (max-width: 1024px) {
   .rag-grid-main {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
   }
 }
 
@@ -158,10 +176,10 @@ body {
 .rag-card {
   background: var(--rag-card-bg);
   border: 1px solid var(--rag-card-border);
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 24px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  padding: 18px 20px;
+  margin-bottom: 20px;
+  box-shadow: none;
 }
 
 .rag-card-header {
@@ -2300,7 +2318,11 @@ body {
 
 /* 7. Candidate Comparison Table */
 .evo-table-container {
+  width: 100%;
+  max-width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 12px;
 }
 
 .evo-table {
@@ -2311,20 +2333,20 @@ body {
 }
 
 .evo-table th {
-  background: rgba(15, 23, 42, 0.85);
+  background: #111622;
   color: #94a3b8;
-  font-weight: 700;
+  font-weight: 600;
   text-transform: uppercase;
   font-size: 10.5px;
   letter-spacing: 0.04em;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
   white-space: nowrap;
 }
 
 .evo-table td {
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
   vertical-align: middle;
 }
 
@@ -3177,37 +3199,40 @@ body {
 /* Sub-navigation tabs */
 .evo-nav-tabs {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-bottom: 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  padding-bottom: 8px;
 }
 
 .evo-nav-tab {
-  background: rgba(30, 41, 59, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  border: 1px solid transparent;
   color: #94a3b8;
-  padding: 8px 16px;
+  padding: 6px 14px;
   border-radius: 6px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s ease;
-  display: flex;
+  transition: all 0.15s ease;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .evo-nav-tab:hover {
-  background: rgba(51, 65, 85, 0.7);
+  background: rgba(148, 163, 184, 0.08);
   color: #f1f5f9;
 }
 
 .evo-nav-tab.active {
-  background: #2563eb;
-  color: #ffffff;
-  border-color: #3b82f6;
-  box-shadow: 0 0 12px rgba(37, 99, 235, 0.4);
+  background: rgba(99, 102, 241, 0.12);
+  color: #818cf8;
+  border-color: rgba(99, 102, 241, 0.35);
+  font-weight: 600;
+  box-shadow: none;
 }
 
 /* Benchmark Toolbar & Selector */
@@ -3589,41 +3614,31 @@ body {
 
 /* Lifecycle State Badges */
 .evo-gov-state-pill.gov-active {
-  background: rgba(16, 185, 129, 0.2);
+  background: rgba(16, 185, 129, 0.15);
   color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.5);
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.3);
-  animation: pulse-green 2s infinite;
+  border: 1px solid rgba(16, 185, 129, 0.35);
 }
 
 .evo-gov-state-pill.gov-inactive {
-  background: rgba(100, 116, 139, 0.2);
+  background: rgba(100, 116, 139, 0.15);
   color: #94a3b8;
-  border: 1px solid rgba(100, 116, 139, 0.3);
+  border: 1px solid rgba(100, 116, 139, 0.25);
 }
 
 .evo-gov-state-pill.gov-approved {
-  background: rgba(56, 189, 248, 0.2);
-  color: #38bdf8;
-  border: 1px solid rgba(56, 189, 248, 0.4);
-}
-
-@keyframes pulse-green {
-  0%, 100% {
-    box-shadow: 0 0 4px rgba(16, 185, 129, 0.2);
-  }
-  50% {
-    box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
-  }
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.35);
 }
 
 /* Active Production Banner */
 .evo-active-banner {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(14, 116, 144, 0.15));
-  border: 1px solid rgba(16, 185, 129, 0.4);
-  border-radius: 10px;
-  padding: 18px 24px;
-  margin-bottom: 24px;
+  background: #111622;
+  border: 1px solid #1e2638;
+  border-left: 3px solid #10b981;
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -3728,6 +3743,65 @@ body {
   color: #c7d2fe;
 }
 
+/* Metric Source Badges (Verified Benchmark vs Snapshot) */
+.evo-metric-source-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  display: inline-block;
+}
 
+.evo-metric-source-badge.verified {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
 
+.evo-metric-source-badge.snapshot {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
 
+.evo-metric-source-badge.na {
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+/* Configuration Diff Badges & Highlights */
+.evo-diff-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.evo-diff-badge.diff-changed {
+  background: rgba(99, 102, 241, 0.2);
+  color: #c7d2fe;
+  border: 1px solid rgba(99, 102, 241, 0.45);
+}
+
+.evo-diff-badge.diff-same {
+  background: rgba(148, 163, 184, 0.08);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.evo-row-modified {
+  background: rgba(99, 102, 241, 0.06) !important;
+}
+
+.evo-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}

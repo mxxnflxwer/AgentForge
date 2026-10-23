@@ -1,3 +1,4 @@
+import difflib
 import logging
 import re
 from typing import Any, Dict, Optional, Set
@@ -19,8 +20,6 @@ def extract_meaningful_tokens(text: str) -> Set[str]:
     words = re.findall(r"[a-zA-Z0-9_-]+", (text or "").lower())
     return {w for w in words if w not in STOP_WORDS and len(w) > 1}
 
-
-import difflib
 
 def token_matches_set(token: str, token_set: Set[str]) -> bool:
     """

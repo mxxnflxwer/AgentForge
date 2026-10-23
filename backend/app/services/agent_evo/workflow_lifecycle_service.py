@@ -362,10 +362,10 @@ class WorkflowLifecycleService:
         )
         eval_result = eval_engine.evaluate(eval_input)
 
-        input_tokens = eval_result.input_tokens or 0
-        output_tokens = eval_result.output_tokens or 0
-        total_tokens = eval_result.total_tokens or 0
-        total_cost = eval_result.total_cost or 0.0
+        input_tokens = eval_result.input_tokens if llm_success else None
+        output_tokens = eval_result.output_tokens if llm_success else None
+        total_tokens = eval_result.total_tokens if llm_success else None
+        total_cost = eval_result.total_cost if llm_success else None
 
         # 7. Format Source List
         sources = [
@@ -434,11 +434,11 @@ class WorkflowLifecycleService:
                 retrieved_chunks=sources,
                 model=model_name,
                 provider=provider,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=total_tokens,
-                cost=total_cost,
-                llm_latency_ms=llm_latency_ms,
+                input_tokens=eval_result.input_tokens if llm_success else None,
+                output_tokens=eval_result.output_tokens if llm_success else None,
+                total_tokens=eval_result.total_tokens if llm_success else None,
+                cost=eval_result.total_cost if llm_success else None,
+                llm_latency_ms=llm_latency_ms if (llm_success and llm_latency_ms is not None) else None,
                 total_execution_time_ms=total_execution_time_ms,
                 groundedness=eval_result.groundedness,
                 execution_trace=execution_trace,
@@ -460,7 +460,7 @@ class WorkflowLifecycleService:
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             cost=total_cost,
-            llm_latency_ms=llm_latency_ms,
+            llm_latency_ms=llm_latency_ms if llm_success else None,
             total_execution_time_ms=total_execution_time_ms,
             status="success" if llm_success else "error",
             created_at=now_utc.isoformat(),
@@ -568,10 +568,13 @@ class WorkflowLifecycleService:
         records = db.query(WorkflowAuditEvent).order_by(WorkflowAuditEvent.created_at.desc()).limit(limit).all()
         return [
             WorkflowAuditEventResponse(
+                id=r.id or r.event_id,
                 event_id=r.event_id,
                 workflow_version_id=r.workflow_version_id,
                 event_type=r.event_type,
                 user_email=r.user_email,
+                triggered_by=r.user_email,
+                previous_version_id=(r.details or {}).get("previous_active_version_id") or (r.details or {}).get("superseded_by") or (r.details or {}).get("superseded_by_rollback"),
                 details=r.details,
                 created_at=r.created_at.isoformat() if hasattr(r.created_at, "isoformat") else str(r.created_at),
             )

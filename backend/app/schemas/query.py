@@ -31,6 +31,10 @@ class QueryAnswerRequest(BaseModel):
         le=20,
         description="Number of relevant chunks to retrieve for context.",
     )
+    workflow_version_id: Optional[str] = Field(
+        None,
+        description="Optional explicit workflow version ID or 'baseline' override.",
+    )
 
 
 class QueryAnswerSource(BaseModel):
@@ -56,12 +60,14 @@ class QueryAnswerResponse(BaseModel):
     sources: List[QueryAnswerSource] = []
     latency_ms: float
     disclaimer: str
+    pipeline_type: str = Field("production", description="Pipeline category: 'production', 'baseline', or 'comparison'")
     evaluation: Optional[EvaluationResponse] = Field(
         None,
         description="AgentEvo evaluation metrics (accuracy, groundedness, hallucination rate, tokens, cost, latency, execution time).",
     )
     execution_id: Optional[str] = Field(None, description="Unique runtime execution identifier for telemetry & feedback")
     workflow_version_id: Optional[str] = Field(None, description="Active workflow version ID used for this execution")
+    workflow_name: Optional[str] = Field(None, description="Active or selected workflow name")
     task_category: Optional[str] = Field(None, description="Classified clinical task category for the query")
     selection_reason: Optional[str] = Field(None, description="Explainable selection rationale for the chosen workflow")
     groundedness: Optional[float] = Field(None, description="Groundedness score directly from evaluation")
@@ -100,6 +106,11 @@ class ModelComparisonResult(BaseModel):
     latency_ms: float
     success: bool
     error: Optional[str] = None
+    pipeline_type: str = Field("comparison_shared_retrieval", description="Execution pipeline type")
+    workflow_version_id: Optional[str] = Field(None, description="Actual workflow version ID (None for comparative baseline)")
+    workflow_name: str = Field("Multi-LLM Comparative Baseline", description="Actual workflow name")
+    context_type: str = Field("shared", description="Whether context is shared or independent")
+    execution_trace: Optional[Dict[str, Any]] = Field(None, description="Detailed stage execution trace for this model")
     evaluation: Optional[EvaluationResponse] = Field(
         None,
         description="AgentEvo evaluation metrics specific to this model response.",

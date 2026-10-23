@@ -724,6 +724,7 @@ async def execute_active_workflow_endpoint(
         user_id=current_user.id,
         document_id=request.document_id,
         expected_answer=request.expected_answer,
+        workflow_version_id=request.workflow_version_id,
         db=db,
     )
 
@@ -808,6 +809,7 @@ def list_workflow_audit_endpoint(
     return WorkflowAuditListResponse(
         total_events=len(records),
         events=records,
+        audit_events=records,
     )
 
 

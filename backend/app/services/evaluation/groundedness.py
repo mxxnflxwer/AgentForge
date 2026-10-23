@@ -24,7 +24,7 @@ class ClaimDetail(BaseModel):
 
 class GroundednessResult(BaseModel):
     """Groundedness evaluation metrics and claim-level breakdown."""
-    groundedness: float = Field(..., description="Ratio of supported claims: supported / total")
+    groundedness: Optional[float] = Field(None, description="Ratio of supported claims: supported / total")
     supported_claims: int = Field(..., description="Number of supported factual claims")
     unsupported_claims: int = Field(..., description="Number of unsupported or hallucinated claims")
     supported_claims_list: List[str] = Field(default_factory=list, description="List of supported factual claims")
@@ -44,6 +44,7 @@ BOILERPLATE_PATTERNS = [
     r"^the requested information was not found.*",
     r"^information (was|is) not found.*",
     r"^this analysis is for research.*",
+    r"^(?:thank you|thanks|hello|hi|greetings|welcome).*",
 ]
 
 STOP_WORDS = {
@@ -251,6 +252,16 @@ def evaluate_claim_support(claim: str, context: str) -> ClaimDetail:
     context_lower = (context or "").lower()
     claim_lower = (claim or "").strip().lower()
 
+    # 0. Missing evidence guardrail
+    if not context or not context.strip():
+        return ClaimDetail(
+            claim=claim,
+            status=ClaimStatus.INSUFFICIENT_EVIDENCE,
+            confidence=1.0,
+            matched_context_snippet=None,
+            reason="Retrieved context is empty or missing evidence.",
+        )
+
     # 1. Safe "not found" response handling
     if "not found in the uploaded document" in claim_lower or "information was not found" in claim_lower:
         return ClaimDetail(
@@ -384,14 +395,20 @@ def calculate_groundedness(
 
     claims = extract_factual_claims(generated_answer)
     if not claims:
-        # If no distinct factual claims were extracted
-        score = 1.0 if cleaned_answer and ("error" not in cleaned_answer.lower() and "no answer" not in cleaned_answer.lower()) else 0.0
+        # If no distinct factual claims were extracted (e.g. conversational filler or greeting)
         return GroundednessResult(
-            groundedness=score,
+            groundedness=None,
             supported_claims=0,
             unsupported_claims=0,
             total_claims=0,
-            claim_details=[],
+            claim_details=[
+                ClaimDetail(
+                    claim=cleaned_answer or "No factual claims",
+                    status=ClaimStatus.INSUFFICIENT_EVIDENCE,
+                    confidence=1.0,
+                    reason="No verifiable factual claims identified in generated answer.",
+                )
+            ] if cleaned_answer else [],
         )
 
     claim_details: List[ClaimDetail] = []

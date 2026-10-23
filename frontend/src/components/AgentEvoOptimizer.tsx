@@ -111,11 +111,14 @@ export interface OptimizationReport {
   total_workflow_evaluations?: number
   strategy?: string
   scheduler_decision?: {
-    stage: string
+    stage?: string
+    stage_name?: string
+    strategy?: string
     reason: string
     rationale?: string
     stagnation_counter?: number
     pareto_archive_size?: number
+    parameters?: Record<string, any>
   } | null
   scope_claim?: string
 }
@@ -141,6 +144,7 @@ export interface WorkflowVersion {
 
 export interface ActiveWorkflowInfo {
   version_id: string
+  active_version_id?: string
   version_number?: number | null
   name: string
   status: string
@@ -149,22 +153,35 @@ export interface ActiveWorkflowInfo {
   evaluation_snapshot?: Record<string, any> | null
   model_id: string
   provider: string
+  is_active_set?: boolean
 }
 
 export interface WorkflowExecution {
   execution_id: string
   workflow_version_id: string
   query: string
-  model_id: string
+  model_id?: string
+  model?: string
   provider: string
-  input_tokens: number
-  output_tokens: number
-  total_tokens: number
-  cost: number
-  llm_latency_ms: number
+  input_tokens?: number | null
+  output_tokens?: number | null
+  total_tokens?: number | null
+  cost?: number | null
+  llm_latency_ms?: number | null
   total_execution_time_ms: number
   response: string
   retrieved_doc_ids?: string[] | null
+  sources?: Array<{
+    chunk_id: string
+    document_id: string
+    chunk_index: number
+    section_title?: string
+    similarity_score?: number
+    relevance_score?: number
+  }>
+  groundedness?: number | null
+  execution_trace?: Record<string, any> | null
+  status?: string
   created_at: string
 }
 
@@ -183,7 +200,8 @@ export interface WorkflowAuditEvent {
   event_type: string
   workflow_version_id?: string | null
   previous_version_id?: string | null
-  triggered_by: string
+  triggered_by?: string
+  user_email?: string
   details?: Record<string, any> | null
   created_at: string
 }
@@ -476,8 +494,24 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   setSelectedDocId,
   isLoggedIn,
 }) => {
-  // Top-level Navigation Sub-Tabs
-  const [activeMainTab, setActiveMainTab] = useState<'optimizer' | 'lifecycle' | 'benchmark' | 'lineage'>('optimizer')
+  // Top-level Navigation Sub-Tabs: 6 Purpose-Built Sections
+  const [activeMainTab, setActiveMainTabState] = useState<
+    'overview' | 'evolution' | 'review' | 'production' | 'executions' | 'benchmarking'
+  >('overview')
+  const [showLineageInProduction, setShowLineageInProduction] = useState<boolean>(false)
+  const [showAdvancedStrategyDetails, setShowAdvancedStrategyDetails] = useState<boolean>(false)
+
+  const setActiveMainTab = (tab: string) => {
+    if (tab === 'optimizer') setActiveMainTabState('evolution')
+    else if (tab === 'lifecycle') setActiveMainTabState('production')
+    else if (tab === 'benchmark') setActiveMainTabState('benchmarking')
+    else if (tab === 'lineage') {
+      setActiveMainTabState('production')
+      setShowLineageInProduction(true)
+    } else {
+      setActiveMainTabState(tab as any)
+    }
+  }
 
   // Evaluation Mode: Single Query vs Multi-Query Workload
   const [evalMode, setEvalMode] = useState<'single' | 'workload'>('single')
@@ -518,6 +552,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
   const [activeWorkflow, setActiveWorkflow] = useState<ActiveWorkflowInfo | null>(null)
   const [executions, setExecutions] = useState<WorkflowExecution[]>([])
   const [auditEvents, setAuditEvents] = useState<WorkflowAuditEvent[]>([])
+  const [expandedExecId, setExpandedExecId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // Interactive Modals & Governance State
@@ -645,7 +680,12 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       const res = await fetch(`${apiBase}/api/agent-evo/active`, { credentials: 'include' })
       if (res.ok) {
         const data = await res.json()
-        setActiveWorkflow(data)
+        const resolvedId = data.active_version_id || data.version_id || 'baseline'
+        setActiveWorkflow({
+          ...data,
+          version_id: resolvedId,
+          active_version_id: resolvedId,
+        })
       }
     } catch (err) {
       console.warn('Could not fetch active workflow', err)
@@ -668,11 +708,12 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
 
   const fetchAuditEvents = async () => {
     try {
-      const res = await fetch(`${apiBase}/api/agent-evo/audit?limit=30`, { credentials: 'include' })
+      const res = await fetch(`${apiBase}/api/agent-evo/audit?limit=50`, { credentials: 'include' })
       if (res.ok) {
         const data = await res.json()
-        if (data.audit_events && Array.isArray(data.audit_events)) {
-          setAuditEvents(data.audit_events)
+        const items = data.events || data.audit_events
+        if (items && Array.isArray(items)) {
+          setAuditEvents(items)
         }
       }
     } catch (err) {
@@ -1055,22 +1096,45 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
     )
   }
 
-  const baselineCandidate = report?.baseline || null
+  const baselineCandidate = report?.baseline || report?.all_candidates?.find((c) => c.candidate_id === 'baseline') || null
+
+  // Active workflow verified benchmark vs snapshot metrics
+  const activeVersionId = activeWorkflow?.version_id || 'baseline'
+  const activeBenchmarkResult = benchmarkReport?.results?.find(
+    (r) => r.version_id === activeVersionId || (activeVersionId === 'baseline' && (r.version_id === 'baseline' || r.version === 'baseline'))
+  )
+  const isVerifiedBenchmark = !!activeBenchmarkResult
+  const activeGroundedness = isVerifiedBenchmark
+    ? (activeBenchmarkResult.groundedness !== undefined && activeBenchmarkResult.groundedness !== null ? activeBenchmarkResult.groundedness : null)
+    : (activeWorkflow?.evaluation_snapshot?.groundedness ?? activeWorkflow?.evaluation_snapshot?.performance ?? null)
+
+  const activeCost = isVerifiedBenchmark
+    ? (activeBenchmarkResult.cost_per_query ?? activeBenchmarkResult.cost ?? null)
+    : (activeWorkflow?.evaluation_snapshot?.cost_per_query ?? activeWorkflow?.evaluation_snapshot?.cost ?? null)
+
+  const activeLatency = isVerifiedBenchmark
+    ? (activeBenchmarkResult.latency_ms ?? activeBenchmarkResult.llm_latency_ms ?? null)
+    : (activeWorkflow?.evaluation_snapshot?.llm_latency_ms ?? activeWorkflow?.evaluation_snapshot?.latency_ms ?? null)
+
+  const selectedCandidate = report?.all_candidates?.find((c) => c.candidate_id === selectedCandidateId) ||
+    report?.pareto_frontier?.[0] ||
+    report?.all_candidates?.[0] ||
+    null
 
   return (
     <div className="evo-container">
       {/* Top Header */}
       <div className="evo-page-header">
         <div>
-          <h1 className="evo-title">AgentEvo Optimization & Workflow Lifecycle</h1>
+          <h1 className="evo-title">AgentEvo Evolutionary Workflow Optimization</h1>
           <p className="evo-subtitle">
             Autonomous multi-candidate evolution, crossover recombination, Phase 6 claim-groundedness evaluation, Pareto optimization, and production lifecycle governance.
           </p>
         </div>
         <div className="evo-header-meta">
           {activeWorkflow ? (
-            <span className="evo-status-pill" style={{ background: 'rgba(16, 185, 129, 0.15)', borderColor: '#10b981', color: '#10b981' }}>
-              <span className="evo-dot" style={{ background: '#10b981' }} /> Active: {activeWorkflow.version_id === 'baseline' ? 'Baseline' : `v${activeWorkflow.version_number}`}
+            <span className="evo-status-pill" style={{ background: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.3)', color: '#34d399' }}>
+              <span className="evo-dot" style={{ background: '#10b981' }} /> Active: {activeWorkflow.version_id === 'baseline' ? 'Baseline' : `v${activeWorkflow.version_number ?? 0}`}
             </span>
           ) : (
             <span className="evo-status-pill">
@@ -1080,47 +1144,68 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
         </div>
       </div>
 
-      {/* Main Navigation Sub-Tabs */}
+      {/* 6-Section Purpose-Built Developer Navigation */}
       <div className="evo-nav-tabs">
         <button
           type="button"
-          className={`evo-nav-tab ${activeMainTab === 'optimizer' ? 'active' : ''}`}
-          onClick={() => setActiveMainTab('optimizer')}
-        >
-          <span>🧬</span> Live Evolutionary Optimizer
-        </button>
-        <button
-          type="button"
-          className={`evo-nav-tab ${activeMainTab === 'lifecycle' ? 'active' : ''}`}
+          className={`evo-nav-tab ${activeMainTab === 'overview' ? 'active' : ''}`}
           onClick={() => {
-            setActiveMainTab('lifecycle')
-            fetchVersions()
+            setActiveMainTab('overview')
             fetchActiveWorkflow()
+            fetchVersions()
             fetchExecutions()
             fetchAuditEvents()
           }}
         >
-          <span>🚀</span> Production Versions & Lifecycle
+          Overview
         </button>
         <button
           type="button"
-          className={`evo-nav-tab ${activeMainTab === 'benchmark' ? 'active' : ''}`}
-          onClick={() => {
-            setActiveMainTab('benchmark')
-            fetchBenchmarks()
-          }}
+          className={`evo-nav-tab ${activeMainTab === 'evolution' ? 'active' : ''}`}
+          onClick={() => setActiveMainTab('evolution')}
         >
-          <span>⚖️</span> Version Benchmark & Comparison
+          Evolution Lab
         </button>
         <button
           type="button"
-          className={`evo-nav-tab ${activeMainTab === 'lineage' ? 'active' : ''}`}
+          className={`evo-nav-tab ${activeMainTab === 'review' ? 'active' : ''}`}
+          onClick={() => setActiveMainTab('review')}
+        >
+          Candidate Review
+        </button>
+        <button
+          type="button"
+          className={`evo-nav-tab ${activeMainTab === 'production' ? 'active' : ''}`}
           onClick={() => {
-            setActiveMainTab('lineage')
+            setActiveMainTab('production')
+            fetchVersions()
+            fetchActiveWorkflow()
+            fetchAuditEvents()
             fetchLineage()
           }}
         >
-          <span>🌳</span> Workflow Version Lineage
+          Production & Versions
+        </button>
+        <button
+          type="button"
+          className={`evo-nav-tab ${activeMainTab === 'executions' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveMainTab('executions')
+            fetchExecutions()
+            fetchActiveWorkflow()
+          }}
+        >
+          Execution & Evidence
+        </button>
+        <button
+          type="button"
+          className={`evo-nav-tab ${activeMainTab === 'benchmarking' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveMainTab('benchmarking')
+            fetchBenchmarks()
+          }}
+        >
+          Benchmarking
         </button>
       </div>
 
@@ -1133,9 +1218,225 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 1: LIVE EVOLUTIONARY OPTIMIZER (Mutation, Refinement, Crossover)       */}
+      {/* SECTION A: OVERVIEW & RUNTIME DASHBOARD                                   */}
       {/* ========================================================================= */}
-      {activeMainTab === 'optimizer' && (
+      {activeMainTab === 'overview' && (
+        <>
+          {/* Active Production Workflow Banner */}
+          <section className="evo-section evo-active-banner">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                  <span className="evo-status-tag tag-active" style={{ fontSize: '0.82rem', padding: '3px 10px', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+                    ● Active Production Deployment
+                  </span>
+                  <span className="evo-version-tag" style={{ background: '#10b981' }}>
+                    {activeWorkflow?.version_id === 'baseline' ? 'Production Baseline' : `v${activeWorkflow?.version_number ?? 0}`}
+                  </span>
+                </div>
+                <h2 className="evo-section-title" style={{ margin: '4px 0 6px 0', color: '#f8fafc', fontSize: '1.35rem' }}>
+                  {activeWorkflow?.name || 'Production Baseline'}
+                </h2>
+                <div className="evo-cell-sub" style={{ color: '#94a3b8' }}>
+                  Version ID: <code>{activeWorkflow?.version_id || 'baseline'}</code> |
+                  Model: <code>{activeWorkflow?.model_id || 'gemini-3.5-flash-lite'}</code> ({activeWorkflow?.provider || 'Google Gemini'}) |
+                  Top-K: <code>{activeWorkflow?.configuration?.retrieval?.top_k ?? (activeWorkflow?.version_id === 'baseline' ? 5 : '—')}</code> |
+                  Sim: <code>{activeWorkflow?.configuration?.retrieval?.similarity_threshold ?? 0.35}</code> |
+                  Activated: {activeWorkflow?.activated_at ? new Date(activeWorkflow.activated_at).toLocaleString() : 'System Genesis'}
+                </div>
+              </div>
+
+              {/* Primary Action Center */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setActiveMainTab('evolution')}
+                  className="evo-btn-primary"
+                >
+                  Optimize Workflow
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveMainTab('benchmarking')}
+                  className="evo-btn-secondary"
+                >
+                  Compare Versions
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveMainTab('production')}
+                  className="evo-btn-secondary"
+                >
+                  View Production
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveMainTab('executions')}
+                  className="evo-btn-secondary"
+                >
+                  Inspect Traces
+                </button>
+              </div>
+            </div>
+          </section>
+
+          {/* High-Density KPI Cards (Clear Distinction: Verified Benchmark vs Snapshot Metric) */}
+          <div className="evo-summary-grid" style={{ marginTop: 0 }}>
+            {/* Groundedness Card */}
+            <div className="evo-metric-card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span className="evo-metric-label">Active Groundedness</span>
+                {isVerifiedBenchmark ? (
+                  <span className="evo-metric-source-badge verified">Verified Benchmark</span>
+                ) : activeGroundedness !== null ? (
+                  <span className="evo-metric-source-badge snapshot">Snapshot Metric</span>
+                ) : (
+                  <span className="evo-metric-source-badge na">N/A</span>
+                )}
+              </div>
+              <span className="evo-metric-value evo-val-green">
+                {activeGroundedness !== null ? `${(activeGroundedness * 100).toFixed(1)}%` : 'N/A'}
+              </span>
+              <span className="evo-metric-delta">
+                {isVerifiedBenchmark
+                  ? `Head-to-head verified on "${benchmarkReport?.preset_name || 'Clinical Suite'}"`
+                  : activeGroundedness !== null
+                  ? 'Recorded during initial approval evaluation snapshot'
+                  : 'Run benchmark to record verified measurement'}
+              </span>
+            </div>
+
+            {/* Cost / Query Card */}
+            <div className="evo-metric-card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span className="evo-metric-label">Cost / Query</span>
+                {isVerifiedBenchmark ? (
+                  <span className="evo-metric-source-badge verified">Verified Benchmark</span>
+                ) : activeCost !== null ? (
+                  <span className="evo-metric-source-badge snapshot">Snapshot Metric</span>
+                ) : (
+                  <span className="evo-metric-source-badge na">N/A</span>
+                )}
+              </div>
+              <span className="evo-metric-value">
+                {activeCost !== null ? `$${activeCost.toFixed(6)}` : 'N/A'}
+              </span>
+              <span className="evo-metric-delta">
+                Active Model: <code>{activeWorkflow?.model_id || 'gemini-3.5-flash-lite'}</code>
+              </span>
+            </div>
+
+            {/* Latency Card */}
+            <div className="evo-metric-card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span className="evo-metric-label">LLM Latency</span>
+                {isVerifiedBenchmark ? (
+                  <span className="evo-metric-source-badge verified">Verified Benchmark</span>
+                ) : activeLatency !== null ? (
+                  <span className="evo-metric-source-badge snapshot">Snapshot Metric</span>
+                ) : (
+                  <span className="evo-metric-source-badge na">N/A</span>
+                )}
+              </div>
+              <span className="evo-metric-value evo-val-purple">
+                {activeLatency !== null ? `${activeLatency.toFixed(0)} ms` : 'N/A'}
+              </span>
+              <span className="evo-metric-delta">
+                Runtime model response latency
+              </span>
+            </div>
+
+            {/* Retrieval Slicing Card */}
+            <div className="evo-metric-card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span className="evo-metric-label">Retrieval Slicing</span>
+                <span className="evo-metric-source-badge verified">Runtime Enforced</span>
+              </div>
+              <span className="evo-metric-value">
+                top_k = {activeWorkflow?.configuration?.retrieval?.top_k ?? (activeWorkflow?.version_id === 'baseline' ? 5 : 3)}
+              </span>
+              <span className="evo-metric-delta">
+                {activeWorkflow?.configuration?.retrieval?.top_k !== undefined && activeWorkflow.configuration.retrieval.top_k < 5
+                  ? `Reduced top-k slice enforced (${activeWorkflow.configuration.retrieval.top_k})`
+                  : 'Active runtime retrieval chunk limit'}
+              </span>
+            </div>
+          </div>
+
+          {/* System Telemetry & Governance Status Summary */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+            {/* Optimizer Activity Card */}
+            <div className="evo-section" style={{ margin: 0, padding: 18 }}>
+              <div className="evo-section-header" style={{ marginBottom: 8 }}>
+                <h3 className="evo-section-title" style={{ fontSize: '0.98rem' }}>Optimizer Engine</h3>
+                <span className={`evo-status-tag ${running ? 'tag-pareto' : 'tag-baseline'}`}>
+                  {running ? 'EVALUATING' : report ? 'READY' : 'STANDBY'}
+                </span>
+              </div>
+              <p style={{ margin: 0, fontSize: '0.84rem', color: '#cbd5e1', lineHeight: 1.5 }}>
+                {report
+                  ? `Last session: Run ${report.run_id} evaluated ${report.all_candidates?.length || 0} candidate workflows (${report.pareto_frontier?.length || 0} Pareto-optimal).`
+                  : 'Optimizer ready. Select evaluation workload or single query in the Evolution Lab to optimize workflows.'}
+              </p>
+              {report?.scheduler_decision && (
+                <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: 8, padding: '6px 8px', background: 'rgba(99, 102, 241, 0.08)', borderRadius: 4, borderLeft: '3px solid #6366f1' }}>
+                  Scheduler Stage: <strong style={{ color: '#c7d2fe' }}>{(report.scheduler_decision.stage_name || report.scheduler_decision.strategy || report.scheduler_decision.stage || 'Unavailable').toUpperCase()}</strong> — {report.scheduler_decision.reason || 'Deterministic scheduler decision'}
+                </div>
+              )}
+            </div>
+
+            {/* Version Registry Card */}
+            <div className="evo-section" style={{ margin: 0, padding: 18 }}>
+              <div className="evo-section-header" style={{ marginBottom: 8 }}>
+                <h3 className="evo-section-title" style={{ fontSize: '0.98rem' }}>Version Registry & Lineage</h3>
+                <span className="evo-version-tag">{workflowVersions.length} Approved</span>
+              </div>
+              <p style={{ margin: 0, fontSize: '0.84rem', color: '#cbd5e1', lineHeight: 1.5 }}>
+                {workflowVersions.length} immutable approved workflow versions stored in PostgreSQL.
+                Full provenance graph with mutation and crossover lineage available.
+              </p>
+              <div style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveMainTab('production')
+                    setShowLineageInProduction(true)
+                  }}
+                  className="evo-btn-ghost-sm"
+                  style={{ color: '#818cf8', borderColor: 'rgba(99, 102, 241, 0.3)' }}
+                >
+                  Inspect Lineage Graph ➔
+                </button>
+              </div>
+            </div>
+
+            {/* Governance Audit Trail Card */}
+            <div className="evo-section" style={{ margin: 0, padding: 18 }}>
+              <div className="evo-section-header" style={{ marginBottom: 8 }}>
+                <h3 className="evo-section-title" style={{ fontSize: '0.98rem' }}>Governance Audit Log</h3>
+                <span className="evo-status-pill">{auditEvents.length} Events</span>
+              </div>
+              {auditEvents.length > 0 ? (
+                <div>
+                  <div style={{ fontSize: '0.84rem', color: '#f1f5f9', fontWeight: 600 }}>
+                    Latest: <span className="evo-status-tag tag-pareto" style={{ fontSize: '0.72rem' }}>{auditEvents[0].event_type}</span> on <code>{auditEvents[0].workflow_version_id || 'System'}</code>
+                  </div>
+                  <div className="evo-cell-sub" style={{ marginTop: 4 }}>
+                    By {auditEvents[0].triggered_by || 'system'} • {new Date(auditEvents[0].created_at).toLocaleString()}
+                  </div>
+                </div>
+              ) : (
+                <p style={{ margin: 0, fontSize: '0.84rem', color: '#cbd5e1' }}>No audit events logged yet.</p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SECTION B: EVOLUTION LAB (Candidate Generation & Pareto Frontier)          */}
+      {/* ========================================================================= */}
+      {(activeMainTab === 'evolution' || (activeMainTab as any) === 'optimizer') && (
         <>
           <section className="evo-section evo-controls-card">
             <div className="evo-section-header">
@@ -1155,7 +1456,6 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     disabled={running}
                     style={{ flex: 1 }}
                   >
-                    <span>🎯</span>
                     <div>
                       <strong>Single Query Mode</strong>
                       <div className="evo-cell-sub">Evaluate candidates on a single target query</div>
@@ -1168,7 +1468,6 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     disabled={running}
                     style={{ flex: 1 }}
                   >
-                    <span>📚</span>
                     <div>
                       <strong>Evaluation Workload Mode</strong>
                       <div className="evo-cell-sub">Evaluate candidates across multi-query workload</div>
@@ -1297,7 +1596,6 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     onClick={() => setCandidateStrategy('adaptive')}
                     disabled={running}
                   >
-                    <span>🤖</span>
                     <div>
                       <strong>Adaptive Strategy</strong>
                       <div className="evo-cell-sub">Deterministic Evolutionary Scheduler</div>
@@ -1309,7 +1607,6 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     onClick={() => setCandidateStrategy('mutation')}
                     disabled={running}
                   >
-                    <span>🧬</span>
                     <div>
                       <strong>Mutation / Exploration</strong>
                       <div className="evo-cell-sub">Stochastic parameter & prompt search</div>
@@ -1321,7 +1618,6 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     onClick={() => setCandidateStrategy('refinement')}
                     disabled={running}
                   >
-                    <span>🎯</span>
                     <div>
                       <strong>Targeted Refinement</strong>
                       <div className="evo-cell-sub">Deterministic simplification & compression</div>
@@ -1333,7 +1629,6 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     onClick={() => setCandidateStrategy('crossover')}
                     disabled={running}
                   >
-                    <span>🔀</span>
                     <div>
                       <strong>Crossover / Recombination</strong>
                       <div className="evo-cell-sub">Inherit components from two parent workflows</div>
@@ -1342,6 +1637,22 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                 </div>
               </div>
 
+              {/* Advanced Strategy Details Accordion Toggle */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, marginBottom: 8 }}>
+                <span className="evo-label" style={{ margin: 0 }}>Advanced Strategy Configuration</span>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedStrategyDetails(!showAdvancedStrategyDetails)}
+                  className="evo-btn-ghost-sm"
+                  style={{ color: '#818cf8', borderColor: 'rgba(99, 102, 241, 0.3)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                >
+                  {showAdvancedStrategyDetails ? 'Hide Advanced Parameters ▴' : 'Configure Advanced Parameters ▾'}
+                </button>
+              </div>
+
+              {/* Expandable Advanced Strategy Details */}
+              {showAdvancedStrategyDetails && (
+                <>
               {/* STRATEGY 0: ADAPTIVE SCHEDULER CONFIGURATION */}
               {candidateStrategy === 'adaptive' && (
                 <div className="evo-strategy-config-box">
@@ -1702,6 +2013,8 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                   </div>
                 )
               })()}
+                </>
+              )}
 
               {/* Submit / Launch Optimization Button */}
               <div className="evo-form-actions" style={{ marginTop: 20 }}>
@@ -1715,9 +2028,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                       <span className="evo-spinner" /> Generating & Evaluating Candidates...
                     </>
                   ) : (
-                    <>
-                      <span>🧬</span> Generate & Evaluate Candidates
-                    </>
+                    'Generate & Evaluate Candidates'
                   )}
                 </button>
               </div>
@@ -1797,11 +2108,10 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: '1.2rem' }}>🤖</span>
                           <strong style={{ color: '#c4b5fd', fontSize: '0.95rem' }}>Adaptive Strategy Selection</strong>
                         </div>
-                        <span className="evo-version-tag" style={{ background: '#8b5cf6' }}>
-                          Selected Stage: {report.scheduler_decision.stage?.toUpperCase()}
+                        <span className="evo-version-tag" style={{ background: '#6366f1' }}>
+                          Selected Stage: {(report.scheduler_decision.stage_name || report.scheduler_decision.strategy || report.scheduler_decision.stage || 'UNAVAILABLE').toUpperCase()}
                         </span>
                       </div>
                       <div style={{ marginTop: 8, fontSize: '0.88rem', color: '#e2e8f0', lineHeight: 1.5 }}>
@@ -1961,6 +2271,19 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation()
+                                      setSelectedCandidateId(cand.candidate_id)
+                                      setActiveMainTab('review')
+                                    }}
+                                    className="evo-btn-inspect"
+                                    style={{ background: 'rgba(99, 102, 241, 0.15)', borderColor: 'rgba(99, 102, 241, 0.4)', color: '#c7d2fe' }}
+                                    title="Deep-dive into configuration diffs and claim evidence in Candidate Review"
+                                  >
+                                    Review ➔
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
                                       setInspectModalCandidate(cand)
                                     }}
                                     className="evo-btn-inspect"
@@ -2050,9 +2373,310 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 2: PRODUCTION VERSIONS & LIFECYCLE                                    */}
+      {/* SECTION C: CANDIDATE REVIEW & VERIFICATION EVIDENCE                       */}
       {/* ========================================================================= */}
-      {activeMainTab === 'lifecycle' && (
+      {activeMainTab === 'review' && (
+        <>
+          {!selectedCandidate ? (
+            <section className="evo-section">
+              <div className="evo-empty-state" style={{ textAlign: 'center', padding: '48px 24px' }}>
+                <span style={{ fontSize: '2.5rem', marginBottom: 12, display: 'inline-block' }}>🔍</span>
+                <h3 style={{ margin: '0 0 8px 0', color: '#f1f5f9', fontSize: '1.2rem' }}>No Candidate Selected for Review</h3>
+                <p style={{ margin: '0 auto 20px auto', maxWidth: 500, color: '#94a3b8', fontSize: '0.9rem', lineHeight: 1.5 }}>
+                  Generate candidate workflows in the Evolution Lab or select one from the Pareto frontier table to inspect side-by-side configuration diffs and claim-level verification evidence.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveMainTab('evolution')}
+                  className="evo-btn-primary"
+                >
+                  Go to Evolution Lab ➔
+                </button>
+              </div>
+            </section>
+          ) : (
+            <>
+              {/* Selected Candidate Header & Action Bar */}
+              <section className="evo-section" style={{ borderLeft: '4px solid #6366f1' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <span className={`evo-status-tag ${selectedCandidate.candidate_id === 'baseline' ? 'tag-baseline' : selectedCandidate.is_pareto_optimal ? 'tag-pareto' : 'tag-dominated'}`}>
+                        {selectedCandidate.candidate_id === 'baseline' ? 'Baseline' : selectedCandidate.is_pareto_optimal ? 'Pareto-Optimal' : 'Dominated'}
+                      </span>
+                      {renderMutationBadge(selectedCandidate)}
+                      <span className="evo-version-tag" style={{ background: '#4f46e5' }}>
+                        Candidate: {selectedCandidate.candidate_id}
+                      </span>
+                    </div>
+                    <h2 className="evo-section-title" style={{ margin: '2px 0 6px 0', color: '#f8fafc', fontSize: '1.35rem' }}>
+                      {selectedCandidate.workflow.name}
+                    </h2>
+                    <div className="evo-cell-sub" style={{ color: '#94a3b8' }}>
+                      Parent: <code>{(selectedCandidate.mutation_metadata || selectedCandidate.workflow.mutation_metadata)?.parent_workflow_id || 'baseline'}</code> •
+                      Model: <code>{selectedCandidate.workflow.model.model_id}</code> ({selectedCandidate.workflow.model.provider || 'Google'}) •
+                      {(selectedCandidate.mutation_metadata || selectedCandidate.workflow.mutation_metadata)?.mutation_description || 'Evaluated workflow candidate'}
+                    </div>
+                  </div>
+
+                  {/* Candidate Switcher & Governance Actions */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    {report?.all_candidates && report.all_candidates.length > 1 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <label className="evo-cell-sub" style={{ fontWeight: 600 }}>Switch Candidate:</label>
+                        <select
+                          value={selectedCandidate.candidate_id}
+                          onChange={(e) => setSelectedCandidateId(e.target.value)}
+                          className="evo-select evo-select-sm"
+                          style={{ minWidth: 160 }}
+                        >
+                          {report.all_candidates.map((c) => (
+                            <option key={c.candidate_id} value={c.candidate_id}>
+                              {c.candidate_id} - {c.workflow.name.slice(0, 24)} {c.is_pareto_optimal ? '(Pareto)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {selectedCandidate.candidate_id !== 'baseline' && (
+                      report?.approved_workflow_id === selectedCandidate.candidate_id ? (
+                        <span className="evo-gov-state-pill gov-approved" style={{ fontSize: '0.85rem', padding: '6px 14px' }}>
+                          ✓ APPROVED (Immutable Version Stored)
+                        </span>
+                      ) : selectedCandidate.is_pareto_optimal ? (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmApprovalCandidate(selectedCandidate)}
+                          className="evo-btn-approve"
+                          style={{ padding: '8px 16px', fontSize: '0.88rem' }}
+                          disabled={approvingId === selectedCandidate.candidate_id}
+                        >
+                          {approvingId === selectedCandidate.candidate_id ? 'Approving...' : '✓ Approve Candidate Workflow'}
+                        </button>
+                      ) : (
+                        <span className="evo-cell-sub" style={{ color: '#94a3b8' }}>Dominated (Not Recommended)</span>
+                      )
+                    )}
+                  </div>
+                </div>
+
+                {/* Governance Policy Notice */}
+                <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(99, 102, 241, 0.08)', borderRadius: 6, border: '1px solid rgba(99, 102, 241, 0.2)', fontSize: '0.8rem', color: '#c7d2fe' }}>
+                  ℹ️ <strong>Governance Gate Policy:</strong> Approving this candidate creates an immutable record with status <code>APPROVED</code> in the version registry. It does <strong>NOT</strong> silently deploy or alter live production traffic. Production activation requires an explicit separate lifecycle transition.
+                </div>
+              </section>
+
+              {/* Candidate Metrics Cards */}
+              <div className="evo-summary-grid">
+                <div className="evo-metric-card">
+                  <span className="evo-metric-label">Groundedness</span>
+                  <span className="evo-metric-value evo-val-green">
+                    {((selectedCandidate.metrics.avg_groundedness ?? selectedCandidate.metrics.groundedness ?? selectedCandidate.metrics.performance) * 100).toFixed(1)}%
+                  </span>
+                  <span className="evo-metric-delta">
+                    Phase 6 Claim Verification
+                  </span>
+                </div>
+                <div className="evo-metric-card">
+                  <span className="evo-metric-label">Hallucination Rate</span>
+                  <span className="evo-metric-value evo-val-cyan">
+                    {((selectedCandidate.metrics.avg_hallucination ?? selectedCandidate.metrics.hallucination_rate ?? 0) * 100).toFixed(1)}%
+                  </span>
+                  <span className="evo-metric-delta">
+                    Unsupported claims ratio
+                  </span>
+                </div>
+                <div className="evo-metric-card">
+                  <span className="evo-metric-label">Cost / Query</span>
+                  <span className="evo-metric-value">
+                    ${(selectedCandidate.metrics.avg_cost_per_query ?? selectedCandidate.metrics.cost).toFixed(6)}
+                  </span>
+                  <span className="evo-metric-delta">
+                    Tokens: In {selectedCandidate.metrics.input_tokens || '—'} / Out {selectedCandidate.metrics.output_tokens || '—'}
+                  </span>
+                </div>
+                <div className="evo-metric-card">
+                  <span className="evo-metric-label">LLM Latency</span>
+                  <span className="evo-metric-value evo-val-purple">
+                    {(selectedCandidate.metrics.avg_latency_ms ?? selectedCandidate.metrics.llm_latency_ms ?? 0).toFixed(0)} ms
+                  </span>
+                  <span className="evo-metric-delta">
+                    Total Exec Time: {selectedCandidate.metrics.execution_time_ms.toFixed(0)} ms
+                  </span>
+                </div>
+              </div>
+
+              {/* Baseline vs Candidate Configuration Diff Table */}
+              <section className="evo-section">
+                <div className="evo-section-header">
+                  <div>
+                    <h3 className="evo-section-title">Baseline vs Candidate Configuration Diff</h3>
+                    <span className="evo-section-caption">
+                      Side-by-side comparison between production reference baseline and candidate <code>{selectedCandidate.candidate_id}</code>.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="evo-table-container">
+                  <table className="evo-table">
+                    <thead>
+                      <tr>
+                        <th>Module</th>
+                        <th>Parameter</th>
+                        <th>Baseline Value</th>
+                        <th>Candidate Value</th>
+                        <th>Diff Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        { module: 'Model', param: 'Model ID', base: baselineCandidate?.workflow.model.model_id || 'gemini-3.5-flash-lite', cand: selectedCandidate.workflow.model.model_id },
+                        { module: 'Model', param: 'Provider', base: baselineCandidate?.workflow.model.provider || 'Google', cand: selectedCandidate.workflow.model.provider },
+                        { module: 'Model', param: 'Temperature', base: baselineCandidate?.workflow.model.temperature ?? 0.2, cand: selectedCandidate.workflow.model.temperature },
+                        { module: 'Model', param: 'Max Tokens', base: baselineCandidate?.workflow.model.max_tokens ?? 1024, cand: selectedCandidate.workflow.model.max_tokens },
+                        { module: 'Retrieval', param: 'Top-K Documents', base: baselineCandidate?.workflow.retrieval.top_k ?? 5, cand: selectedCandidate.workflow.retrieval.top_k },
+                        { module: 'Retrieval', param: 'Similarity Threshold', base: baselineCandidate?.workflow.retrieval.similarity_threshold ?? 0.35, cand: selectedCandidate.workflow.retrieval.similarity_threshold },
+                        { module: 'Retrieval', param: 'Chunk Size', base: baselineCandidate?.workflow.retrieval.chunk_size ?? 500, cand: selectedCandidate.workflow.retrieval.chunk_size },
+                        { module: 'Retrieval', param: 'Chunk Overlap', base: baselineCandidate?.workflow.retrieval.chunk_overlap ?? 50, cand: selectedCandidate.workflow.retrieval.chunk_overlap },
+                        { module: 'Retrieval', param: 'Reranking Enabled', base: baselineCandidate?.workflow.retrieval.enable_rerank ? 'Yes' : 'No', cand: selectedCandidate.workflow.retrieval.enable_rerank ? 'Yes' : 'No' },
+                        { module: 'Prompt', param: 'Template Name', base: baselineCandidate?.workflow.prompt.template_name || 'clinical_summary', cand: selectedCandidate.workflow.prompt.template_name },
+                        { module: 'Prompt', param: 'Disclaimer Included', base: baselineCandidate?.workflow.prompt.include_disclaimer ? 'Yes' : 'No', cand: selectedCandidate.workflow.prompt.include_disclaimer ? 'Yes' : 'No' },
+                        { module: 'Execution', param: 'Context Compression', base: baselineCandidate?.workflow.execution.context_compression ? 'Enabled' : 'Disabled', cand: selectedCandidate.workflow.execution.context_compression ? 'Enabled' : 'Disabled' },
+                        { module: 'Execution', param: 'Timeout Seconds', base: baselineCandidate?.workflow.execution.timeout_seconds ?? 30, cand: selectedCandidate.workflow.execution.timeout_seconds },
+                        { module: 'Execution', param: 'Max Retries', base: baselineCandidate?.workflow.execution.max_retries ?? 2, cand: selectedCandidate.workflow.execution.max_retries },
+                      ].map((row, rIdx) => {
+                        const isModified = String(row.base) !== String(row.cand)
+                        return (
+                          <tr key={rIdx} className={`evo-table-row ${isModified ? 'evo-row-modified' : ''}`}>
+                            <td><span className="evo-cell-sub">{row.module}</span></td>
+                            <td><strong>{row.param}</strong></td>
+                            <td><code>{String(row.base)}</code></td>
+                            <td><code style={isModified ? { color: '#a5b4fc', fontWeight: 700 } : undefined}>{String(row.cand)}</code></td>
+                            <td>
+                              {isModified ? (
+                                <span className="evo-diff-badge diff-changed">MODIFIED</span>
+                              ) : (
+                                <span className="evo-diff-badge diff-same">UNCHANGED</span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              {/* Claim-Level Groundedness Verification Evidence */}
+              <section className="evo-section">
+                <div className="evo-section-header">
+                  <div>
+                    <h3 className="evo-section-title">Claim-Level Groundedness Verification Evidence</h3>
+                    <span className="evo-section-caption">
+                      Evidence sentences verified against retrieved clinical source passages using Phase 6 NLI metric.
+                    </span>
+                  </div>
+                </div>
+
+                {/* Workload Per-Query Evaluation Evidence (if multi-query workload) */}
+                {selectedCandidate.metrics.raw_details?.per_query_evaluations &&
+                Array.isArray(selectedCandidate.metrics.raw_details.per_query_evaluations) &&
+                selectedCandidate.metrics.raw_details.per_query_evaluations.length > 0 ? (
+                  <div className="evo-table-container">
+                    <table className="evo-table" style={{ fontSize: '0.84rem' }}>
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Evaluation Query</th>
+                          <th>Groundedness</th>
+                          <th>Hallucination</th>
+                          <th>Cost</th>
+                          <th>Tokens (In/Out)</th>
+                          <th>Latency</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedCandidate.metrics.raw_details.per_query_evaluations.map((item: any, idx: number) => (
+                          <tr key={idx} className="evo-table-row">
+                            <td><strong>{idx + 1}</strong></td>
+                            <td>
+                              <div style={{ maxWidth: 300 }}>
+                                <strong>{item.query}</strong>
+                                {item.response && (
+                                  <details style={{ marginTop: 4 }}>
+                                    <summary style={{ cursor: 'pointer', fontSize: '0.75rem', color: '#818cf8' }}>
+                                      View Generated Response
+                                    </summary>
+                                    <p style={{ margin: '4px 0', fontSize: '0.78rem', color: '#cbd5e1', lineHeight: 1.4 }}>
+                                      {item.response}
+                                    </p>
+                                  </details>
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              <strong className="evo-val-green">
+                                {item.groundedness !== undefined && item.groundedness !== null
+                                  ? `${(item.groundedness * 100).toFixed(1)}%`
+                                  : 'N/A'}
+                              </strong>
+                            </td>
+                            <td>
+                              <span className="evo-val-cyan">
+                                {item.hallucination_rate !== undefined && item.hallucination_rate !== null
+                                  ? `${(item.hallucination_rate * 100).toFixed(1)}%`
+                                  : '0.0%'}
+                              </span>
+                            </td>
+                            <td>
+                              <span className="evo-cost-val">${Number(item.cost || 0).toFixed(6)}</span>
+                            </td>
+                            <td>
+                              <span>{item.input_tokens ?? item.tokens ?? 0} / {item.output_tokens ?? 0}</span>
+                            </td>
+                            <td>
+                              <span>{Number(item.llm_latency_ms ?? item.latency_ms ?? 0).toFixed(0)} ms</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="evo-summary-box">
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+                      <div>
+                        <span className="evo-metric-label">Evaluation Target Query</span>
+                        <p style={{ margin: '4px 0 0 0', fontSize: '0.88rem', color: '#f1f5f9' }}>
+                          "{report?.query || query}"
+                        </p>
+                      </div>
+                      <div>
+                        <span className="evo-metric-label">Verification Outcome</span>
+                        <p style={{ margin: '4px 0 0 0', fontSize: '0.88rem', color: '#4ade80' }}>
+                          Verified Grounded: {((selectedCandidate.metrics.groundedness ?? selectedCandidate.metrics.performance) * 100).toFixed(1)}%
+                        </p>
+                      </div>
+                      <div>
+                        <span className="evo-metric-label">Token Footprint</span>
+                        <p style={{ margin: '4px 0 0 0', fontSize: '0.88rem', color: '#94a3b8' }}>
+                          {selectedCandidate.metrics.input_tokens} Input / {selectedCandidate.metrics.output_tokens} Output ({selectedCandidate.metrics.total_tokens} Total)
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </section>
+            </>
+          )}
+        </>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SECTION D: PRODUCTION & VERSION HISTORY                                    */}
+      {/* ========================================================================= */}
+      {(activeMainTab === 'production' || (activeMainTab as any) === 'lifecycle') && (
         <>
           {/* Active Production Workflow Banner Card */}
           <section className="evo-section evo-active-banner">
@@ -2103,7 +2727,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                   onClick={selectAllVersionsForBenchmark}
                   className="evo-btn-secondary evo-btn-sm"
                 >
-                  ⚖️ Benchmark All in Head-to-Head
+                  Benchmark All Versions
                 </button>
               </div>
             </div>
@@ -2274,74 +2898,106 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
             </div>
           </section>
 
-          {/* Production Runtime Executions & Monitoring */}
+          {/* Lineage Graph Toggle & Provenance Visualization */}
           <section className="evo-section">
             <div className="evo-section-header">
               <div>
-                <h2 className="evo-section-title">Production Runtime Executions & Monitoring</h2>
+                <h3 className="evo-section-title">Workflow Lineage & Provenance Graph</h3>
                 <span className="evo-section-caption">
-                  Real user telemetry logged against the currently ACTIVE production workflow version. LLM latency and Total Execution Time are tracked separately.
+                  Directed acyclic provenance tree showing ancestry, mutations, targeted refinements, and crossover recombination.
                 </span>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLineageInProduction(!showLineageInProduction)
+                  if (!lineageData) fetchLineage()
+                }}
+                className="evo-btn-secondary evo-btn-sm"
+              >
+                {showLineageInProduction ? 'Hide Lineage Graph ▴' : 'Show Lineage Graph ▾'}
+              </button>
             </div>
 
-            {executions.length === 0 ? (
-              <div className="evo-summary-box">
-                No production executions recorded yet. Execute queries in the RAG Query workspace to monitor live runtime metrics.
-              </div>
-            ) : (
-              <div className="evo-table-container">
-                <table className="evo-table">
-                  <thead>
-                    <tr>
-                      <th>Execution ID</th>
-                      <th>Version ID</th>
-                      <th>Query</th>
-                      <th>Model</th>
-                      <th>Tokens (In / Out)</th>
-                      <th>Cost</th>
-                      <th>LLM Latency</th>
-                      <th>Total Time</th>
-                      <th>Timestamp</th>
-                      <th>User Feedback</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {executions.map((exec) => (
-                      <tr key={exec.execution_id} className="evo-table-row">
-                        <td><code>{exec.execution_id.slice(0, 12)}...</code></td>
-                        <td><span className="evo-version-tag">{exec.workflow_version_id}</span></td>
-                        <td>
-                          <div style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={exec.query}>
-                            {exec.query}
-                          </div>
-                        </td>
-                        <td><span className="evo-model-id">{exec.model_id}</span></td>
-                        <td>
-                          <span className="evo-cell-sub">{exec.total_tokens} ({exec.input_tokens} / {exec.output_tokens})</span>
-                        </td>
-                        <td><span className="evo-cost-val">${exec.cost.toFixed(6)}</span></td>
-                        <td><strong className="evo-val-purple">{exec.llm_latency_ms.toFixed(0)} ms</strong></td>
-                        <td><span>{exec.total_execution_time_ms.toFixed(0)} ms</span></td>
-                        <td><span className="evo-cell-sub">{new Date(exec.created_at).toLocaleTimeString()}</span></td>
-                        <td>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setFeedbackModalExecution(exec)
-                              setFeedbackRating(5)
-                              setFeedbackText('')
-                            }}
-                            className="evo-btn-feedback"
+            {showLineageInProduction && (
+              lineageData ? (
+                <div className="evo-lineage-container" style={{ marginTop: 12 }}>
+                  <div className="evo-lineage-grid">
+                    {lineageData.nodes
+                      .filter((n) => n.version_id !== 'baseline')
+                      .map((node) => {
+                        const edges = lineageData.edges.filter((e) => e.target === node.version_id)
+                        const isCrossover = node.candidate_type === 'CROSSOVER' || !!node.parent_b_version_id || edges.length > 1
+                        const primaryEdge = edges[0]
+                        const secondaryEdge = edges[1]
+
+                        return (
+                          <div
+                            key={node.version_id}
+                            className={`evo-lineage-card ${isCrossover ? 'is-crossover' : node.mutation_type === 'refinement' ? 'is-refined' : ''}`}
                           >
-                            ⭐ Record Feedback
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                            <div className="evo-lineage-card-head">
+                              <span className="evo-lineage-tag" style={isCrossover ? { background: '#8b5cf6' } : undefined}>
+                                {isCrossover ? '🔀 ' : ''}v{node.version_number}
+                              </span>
+                              {isCrossover ? (
+                                <span className="evo-lineage-arrow-tag" style={{ background: '#f3e8ff', color: '#6b21a8' }}>
+                                  🔀 Crossover: <code>{node.parent_a_version_id || primaryEdge?.source}</code> + <code>{node.parent_b_version_id || secondaryEdge?.source}</code>
+                                </span>
+                              ) : (
+                                <span className="evo-lineage-arrow-tag">
+                                  ↓ from <code>{primaryEdge?.source === 'baseline' ? 'baseline' : primaryEdge?.source}</code> ({primaryEdge?.label || 'mutation'})
+                                </span>
+                              )}
+                            </div>
+                            <div className="evo-lineage-name">{node.name}</div>
+                            <div className="evo-lineage-meta">
+                              <span>Version ID: <code>{node.version_id}</code></span>
+                              <span>Candidate: <code>{node.source_candidate_id}</code></span>
+                              <span>
+                                Mutation: <strong>{isCrossover ? 'CROSSOVER' : (node.mutation_type?.toUpperCase() || 'MUTATION')}</strong>{' '}
+                                {node.refinement_operation ? `(${node.refinement_operation})` : ''}
+                              </span>
+                              {(node.scheduler_strategy || (node.configuration as any)?.scheduler_decision?.selected_strategy || (node.configuration as any)?.scheduler_decision?.strategy) && (
+                                <span>
+                                  Scheduler Strategy: <strong>{(node.scheduler_strategy || (node.configuration as any)?.scheduler_decision?.selected_strategy || (node.configuration as any)?.scheduler_decision?.strategy)?.toUpperCase()}</strong>
+                                </span>
+                              )}
+                              {isCrossover && node.crossover_map && (
+                                <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                  {Object.entries(node.crossover_map).map(([comp, par]) => (
+                                    <span
+                                      key={comp}
+                                      style={{
+                                        fontSize: '0.68rem',
+                                        padding: '1px 5px',
+                                        borderRadius: 3,
+                                        background: par === 'parent_a' ? '#eff6ff' : '#f0fdf4',
+                                        color: par === 'parent_a' ? '#1d4ed8' : '#15803d',
+                                        border: '1px solid currentColor'
+                                      }}
+                                    >
+                                      {comp}: {par === 'parent_a' ? 'Parent A' : 'Parent B'}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleInspectVersion(node.version_id)}
+                              className="evo-btn-inspect"
+                            >
+                              Inspect v{node.version_number}
+                            </button>
+                          </div>
+                        )
+                      })}
+                  </div>
+                </div>
+              ) : (
+                <div className="evo-summary-box" style={{ marginTop: 12 }}>Loading lineage graph...</div>
+              )
             )}
           </section>
 
@@ -2382,12 +3038,12 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                           </span>
                         </td>
                         <td><strong>{evt.workflow_version_id || '—'}</strong></td>
-                        <td><span className="evo-cell-sub">{evt.previous_version_id || '—'}</span></td>
-                        <td><span className="evo-approver-user">{evt.triggered_by}</span></td>
+                        <td><span className="evo-cell-sub">{evt.previous_version_id || evt.details?.previous_active_version_id || evt.details?.superseded_by || '—'}</span></td>
+                        <td><span className="evo-approver-user">{evt.triggered_by || evt.user_email || 'System'}</span></td>
                         <td><span className="evo-cell-sub">{new Date(evt.created_at).toLocaleString()}</span></td>
                         <td>
                           <span className="evo-cell-sub">
-                            {evt.details?.reason ? `Reason: ${evt.details.reason}` : evt.details?.candidate_id ? `Cand: ${evt.details.candidate_id}` : 'Governed Event'}
+                            {evt.details?.reason ? `Reason: ${evt.details.reason}` : evt.details?.candidate_id ? `Cand: ${evt.details.candidate_id}` : evt.details?.source_candidate_id ? `Approved: ${evt.details.source_candidate_id}` : 'Governed Event'}
                           </span>
                         </td>
                       </tr>
@@ -2401,10 +3057,181 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 3: VERSION BENCHMARK & COMPARISON                                     */}
+      {/* SECTION E: EXECUTION & EVIDENCE                                           */}
       {/* ========================================================================= */}
-      {activeMainTab === 'benchmark' && (
+      {activeMainTab === 'executions' && (
         <>
+          {/* Production Runtime Executions & Monitoring */}
+          <section className="evo-section">
+            <div className="evo-section-header">
+              <div>
+                <h2 className="evo-section-title">Production Runtime Executions & Monitoring</h2>
+                <span className="evo-section-caption">
+                  Real user telemetry logged against the currently ACTIVE production workflow version. LLM latency and Total Execution Time are tracked separately.
+                </span>
+              </div>
+            </div>
+
+            {executions.length === 0 ? (
+              <div className="evo-summary-box">
+                No production executions recorded yet. Execute queries in the RAG Query workspace to monitor live runtime metrics.
+              </div>
+            ) : (
+              <div className="evo-table-container">
+                <table className="evo-table">
+                  <thead>
+                    <tr>
+                      <th>Execution ID</th>
+                      <th>Version ID</th>
+                      <th>Query</th>
+                      <th>Model</th>
+                      <th>Tokens (In / Out)</th>
+                      <th>Cost</th>
+                      <th>LLM Latency</th>
+                      <th>Total Time</th>
+                      <th>Timestamp</th>
+                      <th>Trace & Retrieval</th>
+                      <th>User Feedback</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {executions.map((exec) => {
+                      const isExpanded = expandedExecId === exec.execution_id
+                      const configuredTopK = exec.execution_trace?.effective_configuration?.retrieval?.top_k ?? exec.execution_trace?.stages?.retrieval?.top_k ?? 'N/A'
+                      const actualChunksCount = exec.sources?.length ?? exec.execution_trace?.stages?.retrieval?.chunks_retrieved ?? (exec.retrieved_doc_ids ? exec.retrieved_doc_ids.length : 0)
+                      return (
+                        <React.Fragment key={exec.execution_id}>
+                          <tr className="evo-table-row">
+                            <td><code>{exec.execution_id.slice(0, 12)}...</code></td>
+                            <td><span className="evo-version-tag">{exec.workflow_version_id}</span></td>
+                            <td>
+                              <div style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={exec.query}>
+                                {exec.query}
+                              </div>
+                            </td>
+                            <td><span className="evo-model-id">{exec.model_id || exec.model}</span></td>
+                            <td>
+                              <span className="evo-cell-sub">
+                                {exec.total_tokens !== null && exec.total_tokens !== undefined ? exec.total_tokens : 'N/A'}
+                                {' '}({exec.input_tokens ?? 'N/A'} / {exec.output_tokens ?? 'N/A'})
+                              </span>
+                            </td>
+                            <td><span className="evo-cost-val">{exec.cost !== null && exec.cost !== undefined ? `$${exec.cost.toFixed(6)}` : 'N/A'}</span></td>
+                            <td><strong className="evo-val-purple">{exec.llm_latency_ms !== null && exec.llm_latency_ms !== undefined ? `${exec.llm_latency_ms.toFixed(0)} ms` : 'N/A'}</strong></td>
+                            <td><span>{exec.total_execution_time_ms.toFixed(0)} ms</span></td>
+                            <td><span className="evo-cell-sub">{new Date(exec.created_at).toLocaleTimeString()}</span></td>
+                            <td>
+                              <button
+                                type="button"
+                                onClick={() => setExpandedExecId(isExpanded ? null : exec.execution_id)}
+                                className="evo-btn-feedback"
+                                style={{ background: isExpanded ? '#0369a1' : '#f1f5f9', color: isExpanded ? '#fff' : '#0f172a' }}
+                              >
+                                {isExpanded ? 'Hide Trace ▴' : 'Inspect Trace ▾'}
+                              </button>
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFeedbackModalExecution(exec)
+                                  setFeedbackRating(5)
+                                  setFeedbackText('')
+                                }}
+                                className="evo-btn-feedback"
+                              >
+                                Record Feedback
+                              </button>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr className="evo-table-expanded-row">
+                              <td colSpan={11} style={{ padding: '14px 18px', background: '#0e1422', borderBottom: '1px solid rgba(148, 163, 184, 0.15)' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14, marginBottom: 12 }}>
+                                  {/* Retrieval & Top-K Verification */}
+                                  <div style={{ padding: 12, background: '#131b2c', border: '1px solid rgba(148, 163, 184, 0.12)', borderRadius: 6, color: '#f1f5f9' }}>
+                                    <div style={{ fontWeight: 600, color: '#818cf8', marginBottom: 6, fontSize: '0.85rem' }}>Retrieval & Chunk Verification</div>
+                                    <div style={{ display: 'flex', gap: 12, marginBottom: 6, fontSize: '0.82rem' }}>
+                                      <div>Configured Top-K: <strong style={{ color: '#818cf8' }}>{configuredTopK}</strong></div>
+                                      <div>Actual Chunks Retrieved: <strong style={{ color: actualChunksCount <= (typeof configuredTopK === 'number' ? configuredTopK : 99) ? '#34d399' : '#f87171' }}>{actualChunksCount}</strong></div>
+                                    </div>
+                                    <div style={{ fontSize: '0.82rem' }}>Reranking: <strong>{exec.execution_trace?.stages?.retrieval?.reranking_enabled ? 'Enabled' : 'Bypassed'}</strong></div>
+                                    <div style={{ fontSize: '0.82rem' }}>Similarity Threshold: <strong>{exec.execution_trace?.stages?.retrieval?.similarity_threshold ?? '0.35'}</strong></div>
+                                    {exec.sources && exec.sources.length > 0 && (
+                                      <div style={{ marginTop: 8 }}>
+                                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8' }}>Retrieved Chunks & Documents:</span>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                                          {exec.sources.map((src, sIdx) => (
+                                            <span key={sIdx} style={{ fontSize: '0.72rem', background: 'rgba(99, 102, 241, 0.12)', color: '#c7d2fe', border: '1px solid rgba(99, 102, 241, 0.25)', padding: '2px 6px', borderRadius: 4 }}>
+                                              {src.chunk_id || `chunk-${src.chunk_index}`} (doc: {src.document_id ? src.document_id.slice(0, 8) : 'doc'}) {src.relevance_score ? `• ${(src.relevance_score * 100).toFixed(0)}%` : ''}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Execution Stages */}
+                                  <div style={{ padding: 12, background: '#131b2c', border: '1px solid rgba(148, 163, 184, 0.12)', borderRadius: 6, color: '#f1f5f9' }}>
+                                    <div style={{ fontWeight: 600, color: '#818cf8', marginBottom: 6, fontSize: '0.85rem' }}>Stage Latencies & Configuration</div>
+                                    <div style={{ fontSize: '0.82rem' }}>Retrieval Latency: <strong>{exec.execution_trace?.stages?.retrieval?.latency_ms ?? 0} ms</strong></div>
+                                    <div style={{ fontSize: '0.82rem' }}>Context Compression: <strong>{exec.execution_trace?.stages?.compression?.enabled ? 'Active' : 'Bypassed'}</strong> ({exec.execution_trace?.stages?.compression?.effective_context_length ?? 0} chars)</div>
+                                    <div style={{ fontSize: '0.82rem' }}>Prompt Template: <strong>{exec.execution_trace?.stages?.prompt?.template || 'default'}</strong></div>
+                                    <div style={{ fontSize: '0.82rem' }}>LLM Latency: <strong>{exec.llm_latency_ms !== null && exec.llm_latency_ms !== undefined ? `${exec.llm_latency_ms.toFixed(1)} ms` : 'N/A'}</strong></div>
+                                    <div style={{ fontSize: '0.82rem' }}>Total Pipeline Time: <strong>{exec.total_execution_time_ms.toFixed(1)} ms</strong></div>
+                                  </div>
+
+                                  {/* Groundedness & Claim Verification */}
+                                  <div style={{ padding: 12, background: '#131b2c', border: '1px solid rgba(148, 163, 184, 0.12)', borderRadius: 6, color: '#f1f5f9' }}>
+                                    <div style={{ fontWeight: 600, color: '#818cf8', marginBottom: 6, fontSize: '0.85rem' }}>Groundedness & Claim Verification</div>
+                                    <div style={{ fontSize: '0.82rem' }}>Groundedness: <strong>{exec.groundedness !== null && exec.groundedness !== undefined ? `${(exec.groundedness * 100).toFixed(1)}%` : 'N/A'}</strong></div>
+                                    <div style={{ fontSize: '0.82rem' }}>Evaluated Claims: <strong>{exec.execution_trace?.stages?.evidence_verification?.total_claims ?? 0}</strong></div>
+                                    <div style={{ fontSize: '0.82rem' }}>Supported Claims: <strong style={{ color: '#34d399' }}>{exec.execution_trace?.stages?.evidence_verification?.supported_claims ?? 0}</strong></div>
+                                    <div style={{ fontSize: '0.82rem' }}>Unsupported Claims: <strong style={{ color: (exec.execution_trace?.stages?.evidence_verification?.unsupported_claims ?? 0) > 0 ? '#f87171' : '#94a3b8' }}>{exec.execution_trace?.stages?.evidence_verification?.unsupported_claims ?? 0}</strong></div>
+                                    {exec.execution_trace?.stages?.evidence_verification?.claim_breakdown && exec.execution_trace.stages.evidence_verification.claim_breakdown.length > 0 && (
+                                      <div style={{ marginTop: 6, maxHeight: 90, overflowY: 'auto' }}>
+                                        {exec.execution_trace.stages.evidence_verification.claim_breakdown.map((cb: any, cIdx: number) => (
+                                          <div key={cIdx} style={{ fontSize: '0.72rem', color: cb.status === 'supported' ? '#16a34a' : '#dc2626' }}>
+                                            {cb.status === 'supported' ? '✓' : '✗'} {cb.claim}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SECTION F: BENCHMARKING & MULTI-VERSION COMPARISON                        */}
+      {/* ========================================================================= */}
+      {(activeMainTab === 'benchmarking' || (activeMainTab as any) === 'benchmark') && (
+        <>
+          {/* Stale Benchmark Warning Notice */}
+          {benchmarkReport && activeWorkflow && (
+            (() => {
+              const isStale = !benchmarkReport.selected_versions?.includes(activeWorkflow.version_id) ||
+                (benchmarkReport.query && benchmarkReport.query !== benchQuery)
+              if (!isStale) return null
+              return (
+                <div className="evo-summary-box" style={{ marginBottom: 16, background: 'rgba(245, 158, 11, 0.08)', borderLeft: '4px solid #f59e0b', color: '#fcd34d' }}>
+                  <strong>⚠️ Stale Benchmark Notice:</strong> Current active production workflow is <code>{activeWorkflow.version_id}</code> ({activeWorkflow.name}). The benchmark results below reflect earlier configuration conditions. Run a new benchmark comparison to record verified metrics for active production traffic.
+                </div>
+              )
+            })()
+          )}
+
           <section className="evo-section evo-controls-card">
             <div className="evo-section-header">
               <div>
@@ -2500,9 +3327,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                       <span className="evo-spinner" /> Running Multi-Version Benchmark...
                     </>
                   ) : (
-                    <>
-                      <span>⚖️</span> Run Reproducible Benchmark
-                    </>
+                    'Run Reproducible Benchmark'
                   )}
                 </button>
               </div>
@@ -2664,98 +3489,7 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
         </>
       )}
 
-      {/* ========================================================================= */}
-      {/* TAB 4: WORKFLOW VERSION LINEAGE GRAPH                                     */}
-      {/* ========================================================================= */}
-      {activeMainTab === 'lineage' && (
-        <section className="evo-section">
-          <div className="evo-section-header">
-            <div>
-              <h2 className="evo-section-title">Workflow Lineage & Evolutionary Provenance</h2>
-              <span className="evo-section-caption">
-                Complete directed acyclic provenance graph depicting ancestry, mutations, targeted refinements, and crossover recombination.
-              </span>
-            </div>
-          </div>
 
-          {lineageData && (
-            <div className="evo-lineage-container">
-              <div className="evo-lineage-grid">
-                {lineageData.nodes
-                  .filter((n) => n.version_id !== 'baseline')
-                  .map((node) => {
-                    const edges = lineageData.edges.filter((e) => e.target === node.version_id)
-                    const isCrossover = node.candidate_type === 'CROSSOVER' || !!node.parent_b_version_id || edges.length > 1
-                    const primaryEdge = edges[0]
-                    const secondaryEdge = edges[1]
-
-                    return (
-                      <div
-                        key={node.version_id}
-                        className={`evo-lineage-card ${isCrossover ? 'is-crossover' : node.mutation_type === 'refinement' ? 'is-refined' : ''}`}
-                      >
-                        <div className="evo-lineage-card-head">
-                          <span className="evo-lineage-tag" style={isCrossover ? { background: '#8b5cf6' } : undefined}>
-                            {isCrossover ? '🔀 ' : ''}v{node.version_number}
-                          </span>
-                          {isCrossover ? (
-                            <span className="evo-lineage-arrow-tag" style={{ background: '#f3e8ff', color: '#6b21a8' }}>
-                              🔀 Crossover: <code>{node.parent_a_version_id || primaryEdge?.source}</code> + <code>{node.parent_b_version_id || secondaryEdge?.source}</code>
-                            </span>
-                          ) : (
-                            <span className="evo-lineage-arrow-tag">
-                              ↓ from <code>{primaryEdge?.source === 'baseline' ? 'baseline' : primaryEdge?.source}</code> ({primaryEdge?.label || 'mutation'})
-                            </span>
-                          )}
-                        </div>
-                        <div className="evo-lineage-name">{node.name}</div>
-                        <div className="evo-lineage-meta">
-                          <span>Version ID: <code>{node.version_id}</code></span>
-                          <span>Candidate: <code>{node.source_candidate_id}</code></span>
-                          <span>
-                            Mutation: <strong>{isCrossover ? 'CROSSOVER' : (node.mutation_type?.toUpperCase() || 'MUTATION')}</strong>{' '}
-                            {node.refinement_operation ? `(${node.refinement_operation})` : ''}
-                          </span>
-                          {(node.scheduler_strategy || (node.configuration as any)?.scheduler_decision?.selected_strategy || (node.configuration as any)?.scheduler_decision?.strategy) && (
-                            <span>
-                              Scheduler Strategy: <strong>{(node.scheduler_strategy || (node.configuration as any)?.scheduler_decision?.selected_strategy || (node.configuration as any)?.scheduler_decision?.strategy)?.toUpperCase()}</strong>
-                            </span>
-                          )}
-                          {isCrossover && node.crossover_map && (
-                            <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                              {Object.entries(node.crossover_map).map(([comp, par]) => (
-                                <span
-                                  key={comp}
-                                  style={{
-                                    fontSize: '0.68rem',
-                                    padding: '1px 5px',
-                                    borderRadius: 3,
-                                    background: par === 'parent_a' ? '#eff6ff' : '#f0fdf4',
-                                    color: par === 'parent_a' ? '#1d4ed8' : '#15803d',
-                                    border: '1px solid currentColor'
-                                  }}
-                                >
-                                  {comp}: {par === 'parent_a' ? 'Parent A' : 'Parent B'}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleInspectVersion(node.version_id)}
-                          className="evo-btn-inspect"
-                        >
-                          Inspect v{node.version_number}
-                        </button>
-                      </div>
-                    )
-                  })}
-              </div>
-            </div>
-          )}
-        </section>
-      )}
 
       {/* ========================================================================= */}
       {/* CONFIRM APPROVAL MODAL                                                    */}

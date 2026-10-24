@@ -1009,7 +1009,10 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ reason: actionReason.trim() || undefined }),
+        body: JSON.stringify({
+          target_version_id: version.version_id,
+          reason: actionReason.trim() || undefined,
+        }),
       })
 
       if (!res.ok) {

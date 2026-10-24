@@ -1,7 +1,7 @@
 import datetime
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -653,7 +653,7 @@ def activate_workflow_version(
 )
 def rollback_workflow_version(
     version_id: str,
-    request: Optional[RollbackWorkflowRequest] = None,
+    request: Optional[RollbackWorkflowRequest] = Body(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> RollbackWorkflowResponse:
@@ -668,6 +668,12 @@ def rollback_workflow_version(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Developer privileges required to execute workflow rollback.",
+        )
+
+    if request and request.target_version_id and request.target_version_id != version_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Target version ID in request body ('{request.target_version_id}') does not match path parameter ('{version_id}').",
         )
 
     reason = request.reason if request else None
@@ -891,7 +897,7 @@ def activate_workflow_version_alias(
 @router.post("/versions/{version_id}/rollback", response_model=RollbackWorkflowResponse)
 def rollback_workflow_version_alias(
     version_id: str,
-    request: Optional[RollbackWorkflowRequest] = None,
+    request: Optional[RollbackWorkflowRequest] = Body(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> RollbackWorkflowResponse:

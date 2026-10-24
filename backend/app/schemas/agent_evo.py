@@ -146,7 +146,7 @@ class ActivateWorkflowResponse(BaseModel):
 
 class RollbackWorkflowRequest(BaseModel):
     """Request to rollback production to a previous approved/inactive workflow version."""
-    target_version_id: str = Field(..., description="The previous version ID to reactivate")
+    target_version_id: Optional[str] = Field(None, description="The previous version ID to reactivate (defaults to path version_id if omitted)")
     reason: Optional[str] = Field(None, description="Reason for performing the rollback")
 
 

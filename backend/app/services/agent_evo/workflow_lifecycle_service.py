@@ -146,40 +146,61 @@ class WorkflowLifecycleService:
         prev_active_id = current_active.version_id if current_active else None
 
         if current_active and current_active.id == target_version.id:
-            return target_version, prev_active_id
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Workflow version '{target_version.version_id}' is already the currently active production version.",
+            )
 
-        if current_active:
-            current_active.status = "INACTIVE"
-            deact_audit = WorkflowAuditEvent(
+        target_status = (target_version.status or "").upper()
+        if target_status not in ("APPROVED", "INACTIVE"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Workflow version '{target_version.version_id}' is in state '{target_version.status}' and cannot be rolled back to. Only APPROVED or INACTIVE versions are eligible.",
+            )
+
+        try:
+            if current_active:
+                current_active.status = "INACTIVE"
+                deact_audit = WorkflowAuditEvent(
+                    event_id=f"audit_{uuid.uuid4().hex[:8]}",
+                    workflow_version_id=current_active.version_id,
+                    event_type="DEACTIVATION",
+                    performed_by=user_id,
+                    user_email=user_email,
+                    details={"superseded_by_rollback": target_version.version_id, "reason": reason},
+                    created_at=now_utc,
+                )
+                db.add(deact_audit)
+
+            target_version.status = "ACTIVE"
+            target_version.activated_at = now_utc
+
+            rollback_audit = WorkflowAuditEvent(
                 event_id=f"audit_{uuid.uuid4().hex[:8]}",
-                workflow_version_id=current_active.version_id,
-                event_type="DEACTIVATION",
+                workflow_version_id=target_version.version_id,
+                event_type="ROLLBACK",
                 performed_by=user_id,
                 user_email=user_email,
-                details={"superseded_by_rollback": target_version.version_id, "reason": reason},
+                details={
+                    "previous_active_version_id": prev_active_id,
+                    "reason": reason or "Governed rollback to earlier version",
+                    "timestamp": now_utc.isoformat(),
+                },
                 created_at=now_utc,
             )
-            db.add(deact_audit)
-
-        target_version.status = "ACTIVE"
-        target_version.activated_at = now_utc
-
-        rollback_audit = WorkflowAuditEvent(
-            event_id=f"audit_{uuid.uuid4().hex[:8]}",
-            workflow_version_id=target_version.version_id,
-            event_type="ROLLBACK",
-            performed_by=user_id,
-            user_email=user_email,
-            details={
-                "previous_active_version_id": prev_active_id,
-                "reason": reason or "Governed rollback to earlier version",
-                "timestamp": now_utc.isoformat(),
-            },
-            created_at=now_utc,
-        )
-        db.add(rollback_audit)
-        db.commit()
-        db.refresh(target_version)
+            db.add(rollback_audit)
+            db.commit()
+            db.refresh(target_version)
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to execute rollback to workflow version '{target_version_id}': {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Database transaction failed during rollback: {str(e)}",
+            )
 
         logger.info(f"User '{user_email}' executed rollback to workflow version '{target_version.version_id}'.")
         return target_version, prev_active_id

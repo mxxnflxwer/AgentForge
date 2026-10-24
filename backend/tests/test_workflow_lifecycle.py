@@ -420,3 +420,305 @@ def test_api_role_governance_on_activation(db_session, parent_workflows, test_us
         res_dev = client.post(f"/api/agent-evo/versions/{v1.version_id}/activate", json={"reason": "Dev activation"})
         assert res_dev.status_code == 200
         app.dependency_overrides.clear()
+
+
+# ===========================================================================
+# 7. Regression Tests: AgentEvo Rollback Feature
+# ===========================================================================
+
+def test_api_rollback_authenticated_success_all_payload_variations(db_session, parent_workflows, test_users):
+    """
+    Test successful authenticated rollback under all valid payload variants:
+    1. Both target_version_id and reason in body.
+    2. Only reason in body (frontend format).
+    3. Empty JSON body {}.
+    4. No request body at all (Swagger / curl format).
+    5. Workflows router alias (/api/workflows/{version_id}/rollback).
+    """
+    v1, v2 = parent_workflows
+    dev_user, _ = test_users
+    client = TestClient(app)
+    from app.api.auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: dev_user
+
+    try:
+        # Step 1: Ensure v2 is active and v1 is inactive
+        WorkflowLifecycleService.activate_version(v1.version_id, dev_user.id, dev_user.email, db=db_session)
+        WorkflowLifecycleService.activate_version(v2.version_id, dev_user.id, dev_user.email, db=db_session)
+        assert db_session.query(WorkflowVersion).filter_by(version_id=v2.version_id).first().status == "ACTIVE"
+        assert db_session.query(WorkflowVersion).filter_by(version_id=v1.version_id).first().status == "INACTIVE"
+
+        # Variation 1: Rollback to v1 with full payload {target_version_id, reason}
+        res1 = client.post(
+            f"/api/agent-evo/versions/{v1.version_id}/rollback",
+            json={"target_version_id": v1.version_id, "reason": "Restoring stable v1 baseline"},
+        )
+        assert res1.status_code == 200, res1.text
+        data1 = res1.json()
+        assert data1["status"] == "success"
+        assert data1["active_version_id"] == v1.version_id
+        assert data1["previous_active_version_id"] == v2.version_id
+        assert db_session.query(WorkflowVersion).filter_by(version_id=v1.version_id).first().status == "ACTIVE"
+        assert db_session.query(WorkflowVersion).filter_by(version_id=v2.version_id).first().status == "INACTIVE"
+
+        # Variation 2: Rollback back to v2 with reason-only payload (matching UI fetch call)
+        res2 = client.post(
+            f"/api/agent-evo/versions/{v2.version_id}/rollback",
+            json={"reason": "Rollback to v2 via UI reason input"},
+        )
+        assert res2.status_code == 200, res2.text
+        data2 = res2.json()
+        assert data2["status"] == "success"
+        assert data2["active_version_id"] == v2.version_id
+        assert data2["previous_active_version_id"] == v1.version_id
+        assert db_session.query(WorkflowVersion).filter_by(version_id=v2.version_id).first().status == "ACTIVE"
+        assert db_session.query(WorkflowVersion).filter_by(version_id=v1.version_id).first().status == "INACTIVE"
+
+        # Variation 3: Rollback to v1 with empty JSON body {}
+        res3 = client.post(
+            f"/api/agent-evo/versions/{v1.version_id}/rollback",
+            json={},
+        )
+        assert res3.status_code == 200, res3.text
+        assert res3.json()["active_version_id"] == v1.version_id
+
+        # Variation 4: Rollback back to v2 with NO request body (Swagger Try It Out)
+        res4 = client.post(
+            f"/api/agent-evo/versions/{v2.version_id}/rollback",
+        )
+        assert res4.status_code == 200, res4.text
+        assert res4.json()["active_version_id"] == v2.version_id
+
+        # Variation 5: Workflows router alias (/api/workflows/{version_id}/rollback)
+        res5 = client.post(
+            f"/api/workflows/{v1.version_id}/rollback",
+            json={"reason": "Rollback via workflows prefix"},
+        )
+        assert res5.status_code == 200, res5.text
+        assert res5.json()["active_version_id"] == v1.version_id
+
+        # Verify audit logs captured ROLLBACK event
+        audit_events = WorkflowLifecycleService.list_audit_events(db=db_session)
+        rollback_events = [e for e in audit_events if e.event_type == "ROLLBACK"]
+        assert len(rollback_events) >= 5
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_api_rollback_unauthenticated_returns_401(db_session, parent_workflows):
+    """Test that requests without active session credentials return 401 Unauthorized."""
+    v1, _ = parent_workflows
+    client = TestClient(app)
+
+    # No cookies, no Authorization header
+    res = client.post(f"/api/agent-evo/versions/{v1.version_id}/rollback", json={"reason": "Unauth attempt"})
+    assert res.status_code == 401
+    assert "Authentication required" in res.json()["detail"]
+
+
+def test_api_rollback_unauthorized_user_role_returns_403(db_session, parent_workflows, test_users):
+    """Test that authenticated users without DEVELOPER role are rejected with 403 Forbidden."""
+    v1, _ = parent_workflows
+    _, normal_user = test_users
+    client = TestClient(app)
+    from app.api.auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: normal_user
+
+    try:
+        res = client.post(f"/api/agent-evo/versions/{v1.version_id}/rollback", json={"reason": "Clinician rollback attempt"})
+        assert res.status_code == 403
+        assert "Developer privileges required" in res.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_api_rollback_missing_version_returns_404(db_session, test_users):
+    """Test that requesting rollback to a nonexistent version returns 404 Not Found."""
+    dev_user, _ = test_users
+    client = TestClient(app)
+    from app.api.auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: dev_user
+
+    try:
+        res = client.post("/api/agent-evo/versions/wf_nonexistent_999/rollback", json={"reason": "Missing version"})
+        assert res.status_code == 404
+        assert "not found" in res.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_api_rollback_already_active_returns_400(db_session, parent_workflows, test_users):
+    """Test that attempting to roll back to the already ACTIVE production version returns 400 Bad Request."""
+    v1, _ = parent_workflows
+    dev_user, _ = test_users
+    client = TestClient(app)
+    from app.api.auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: dev_user
+
+    try:
+        # Make v1 active
+        WorkflowLifecycleService.activate_version(v1.version_id, dev_user.id, dev_user.email, db=db_session)
+        assert db_session.query(WorkflowVersion).filter_by(version_id=v1.version_id).first().status == "ACTIVE"
+
+        # Attempt rollback to v1 (which is already active)
+        res = client.post(f"/api/agent-evo/versions/{v1.version_id}/rollback", json={"reason": "Self rollback"})
+        assert res.status_code == 400
+        assert "already the currently active production version" in res.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_api_rollback_mismatched_target_id_returns_400(db_session, parent_workflows, test_users):
+    """Test that providing a mismatched target_version_id in body vs path returns 400 Bad Request."""
+    v1, v2 = parent_workflows
+    dev_user, _ = test_users
+    client = TestClient(app)
+    from app.api.auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: dev_user
+
+    try:
+        res = client.post(
+            f"/api/agent-evo/versions/{v1.version_id}/rollback",
+            json={"target_version_id": v2.version_id, "reason": "Mismatched target"},
+        )
+        assert res.status_code == 400
+        assert "does not match path parameter" in res.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_api_rollback_invalid_state_returns_400(db_session, parent_workflows, test_users):
+    """Test that rolling back to a version with ineligible status (e.g., ARCHIVED) returns 400 Bad Request."""
+    v1, _ = parent_workflows
+    dev_user, _ = test_users
+    client = TestClient(app)
+    from app.api.auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: dev_user
+
+    try:
+        # Mark v1 as ARCHIVED
+        v1_record = db_session.query(WorkflowVersion).filter_by(version_id=v1.version_id).first()
+        v1_record.status = "ARCHIVED"
+        db_session.commit()
+
+        res = client.post(f"/api/agent-evo/versions/{v1.version_id}/rollback", json={"reason": "Archived rollback attempt"})
+        assert res.status_code == 400
+        assert "Only APPROVED or INACTIVE versions are eligible" in res.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_api_rollback_database_failure_transaction_rollback(db_session, parent_workflows, test_users):
+    """Test that a database failure during rollback triggers db.rollback() and returns 500 cleanly."""
+    v1, v2 = parent_workflows
+    dev_user, _ = test_users
+    client = TestClient(app)
+    from app.api.auth import get_current_user
+    from app.core.database import get_db
+    app.dependency_overrides[get_current_user] = lambda: dev_user
+    app.dependency_overrides[get_db] = lambda: db_session
+
+    try:
+        # Activate v1 then v2
+        WorkflowLifecycleService.activate_version(v1.version_id, dev_user.id, dev_user.email, db=db_session)
+        WorkflowLifecycleService.activate_version(v2.version_id, dev_user.id, dev_user.email, db=db_session)
+        assert db_session.query(WorkflowVersion).filter_by(version_id=v2.version_id).first().status == "ACTIVE"
+        assert db_session.query(WorkflowVersion).filter_by(version_id=v1.version_id).first().status == "INACTIVE"
+
+        # Mock db.commit to raise an OperationalError during rollback commit
+        with patch.object(db_session, "commit", side_effect=Exception("Simulated database lock error")):
+            res = client.post(f"/api/agent-evo/versions/{v1.version_id}/rollback", json={"reason": "Failing commit"})
+            assert res.status_code == 500
+            assert "Database transaction failed during rollback" in res.json()["detail"]
+
+        # Ensure database state was rolled back and statuses remain as before
+        db_session.expire_all()
+        assert db_session.query(WorkflowVersion).filter_by(version_id=v2.version_id).first().status == "ACTIVE"
+        assert db_session.query(WorkflowVersion).filter_by(version_id=v1.version_id).first().status == "INACTIVE"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_rollback_preserves_unrelated_versions(db_session, parent_workflows, test_users):
+    """
+    Test that executing a rollback updates ONLY the target version and the previous active version,
+    strictly preserving unrelated versions, their configurations, approvals, and evaluation snapshots.
+    """
+    v1, v2 = parent_workflows
+    dev_user, _ = test_users
+    base_wf = get_baseline_workflow()
+
+    # Create additional unrelated versions v3 (APPROVED) and v4 (INACTIVE)
+    v3_cfg = base_wf.to_dict()
+    v3_cfg["retrieval"]["top_k"] = 10
+    v3 = WorkflowVersion(
+        version_id="wf_v3_unrelated",
+        version_number=103,
+        name="Version 3: Unrelated Approved",
+        description="Should remain untouched",
+        source_run_id="run_v3",
+        source_candidate_id="cand_v3",
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        configuration=v3_cfg,
+        evaluation_snapshot={"groundedness": 0.95, "cost": 0.000045, "llm_latency_ms": 1100.0},
+        status="APPROVED",
+        approved_by="developer@agentforge.ai",
+    )
+    v4_cfg = base_wf.to_dict()
+    v4_cfg["retrieval"]["top_k"] = 12
+    v4 = WorkflowVersion(
+        version_id="wf_v4_unrelated",
+        version_number=104,
+        name="Version 4: Unrelated Inactive",
+        description="Should remain untouched",
+        source_run_id="run_v4",
+        source_candidate_id="cand_v4",
+        model_id="gemini-3.5-flash-lite",
+        provider="Google",
+        configuration=v4_cfg,
+        evaluation_snapshot={"groundedness": 0.88, "cost": 0.000060, "llm_latency_ms": 1400.0},
+        status="INACTIVE",
+        approved_by="developer@agentforge.ai",
+    )
+    db_session.merge(v3)
+    db_session.merge(v4)
+    db_session.commit()
+
+    # Record snapshots of v3 and v4 before rollback
+    v3_before = db_session.query(WorkflowVersion).filter_by(version_id="wf_v3_unrelated").first()
+    v4_before = db_session.query(WorkflowVersion).filter_by(version_id="wf_v4_unrelated").first()
+    v3_cfg_before = dict(v3_before.configuration)
+    v3_snap_before = dict(v3_before.evaluation_snapshot)
+    v4_cfg_before = dict(v4_before.configuration)
+    v4_snap_before = dict(v4_before.evaluation_snapshot)
+
+    # Set v1 inactive, v2 active
+    WorkflowLifecycleService.activate_version(v1.version_id, dev_user.id, dev_user.email, db=db_session)
+    WorkflowLifecycleService.activate_version(v2.version_id, dev_user.id, dev_user.email, db=db_session)
+
+    # Perform rollback from v2 to v1
+    WorkflowLifecycleService.rollback_version(
+        target_version_id=v1.version_id,
+        user_id=dev_user.id,
+        user_email=dev_user.email,
+        reason="Testing preservation of unrelated versions",
+        db=db_session,
+    )
+
+    # Check that v1 is ACTIVE and v2 is INACTIVE
+    assert db_session.query(WorkflowVersion).filter_by(version_id=v1.version_id).first().status == "ACTIVE"
+    assert db_session.query(WorkflowVersion).filter_by(version_id=v2.version_id).first().status == "INACTIVE"
+
+    # Verify v3 and v4 are completely unchanged
+    v3_after = db_session.query(WorkflowVersion).filter_by(version_id="wf_v3_unrelated").first()
+    v4_after = db_session.query(WorkflowVersion).filter_by(version_id="wf_v4_unrelated").first()
+    assert v3_after.status == "APPROVED"
+    assert v3_after.configuration == v3_cfg_before
+    assert v3_after.evaluation_snapshot == v3_snap_before
+    assert v3_after.approved_by == "developer@agentforge.ai"
+
+    assert v4_after.status == "INACTIVE"
+    assert v4_after.configuration == v4_cfg_before
+    assert v4_after.evaluation_snapshot == v4_snap_before
+    assert v4_after.approved_by == "developer@agentforge.ai"

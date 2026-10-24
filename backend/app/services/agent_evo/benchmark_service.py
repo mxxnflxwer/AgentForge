@@ -41,6 +41,7 @@ class BenchmarkService:
         A dominates B if:
           A.groundedness >= B.groundedness and A.cost <= B.cost
           and (A.groundedness > B.groundedness or A.cost < B.cost)
+        Items with failed evaluations (null cost or groundedness) cannot dominate or be Pareto-optimal.
         """
         for i, item_a in enumerate(results):
             for j, item_b in enumerate(results):
@@ -51,7 +52,19 @@ class BenchmarkService:
                 g_a, c_a = item_a.groundedness, item_a.cost
                 g_b, c_b = item_b.groundedness, item_b.cost
 
-                # A dominates B?
+                # An item with null metrics cannot dominate any item
+                if g_a is None or c_a is None:
+                    continue
+
+                # A valid item always dominates an item with null metrics (failed evaluation)
+                if g_b is None or c_b is None:
+                    if item_b.version_id not in item_a.dominates:
+                        item_a.dominates.append(item_b.version_id)
+                    if item_a.version_id not in item_b.dominated_by:
+                        item_b.dominated_by.append(item_a.version_id)
+                    continue
+
+                # Both have valid numeric metrics
                 if (g_a >= g_b and c_a <= c_b) and (g_a > g_b or c_a < c_b):
                     if item_b.version_id not in item_a.dominates:
                         item_a.dominates.append(item_b.version_id)
@@ -62,13 +75,14 @@ class BenchmarkService:
         dominated_list: List[BenchmarkItemResult] = []
 
         for item in results:
-            if len(item.dominated_by) == 0:
+            # Only successfully evaluated items with non-null metrics can be Pareto-optimal
+            if item.groundedness is not None and item.cost is not None and len(item.dominated_by) == 0:
                 item.is_pareto_optimal = True
                 item.pareto_status = "Pareto-optimal"
                 pareto_frontier.append(item)
             else:
                 item.is_pareto_optimal = False
-                item.pareto_status = "Dominated"
+                item.pareto_status = "Dominated" if (item.groundedness is not None and item.cost is not None) else "Evaluation Failed"
                 dominated_list.append(item)
 
         return pareto_frontier, dominated_list
@@ -378,7 +392,13 @@ class BenchmarkService:
         )
 
         for item in raw_benchmark_results:
-            if baseline_item:
+            if (
+                baseline_item
+                and baseline_item.groundedness is not None
+                and baseline_item.cost is not None
+                and item.groundedness is not None
+                and item.cost is not None
+            ):
                 g_delta = round(item.groundedness - baseline_item.groundedness, 4)
                 c_red = (
                     round(((baseline_item.cost - item.cost) / baseline_item.cost) * 100, 2)
@@ -390,24 +410,28 @@ class BenchmarkService:
                     if baseline_item.cost > 0
                     else 0.0
                 )
+                b_lat = baseline_item.llm_latency_ms or 0.0
+                i_lat = item.llm_latency_ms or 0.0
                 lat_red = (
-                    round(((baseline_item.llm_latency_ms - item.llm_latency_ms) / baseline_item.llm_latency_ms) * 100, 2)
-                    if baseline_item.llm_latency_ms > 0
+                    round(((b_lat - i_lat) / b_lat) * 100, 2)
+                    if b_lat > 0
                     else 0.0
                 )
                 lat_change = (
-                    round(((item.llm_latency_ms - baseline_item.llm_latency_ms) / baseline_item.llm_latency_ms) * 100, 2)
-                    if baseline_item.llm_latency_ms > 0
+                    round(((i_lat - b_lat) / b_lat) * 100, 2)
+                    if b_lat > 0
                     else 0.0
                 )
+                b_tok = baseline_item.total_tokens or 0
+                i_tok = item.total_tokens or 0
                 tok_red = (
-                    round(((baseline_item.total_tokens - item.total_tokens) / baseline_item.total_tokens) * 100, 2)
-                    if baseline_item.total_tokens > 0
+                    round(((b_tok - i_tok) / b_tok) * 100, 2)
+                    if b_tok > 0
                     else 0.0
                 )
                 tok_change = (
-                    round(((item.total_tokens - baseline_item.total_tokens) / baseline_item.total_tokens) * 100, 2)
-                    if baseline_item.total_tokens > 0
+                    round(((i_tok - b_tok) / b_tok) * 100, 2)
+                    if b_tok > 0
                     else 0.0
                 )
                 item.relative_changes = {
@@ -422,14 +446,14 @@ class BenchmarkService:
                 }
             else:
                 item.relative_changes = {
-                    "groundedness_delta": 0.0,
-                    "groundedness_change": 0.0,
-                    "cost_reduction_pct": 0.0,
-                    "cost_change_pct": 0.0,
-                    "latency_reduction_pct": 0.0,
-                    "latency_change_pct": 0.0,
-                    "token_reduction_pct": 0.0,
-                    "token_change_pct": 0.0,
+                    "groundedness_delta": None,
+                    "groundedness_change": None,
+                    "cost_reduction_pct": None,
+                    "cost_change_pct": None,
+                    "latency_reduction_pct": None,
+                    "latency_change_pct": None,
+                    "token_reduction_pct": None,
+                    "token_change_pct": None,
                 }
 
         # Step 4: Compute Pareto Dominance across benchmarked versions
@@ -1010,65 +1034,90 @@ class BenchmarkService:
                 )
             )
 
-        # 7. Compute aggregate results directly from raw unrounded metrics
-        successful_evals = sum(1 for r in per_query_records if r.baseline_status == "success" and r.optimized_status == "success")
+        # 7. Compute aggregate results directly from raw unrounded metrics across valid query pairs
+        valid_pairs = [r for r in per_query_records if r.baseline_status == "success" and r.optimized_status == "success"]
+        successful_evals = len(valid_pairs)
         failed_evals = total_queries - successful_evals
 
-        raw_b_g_list = [r.baseline_groundedness for r in per_query_records]
-        raw_o_g_list = [r.optimized_groundedness for r in per_query_records]
-        raw_b_h_list = [r.baseline_hallucination_rate for r in per_query_records]
-        raw_o_h_list = [r.optimized_hallucination_rate for r in per_query_records]
-        raw_b_c_list = [r.baseline_cost for r in per_query_records]
-        raw_o_c_list = [r.optimized_cost for r in per_query_records]
-        raw_b_tok_list = [r.baseline_total_tokens for r in per_query_records]
-        raw_o_tok_list = [r.optimized_total_tokens for r in per_query_records]
-        raw_b_lat_list = [r.baseline_latency_ms for r in per_query_records]
-        raw_o_lat_list = [r.optimized_latency_ms for r in per_query_records]
-
-        agg_b_g = sum(raw_b_g_list) / max(1, total_queries)
-        agg_o_g = sum(raw_o_g_list) / max(1, total_queries)
-        groundedness_diff_pp = round((agg_o_g - agg_b_g) * 100, 2)
-        groundedness_retained = bool(agg_o_g >= agg_b_g - 0.0001)
-
-        agg_b_h = sum(raw_b_h_list) / max(1, total_queries)
-        agg_o_h = sum(raw_o_h_list) / max(1, total_queries)
-
-        agg_b_c = sum(raw_b_c_list) / max(1, total_queries)
-        agg_o_c = sum(raw_o_c_list) / max(1, total_queries)
-        cost_red_pct = round(((agg_b_c - agg_o_c) / agg_b_c) * 100, 2) if agg_b_c > 0 else 0.0
-        cost_reduced = bool(agg_o_c < agg_b_c)
-
-        agg_b_tok = sum(raw_b_tok_list) / max(1, total_queries)
-        agg_o_tok = sum(raw_o_tok_list) / max(1, total_queries)
-
-        agg_b_lat = sum(raw_b_lat_list) / max(1, total_queries)
-        agg_o_lat = sum(raw_o_lat_list) / max(1, total_queries)
-
-        # 8. Honest finding summary
-        if cost_reduced and groundedness_retained:
+        if successful_evals == 0:
+            agg_b_g = 0.0
+            agg_o_g = 0.0
+            groundedness_diff_pp = 0.0
+            groundedness_retained = False
+            agg_b_h = 0.0
+            agg_o_h = 0.0
+            agg_b_c = 0.0
+            agg_o_c = 0.0
+            cost_red_pct = 0.0
+            cost_reduced = False
+            agg_b_tok = 0
+            agg_o_tok = 0
+            agg_b_lat = 0.0
+            agg_o_lat = 0.0
             finding = (
-                f"Optimized workflow '{opt_rec.name}' (v{opt_rec.version_number}) successfully reduced cost by "
-                f"{cost_red_pct}% (${agg_o_c:.6f} vs ${agg_b_c:.6f}/query) while preserving clinical groundedness "
-                f"({agg_o_g * 100:.1f}% vs {agg_b_g * 100:.1f}%, diff: {groundedness_diff_pp:+.1f} pp). "
-                f"Results are scoped to the evaluated workload and do not claim universal optimality."
-            )
-        elif not cost_reduced and groundedness_retained:
-            finding = (
-                f"Optimized workflow '{opt_rec.name}' retained groundedness ({agg_o_g * 100:.1f}%), but did NOT "
-                f"reduce cost (${agg_o_c:.6f} vs baseline ${agg_b_c:.6f}/query). "
-                f"Honest evaluation indicates no cost advantage on this workload."
-            )
-        elif cost_reduced and not groundedness_retained:
-            finding = (
-                f"Optimized workflow '{opt_rec.name}' reduced cost by {cost_red_pct}%, but experienced a groundedness decline "
-                f"of {abs(groundedness_diff_pp):.1f} percentage points ({agg_o_g * 100:.1f}% vs {agg_b_g * 100:.1f}%). "
-                f"Trade-off shows lower cost at the expense of grounded accuracy."
+                f"Evaluation failed or incomplete: all {total_queries} queries experienced provider errors or empty responses. "
+                f"Baseline configuration must be retained."
             )
         else:
-            finding = (
-                f"Optimized workflow '{opt_rec.name}' did not achieve cost reduction (${agg_o_c:.6f} vs ${agg_b_c:.6f}) "
-                f"and experienced lower groundedness ({agg_o_g * 100:.1f}% vs {agg_b_g * 100:.1f}%)."
-            )
+            raw_b_g_list = [r.baseline_groundedness for r in valid_pairs]
+            raw_o_g_list = [r.optimized_groundedness for r in valid_pairs]
+            raw_b_h_list = [r.baseline_hallucination_rate for r in valid_pairs]
+            raw_o_h_list = [r.optimized_hallucination_rate for r in valid_pairs]
+            raw_b_c_list = [r.baseline_cost for r in valid_pairs]
+            raw_o_c_list = [r.optimized_cost for r in valid_pairs]
+            raw_b_tok_list = [r.baseline_total_tokens for r in valid_pairs]
+            raw_o_tok_list = [r.optimized_total_tokens for r in valid_pairs]
+            raw_b_lat_list = [r.baseline_latency_ms for r in valid_pairs]
+            raw_o_lat_list = [r.optimized_latency_ms for r in valid_pairs]
+
+            agg_b_g = sum(raw_b_g_list) / successful_evals
+            agg_o_g = sum(raw_o_g_list) / successful_evals
+            groundedness_diff_pp = round((agg_o_g - agg_b_g) * 100, 2)
+            # Retained if within 2% margin (-0.02)
+            groundedness_retained = bool(agg_o_g >= agg_b_g - 0.02)
+
+            agg_b_h = sum(raw_b_h_list) / successful_evals
+            agg_o_h = sum(raw_o_h_list) / successful_evals
+
+            agg_b_c = sum(raw_b_c_list) / successful_evals
+            agg_o_c = sum(raw_o_c_list) / successful_evals
+            cost_red_pct = round(((agg_b_c - agg_o_c) / agg_b_c) * 100, 2) if agg_b_c > 0 else 0.0
+            cost_reduced = bool(agg_o_c < agg_b_c)
+
+            agg_b_tok = sum(raw_b_tok_list) / successful_evals
+            agg_o_tok = sum(raw_o_tok_list) / successful_evals
+
+            agg_b_lat = sum(raw_b_lat_list) / successful_evals
+            agg_o_lat = sum(raw_o_lat_list) / successful_evals
+
+            prefix = f"[Notice: {failed_evals}/{total_queries} queries experienced errors and were excluded from averages] " if failed_evals > 0 else ""
+
+            # 8. Honest finding summary
+            if cost_reduced and groundedness_retained:
+                finding = (
+                    f"{prefix}Optimized workflow '{opt_rec.name}' (v{opt_rec.version_number}) successfully reduced cost by "
+                    f"{cost_red_pct}% (${agg_o_c:.6f} vs ${agg_b_c:.6f}/query) while preserving clinical groundedness "
+                    f"({agg_o_g * 100:.1f}% vs {agg_b_g * 100:.1f}%, diff: {groundedness_diff_pp:+.1f} pp). "
+                    f"Candidate meets acceptance criteria."
+                )
+            elif not cost_reduced and groundedness_retained:
+                finding = (
+                    f"{prefix}Optimized workflow '{opt_rec.name}' retained groundedness ({agg_o_g * 100:.1f}%), but did NOT "
+                    f"reduce cost (${agg_o_c:.6f} vs baseline ${agg_b_c:.6f}/query). "
+                    f"Production baseline is retained."
+                )
+            elif cost_reduced and not groundedness_retained:
+                finding = (
+                    f"{prefix}Optimized workflow '{opt_rec.name}' reduced cost by {cost_red_pct}%, but experienced an unacceptable groundedness decline "
+                    f"of {abs(groundedness_diff_pp):.1f} percentage points ({agg_o_g * 100:.1f}% vs {agg_b_g * 100:.1f}%). "
+                    f"Production baseline is retained."
+                )
+            else:
+                finding = (
+                    f"{prefix}Optimized workflow '{opt_rec.name}' did not achieve cost reduction (${agg_o_c:.6f} vs ${agg_b_c:.6f}) "
+                    f"and experienced lower groundedness ({agg_o_g * 100:.1f}% vs {agg_b_g * 100:.1f}%). "
+                    f"Production baseline is retained."
+                )
 
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 

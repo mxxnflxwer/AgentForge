@@ -66,26 +66,36 @@ class EvaluationEngine:
         ans_clean = (input_data.generated_answer or "").strip()
         if not input_data.success or input_data.error or not ans_clean:
             eval_duration_ms = round((time.perf_counter() - start_eval_time) * 1000, 2)
-            exec_time = input_data.execution_time_ms if input_data.execution_time_ms is not None else (input_data.latency_ms or 0.0)
+            exec_time = input_data.execution_time_ms if input_data.execution_time_ms is not None else None
             is_provider_error = not input_data.success or bool(input_data.error)
             error_msg = input_data.error or ("Empty model response" if not ans_clean else None)
 
-            # Determine failure classification: Insufficient Credits vs Provider Error vs Empty Response
+            # Determine failure classification: Rate Limit (429) vs Insufficient Credits vs Provider Error vs Empty Response
             is_credit_err = False
+            is_rate_limit = False
             if error_msg:
                 lower_err = error_msg.lower()
-                if "402" in lower_err or "credit" in lower_err or "payment required" in lower_err:
+                if any(k in lower_err for k in ("402", "credit", "payment required")):
                     is_credit_err = True
+                elif any(k in lower_err for k in ("429", "rate limit", "rate_limit", "quota", "resource exhausted", "too many requests")):
+                    is_rate_limit = True
 
             if is_credit_err:
                 status_code = "insufficient_credits"
                 error_type = "insufficient_credits"
+                display_status = "Provider Error: Insufficient Credits"
+            elif is_rate_limit:
+                status_code = "provider_error"
+                error_type = "rate_limit_429"
+                display_status = "Provider Error: Rate Limited (HTTP 429)"
             elif is_provider_error:
                 status_code = "provider_error"
                 error_type = "provider_error"
+                display_status = f"Provider Error: {error_msg}"
             else:
                 status_code = "empty_response"
                 error_type = "empty_model_response"
+                display_status = "Empty Model Response"
 
             # Check if actual raw token usage was provided despite failure
             raw_usage = input_data.raw_usage
@@ -128,7 +138,7 @@ class EvaluationEngine:
                 input_tokens=input_toks,
                 output_tokens=output_toks,
                 total_tokens=total_toks,
-                latency_ms=round(input_data.latency_ms, 2) if input_data.latency_ms is not None else None,
+                latency_ms=None,
                 execution_time_ms=round(exec_time, 2) if exec_time is not None else None,
                 input_cost=in_cost,
                 output_cost=out_cost,
@@ -138,6 +148,7 @@ class EvaluationEngine:
                     "status": status_code,
                     "error_type": error_type,
                     "error_message": error_msg,
+                    "display_status": display_status,
                     "claim_breakdown": [],
                     "pricing_applied": input_data.model_name,
                 },

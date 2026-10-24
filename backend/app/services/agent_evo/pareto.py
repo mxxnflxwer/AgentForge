@@ -41,6 +41,13 @@ def dominates(a: CandidateMetrics, b: CandidateMetrics) -> bool:
     if a.status != "success" and b.status != "success":
         return False
 
+    # Guard: if candidate 'a' has null cost or performance, it cannot dominate
+    if a.performance is None or a.cost is None:
+        return False
+    # If candidate 'b' has null metrics, successful candidate 'a' dominates 'b'
+    if b.performance is None or b.cost is None:
+        return True
+
     perf_better_or_equal = a.performance >= b.performance
     cost_better_or_equal = a.cost <= b.cost
 
@@ -65,7 +72,7 @@ class ParetoArchive:
         """Return the current set of non-dominated Pareto-optimal candidates."""
         return sorted(
             self._archive,
-            key=lambda c: (-c.metrics.performance, c.metrics.cost),
+            key=lambda c: (-(c.metrics.performance or 0.0), c.metrics.cost if c.metrics.cost is not None else float("inf")),
         )
 
     @property
@@ -86,11 +93,15 @@ class ParetoArchive:
         self._all_evaluated.append(candidate)
         new_metrics = candidate.metrics
 
-        # Exclude failed/error candidates from Pareto archive
-        if new_metrics.status not in ("success", "evaluated"):
+        # Exclude failed/error or incomplete candidates from Pareto archive
+        if (
+            new_metrics.status not in ("success", "evaluated")
+            or new_metrics.performance is None
+            or new_metrics.cost is None
+        ):
             candidate.is_pareto_optimal = False
             logger.info(
-                f"Candidate '{candidate.candidate_id}' has non-successful status '{new_metrics.status}'; excluded from Pareto archive."
+                f"Candidate '{candidate.candidate_id}' has non-successful status '{new_metrics.status}' or null metrics; excluded from Pareto archive."
             )
             return False
 
@@ -104,8 +115,9 @@ class ParetoArchive:
 
         if is_dominated:
             candidate.is_pareto_optimal = False
+            cost_str = f"${new_metrics.cost:.6f}" if new_metrics.cost is not None else "N/A"
             logger.info(
-                f"Candidate '{candidate.candidate_id}' is dominated (perf={new_metrics.performance}, cost=${new_metrics.cost:.6f})."
+                f"Candidate '{candidate.candidate_id}' is dominated (perf={new_metrics.performance}, cost={cost_str})."
             )
             return False
 
@@ -127,8 +139,9 @@ class ParetoArchive:
         surviving_archive.append(candidate)
         self._archive = surviving_archive
 
+        cost_str = f"${new_metrics.cost:.6f}" if new_metrics.cost is not None else "N/A"
         logger.info(
-            f"Candidate '{candidate.candidate_id}' added to Pareto archive (perf={new_metrics.performance}, cost=${new_metrics.cost:.6f}). Archive size: {len(self._archive)}"
+            f"Candidate '{candidate.candidate_id}' added to Pareto archive (perf={new_metrics.performance}, cost={cost_str}). Archive size: {len(self._archive)}"
         )
         return True
 
@@ -153,7 +166,12 @@ class ParetoArchive:
                     c_i.dominated_by.append(c_j.candidate_id)
                     c_j.dominates_candidates.append(c_i.candidate_id)
 
-            if not is_dom and c_i.metrics.status in ("success", "evaluated"):
+            if (
+                not is_dom
+                and c_i.metrics.status in ("success", "evaluated")
+                and c_i.metrics.performance is not None
+                and c_i.metrics.cost is not None
+            ):
                 c_i.is_pareto_optimal = True
                 self._archive.append(c_i)
 

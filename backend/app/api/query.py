@@ -722,7 +722,7 @@ async def query_compare(
                 model_id=r.model_id,
                 provider=r.provider,
                 answer=r.answer,
-                latency_ms=r.latency_ms or 0.0,
+                latency_ms=r.latency_ms if r.success else None,
                 success=r.success,
                 error=r.error,
                 pipeline_type=pipeline_type,

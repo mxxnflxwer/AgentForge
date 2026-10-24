@@ -1,0 +1,157 @@
+{
+  "version_id": "wf_v2_dfce47",
+  "version_number": 2,
+  "workflow_name": "High-Precision Retrieval",
+  "parent_workflow_id": "baseline",
+  "source_candidate_id": "cand_high_precision",
+  "source_run_id": "evo_5d755c7217",
+  "model_id": "gemini-3.5-flash-lite",
+  "provider": "Google",
+  "groundedness": 1.0,
+  "hallucination_rate": 0.0,
+  "cost": 3e-05,
+  "total_tokens": 280,
+  "input_tokens": 239,
+  "output_tokens": 41,
+  "llm_latency_ms": 4349.29,
+  "execution_time_ms": 4726.09,
+  "retrieval": {
+    "top_k": 3,
+    "similarity_threshold": 0.45,
+    "chunk_size": 1000,
+    "chunk_overlap": 200,
+    "reranking": true
+  },
+  "retrieval_config_summary": "top_k=3, sim_thresh=0.45, chunk_size=1000, rerank=True",
+  "prompt_template": "default_medical",
+  "prompt_strategy": "default_medical",
+  "context_compression": false,
+  "operator_config": {
+    "context_compression": false,
+    "temperature": 0.1,
+    "max_tokens": 1024
+  },
+  "is_pareto_optimal": true,
+  "pareto_status": "Pareto-optimal",
+  "dominated_by": [],
+  "dominates": [
+    "baseline",
+    "wf_v13_49bdc8",
+    "wf_v12_b58eec",
+    "wf_v11_2ed2a7",
+    "wf_v10_44c035",
+    "wf_v9_2a6489",
+    "wf_v8_2b0b35",
+    "wf_v7_adfa07",
+    "wf_v6_a8b827",
+    "wf_v5_0123b3",
+    "wf_v4_b0844c",
+    "wf_v1_60e5af"
+  ],
+  "claim_breakdown": [
+    {
+      "claim": "context, the findings are consistent with stable angina, likely related to underlying coronary artery disease given risk factors and family history.",
+      "status": "supported",
+      "confidence": 0.93,
+      "matched_context_snippet": "findings are consistent with stable angina, likely related to underlying coronary artery disease given risk factors and family history. non-diagnostic",
+      "reason": "Strong contextual support (92% entity overlap)."
+    },
+    {
+      "claim": "Additionally, a non-diagnostic stress test warrants further evaluation.",
+      "status": "supported",
+      "confidence": 0.83,
+      "matched_context_snippet": "findings are consistent with stable angina, likely related to underlying coronary artery disease given risk factors and family history. non-diagnostic",
+      "reason": "Strong contextual support (83% entity overlap)."
+    }
+  ],
+  "raw_details": {
+    "evaluation_duration_ms": 2.3,
+    "status": "success",
+    "claim_breakdown": [
+      {
+        "claim": "context, the findings are consistent with stable angina, likely related to underlying coronary artery disease given risk factors and family history.",
+        "status": "supported",
+        "confidence": 0.93,
+        "matched_context_snippet": "findings are consistent with stable angina, likely related to underlying coronary artery disease given risk factors and family history. non-diagnostic",
+        "reason": "Strong contextual support (92% entity overlap)."
+      },
+      {
+        "claim": "Additionally, a non-diagnostic stress test warrants further evaluation.",
+        "status": "supported",
+        "confidence": 0.83,
+        "matched_context_snippet": "findings are consistent with stable angina, likely related to underlying coronary artery disease given risk factors and family history. non-diagnostic",
+        "reason": "Strong contextual support (83% entity overlap)."
+      }
+    ],
+    "pricing_applied": "Gemini 3.5 Flash-Lite",
+    "retrieval_ms": 376.22,
+    "chunks_retrieved": 1
+  },
+  "configuration": {
+    "workflow_id": "wf_v2_dfce47",
+    "name": "High-Precision Retrieval",
+    "description": "Restricts retrieval to top_k=3 with stricter relevance threshold 0.45 to reduce noise and input tokens.",
+    "retrieval": {
+      "chunk_size": 1000,
+      "chunk_overlap": 200,
+      "top_k": 3,
+      "similarity_threshold": 0.45,
+      "reranking": true
+    },
+    "model": {
+      "provider": "Google",
+      "model_id": "gemini-3.5-flash-lite",
+      "temperature": 0.1,
+      "max_tokens": 1024
+    },
+    "prompt": {
+      "template_name": "default_medical",
+      "custom_instructions": null
+    },
+    "execution": {
+      "timeout_seconds": 30.0,
+      "context_compression": false
+    },
+    "mutation_metadata": null
+  },
+  "iterations_count": 1,
+  "runs": [
+    {
+      "iteration": 1,
+      "groundedness": 1.0,
+      "hallucination_rate": 0.0,
+      "cost": 3e-05,
+      "total_tokens": 280,
+      "input_tokens": 239,
+      "output_tokens": 41,
+      "llm_latency_ms": 4349.29,
+      "execution_time_ms": 4726.09
+    }
+  ],
+  "relative_changes": {
+    "groundedness_delta": 0.0,
+    "groundedness_change": 0.0,
+    "cost_reduction_pct": 44.44,
+    "cost_change_pct": -44.44,
+    "latency_reduction_pct": -44.22,
+    "latency_change_pct": 44.22,
+    "token_reduction_pct": 53.72,
+    "token_change_pct": -53.72
+  },
+  "version": "wf_v2_dfce47",
+  "workflow": "High-Precision Retrieval",
+  "parent_workflow": "baseline",
+  "cost_per_query": 3e-05,
+  "hallucination": 0.0,
+  "latency_ms": 4349.29,
+  "model": "gemini-3.5-flash-lite",
+  "retrieval_config": "top_k=3, sim_thresh=0.45, chunk_size=1000, rerank=True",
+  "std_dev": {
+    "groundedness": 0.0,
+    "hallucination": 0.0,
+    "cost": 0.0,
+    "cost_per_query": 0.0,
+    "tokens": 0.0,
+    "latency_ms": 0.0
+  }
+}

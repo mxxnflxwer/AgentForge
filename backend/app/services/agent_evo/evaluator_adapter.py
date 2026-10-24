@@ -375,7 +375,7 @@ class EvaluatorAdapter:
             workflow_id=workflow.workflow_id,
             workflow_name=workflow.name,
             eval_result=eval_result,
-            status="success" if gen_success and bool(answer_text) else ("empty_response" if not answer_text and gen_success else "model_error"),
+            status="success" if gen_success and bool(answer_text) else ("empty_response" if not answer_text and gen_success else ("rate_limit_error" if (gen_error and ("429" in gen_error or "rate limit" in gen_error.lower())) else "model_error")),
             error_message=gen_error,
         )
         metrics.raw_details["retrieval_ms"] = retrieval_ms
@@ -495,17 +495,28 @@ class EvaluatorAdapter:
                 logger.error(f"Retrieval error for query '{q[:30]}' in '{workflow.workflow_id}': {e}")
                 per_query_evals.append({
                     "query_index": idx + 1,
+                    "query_id": f"q_{idx + 1}",
                     "query": q,
+                    "workflow_id": workflow.workflow_id,
+                    "workflow_name": workflow.name,
                     "response": "",
-                    "groundedness": 0.0,
-                    "hallucination_rate": 1.0,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "total_tokens": 0,
-                    "cost": 0.0,
-                    "llm_latency_ms": 0.0,
-                    "execution_time_ms": 0.0,
+                    "groundedness": None,
+                    "hallucination_rate": None,
+                    "supported_claims": [],
+                    "unsupported_claims": [],
+                    "supported_claim_count": 0,
+                    "unsupported_claim_count": 0,
+                    "total_claims": 0,
+                    "input_tokens": None,
+                    "output_tokens": None,
+                    "total_tokens": None,
+                    "cost": None,
+                    "llm_latency_ms": None,
+                    "execution_time_ms": None,
+                    "provider": workflow.model.provider,
+                    "model_id": model_display_name,
                     "status": "retrieval_error",
+                    "chunks_retrieved": 0,
                     "error_message": str(e),
                 })
                 continue
@@ -554,7 +565,7 @@ class EvaluatorAdapter:
                 except Exception as e:
                     logger.error(f"LLM generation failed for query '{q[:30]}' in '{workflow.workflow_id}': {e}")
                     answer_text = ""
-                    latency_ms = 0.0
+                    latency_ms = None
                     raw_usage = None
                     gen_success = False
                     gen_error = str(e)
@@ -576,6 +587,13 @@ class EvaluatorAdapter:
             )
             eval_result = eval_engine.evaluate(eval_input)
 
+            if not gen_success or not answer_text:
+                q_status = "model_error" if gen_error else "empty_response"
+                if gen_error and ("429" in gen_error.lower() or "rate limit" in gen_error.lower()):
+                    q_status = "rate_limit_error"
+            else:
+                q_status = "success"
+
             per_query_evals.append({
                 "query_index": idx + 1,
                 "query_id": f"q_{idx + 1}",
@@ -583,8 +601,8 @@ class EvaluatorAdapter:
                 "workflow_id": workflow.workflow_id,
                 "workflow_name": workflow.name,
                 "response": answer_text,
-                "groundedness": eval_result.groundedness if eval_result.groundedness is not None else 0.0,
-                "hallucination_rate": eval_result.hallucination_rate if eval_result.hallucination_rate is not None else 0.0,
+                "groundedness": eval_result.groundedness,
+                "hallucination_rate": eval_result.hallucination_rate,
                 "supported_claims": eval_result.supported_claims,
                 "unsupported_claims": eval_result.unsupported_claims,
                 "supported_claim_count": eval_result.supported_claim_count,
@@ -598,33 +616,58 @@ class EvaluatorAdapter:
                 "execution_time_ms": eval_result.execution_time_ms,
                 "provider": workflow.model.provider,
                 "model_id": model_display_name,
-                "status": "success" if gen_success and bool(answer_text) else ("empty_response" if not answer_text and gen_success else "model_error"),
+                "status": q_status,
                 "chunks_retrieved": len(retrieval.results),
                 "error_message": gen_error,
             })
 
-        # Aggregate raw metrics across the entire workload
+        # Aggregate metrics strictly across valid, successful queries
         total_q = len(per_query_evals)
-        groundedness_vals = [e["groundedness"] for e in per_query_evals if e["groundedness"] is not None]
-        hallucination_vals = [e["hallucination_rate"] for e in per_query_evals if e["hallucination_rate"] is not None]
-        cost_vals = [e["cost"] for e in per_query_evals]
-        tokens_vals = [e["total_tokens"] for e in per_query_evals]
-        in_tokens_vals = [e["input_tokens"] for e in per_query_evals]
-        out_tokens_vals = [e["output_tokens"] for e in per_query_evals]
-        lat_vals = [e["llm_latency_ms"] for e in per_query_evals]
-        exec_vals = [e["execution_time_ms"] for e in per_query_evals]
+        successful_evals = [e for e in per_query_evals if e["status"] == "success"]
+        failed_count = total_q - len(successful_evals)
 
-        avg_groundedness = sum(groundedness_vals) / max(1, len(groundedness_vals)) if groundedness_vals else 0.0
-        avg_hallucination = sum(hallucination_vals) / max(1, len(hallucination_vals)) if hallucination_vals else 0.0
-        avg_cost_per_query = sum(cost_vals) / max(1, total_q)
-        avg_tokens_per_query = int(round(sum(tokens_vals) / max(1, total_q)))
-        avg_in_tokens = int(round(sum(in_tokens_vals) / max(1, total_q)))
-        avg_out_tokens = int(round(sum(out_tokens_vals) / max(1, total_q)))
-        avg_latency_ms = sum(lat_vals) / max(1, total_q)
-        avg_exec_ms = sum(exec_vals) / max(1, total_q)
+        groundedness_vals = [e["groundedness"] for e in successful_evals if e["groundedness"] is not None]
+        hallucination_vals = [e["hallucination_rate"] for e in successful_evals if e["hallucination_rate"] is not None]
+        cost_vals = [e["cost"] for e in successful_evals if e["cost"] is not None]
+        tokens_vals = [e["total_tokens"] for e in successful_evals if e["total_tokens"] is not None]
+        in_tokens_vals = [e["input_tokens"] for e in successful_evals if e["input_tokens"] is not None]
+        out_tokens_vals = [e["output_tokens"] for e in successful_evals if e["output_tokens"] is not None]
+        lat_vals = [e["llm_latency_ms"] for e in successful_evals if e["llm_latency_ms"] is not None]
+        exec_vals = [e["execution_time_ms"] for e in successful_evals if e["execution_time_ms"] is not None]
 
-        all_success = all(e["status"] == "success" for e in per_query_evals)
-        cand_status = "success" if all_success else "partial_success" if any(e["status"] == "success" for e in per_query_evals) else "failed"
+        if not successful_evals:
+            avg_groundedness = None
+            avg_hallucination = None
+            avg_cost_per_query = None
+            avg_tokens_per_query = None
+            avg_in_tokens = None
+            avg_out_tokens = None
+            avg_latency_ms = None
+            avg_exec_ms = None
+            cand_status = "failed"
+            error_msg = f"All {total_q} queries in workload failed during evaluation."
+        elif failed_count > 0:
+            avg_groundedness = round(sum(groundedness_vals) / len(groundedness_vals), 4) if groundedness_vals else None
+            avg_hallucination = round(sum(hallucination_vals) / len(hallucination_vals), 4) if hallucination_vals else None
+            avg_cost_per_query = round(sum(cost_vals) / len(cost_vals), 6) if cost_vals else None
+            avg_tokens_per_query = int(round(sum(tokens_vals) / len(tokens_vals))) if tokens_vals else None
+            avg_in_tokens = int(round(sum(in_tokens_vals) / len(in_tokens_vals))) if in_tokens_vals else None
+            avg_out_tokens = int(round(sum(out_tokens_vals) / len(out_tokens_vals))) if out_tokens_vals else None
+            avg_latency_ms = round(sum(lat_vals) / len(lat_vals), 2) if lat_vals else None
+            avg_exec_ms = round(sum(exec_vals) / len(exec_vals), 2) if exec_vals else None
+            cand_status = "partial_success"
+            error_msg = f"{failed_count} of {total_q} queries failed; metrics reflect only successful queries."
+        else:
+            avg_groundedness = round(sum(groundedness_vals) / len(groundedness_vals), 4) if groundedness_vals else None
+            avg_hallucination = round(sum(hallucination_vals) / len(hallucination_vals), 4) if hallucination_vals else None
+            avg_cost_per_query = round(sum(cost_vals) / len(cost_vals), 6) if cost_vals else 0.0
+            avg_tokens_per_query = int(round(sum(tokens_vals) / len(tokens_vals))) if tokens_vals else 0
+            avg_in_tokens = int(round(sum(in_tokens_vals) / len(in_tokens_vals))) if in_tokens_vals else 0
+            avg_out_tokens = int(round(sum(out_tokens_vals) / len(out_tokens_vals))) if out_tokens_vals else 0
+            avg_latency_ms = round(sum(lat_vals) / len(lat_vals), 2) if lat_vals else 0.0
+            avg_exec_ms = round(sum(exec_vals) / len(exec_vals), 2) if exec_vals else 0.0
+            cand_status = "success"
+            error_msg = None
 
         # Explicitly distinguish real provider calls from simulation / mocked environments
         is_mocked = any(
@@ -637,23 +680,25 @@ class EvaluatorAdapter:
         metrics = CandidateMetrics(
             workflow_id=workflow.workflow_id,
             workflow_name=workflow.name,
-            performance=round(avg_groundedness, 4),
-            cost=round(avg_cost_per_query, 6),
+            performance=avg_groundedness,
+            cost=avg_cost_per_query,
             groundedness=avg_groundedness,
             hallucination_rate=avg_hallucination,
             accuracy=None,
             total_tokens=avg_tokens_per_query,
             input_tokens=avg_in_tokens,
             output_tokens=avg_out_tokens,
-            llm_latency_ms=round(avg_latency_ms, 2),
-            execution_time_ms=round(avg_exec_ms, 2),
+            llm_latency_ms=avg_latency_ms,
+            execution_time_ms=avg_exec_ms,
             status=cand_status,
-            error_message=None if all_success else "Some queries in workload experienced warnings/errors",
+            error_message=error_msg,
             raw_details={
                 "is_workload": True,
                 "is_mocked": is_mocked,
                 "evaluation_mode": "mocked_or_saved_response" if is_mocked else "live_provider",
                 "evaluation_count": total_q,
+                "successful_count": len(successful_evals),
+                "failed_count": failed_count,
                 "workload_queries": queries,
                 "avg_groundedness": avg_groundedness,
                 "avg_hallucination": avg_hallucination,

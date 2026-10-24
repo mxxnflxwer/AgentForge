@@ -111,7 +111,7 @@ class ModelComparisonResult(BaseModel):
     model_id: Optional[str] = None
     provider: str
     answer: str
-    latency_ms: float
+    latency_ms: Optional[float] = None
     success: bool
     error: Optional[str] = None
     pipeline_type: str = Field("comparison_shared_retrieval", description="Execution pipeline type")

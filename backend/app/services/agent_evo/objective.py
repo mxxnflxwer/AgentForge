@@ -11,17 +11,17 @@ class CandidateMetrics(BaseModel):
     """Normalized metrics container for an evaluated candidate workflow."""
     workflow_id: str = Field(..., description="ID of the evaluated workflow")
     workflow_name: str = Field(..., description="Name of the evaluated workflow")
-    performance: float = Field(0.0, description="Primary performance objective score (Groundedness) [0.0 - 1.0]")
-    cost: float = Field(0.0, description="Primary cost objective (Total Cost in USD)")
+    performance: Optional[float] = Field(None, description="Primary performance objective score (Groundedness) [0.0 - 1.0]")
+    cost: Optional[float] = Field(None, description="Primary cost objective (Total Cost in USD)")
     groundedness: Optional[float] = Field(None, description="Groundedness ratio [0.0 - 1.0]")
     hallucination_rate: Optional[float] = Field(None, description="Hallucination rate [0.0 - 1.0]")
     accuracy: Optional[float] = Field(None, description="Accuracy score against reference if available")
-    total_tokens: int = Field(0, description="Total tokens used (input + output)")
-    input_tokens: int = Field(0, description="Input prompt tokens")
-    output_tokens: int = Field(0, description="Output candidate tokens")
-    llm_latency_ms: float = Field(0.0, description="LLM generation latency in ms")
-    execution_time_ms: float = Field(0.0, description="Total pipeline execution time in ms")
-    status: str = Field("success", description="Status: 'success', 'empty_response', 'model_error', 'invalid'")
+    total_tokens: Optional[int] = Field(None, description="Total tokens used (input + output)")
+    input_tokens: Optional[int] = Field(None, description="Input prompt tokens")
+    output_tokens: Optional[int] = Field(None, description="Output candidate tokens")
+    llm_latency_ms: Optional[float] = Field(None, description="LLM generation latency in ms")
+    execution_time_ms: Optional[float] = Field(None, description="Total pipeline execution time in ms")
+    status: str = Field("success", description="Status: 'success', 'partial_success', 'failed', 'empty_response', 'model_error', 'invalid'")
     error_message: Optional[str] = Field(None, description="Error message if evaluation failed")
     raw_details: Dict[str, Any] = Field(default_factory=dict, description="Diagnostic details from evaluator")
 
@@ -35,28 +35,37 @@ class CandidateMetrics(BaseModel):
         error_message: Optional[str] = None,
     ) -> "CandidateMetrics":
         """Extract and normalize objective scores directly from Phase 6 EvaluationResult."""
-        # Performance objective = groundedness (default to 0.0 if None due to failure)
-        perf_score = eval_result.groundedness if eval_result.groundedness is not None else 0.0
-        cost_score = eval_result.total_cost if eval_result.total_cost is not None else 0.0
-
         eval_status = eval_result.details.get("status", status)
-        if eval_status == "provider_error":
+        if eval_status in ("provider_error", "insufficient_credits", "rate_limit_error"):
             eval_status = "model_error"
         eval_err = eval_result.details.get("error_message") or error_message
+
+        is_failed = eval_status in ("model_error", "invalid", "empty_response", "retrieval_error", "failed")
+
+        perf_score = (
+            round(eval_result.groundedness, 4)
+            if eval_result.groundedness is not None
+            else (None if is_failed else 0.0)
+        )
+        cost_score = (
+            round(eval_result.total_cost, 6)
+            if eval_result.total_cost is not None
+            else (None if is_failed else 0.0)
+        )
 
         return cls(
             workflow_id=workflow_id,
             workflow_name=workflow_name,
-            performance=round(perf_score, 4),
-            cost=round(cost_score, 6),
+            performance=perf_score,
+            cost=cost_score,
             groundedness=eval_result.groundedness,
             hallucination_rate=eval_result.hallucination_rate,
             accuracy=eval_result.accuracy,
-            total_tokens=eval_result.total_tokens or 0,
-            input_tokens=eval_result.input_tokens or 0,
-            output_tokens=eval_result.output_tokens or 0,
-            llm_latency_ms=eval_result.latency_ms or 0.0,
-            execution_time_ms=eval_result.execution_time_ms or 0.0,
+            total_tokens=eval_result.total_tokens,
+            input_tokens=eval_result.input_tokens,
+            output_tokens=eval_result.output_tokens,
+            llm_latency_ms=eval_result.latency_ms,
+            execution_time_ms=eval_result.execution_time_ms,
             status=eval_status,
             error_message=eval_err,
             raw_details=eval_result.details,
@@ -70,20 +79,20 @@ class CandidateMetrics(BaseModel):
         status: str,
         error_message: str,
     ) -> "CandidateMetrics":
-        """Create a zero-performance failed candidate record."""
+        """Create a failed candidate record with null metrics."""
         return cls(
             workflow_id=workflow_id,
             workflow_name=workflow_name,
-            performance=0.0,
-            cost=0.0,
+            performance=None,
+            cost=None,
             groundedness=None,
             hallucination_rate=None,
             accuracy=None,
-            total_tokens=0,
-            input_tokens=0,
-            output_tokens=0,
-            llm_latency_ms=0.0,
-            execution_time_ms=0.0,
+            total_tokens=None,
+            input_tokens=None,
+            output_tokens=None,
+            llm_latency_ms=None,
+            execution_time_ms=None,
             status=status,
             error_message=error_message,
             raw_details={"status": status, "error": error_message},

@@ -136,7 +136,7 @@ export interface AvailableModelItem {
 const DEFAULT_AVAILABLE_MODELS: AvailableModelItem[] = [
   { id: 'gemini', model_id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', provider: 'Google', badge: 'Fast & Grounded', is_configured: true },
   { id: 'qwen', model_id: 'qwen/qwen3.6-27b', name: 'Qwen 3.6 27B', provider: 'OpenRouter', badge: 'High Accuracy', is_configured: true },
-  { id: 'gemma', model_id: 'google/gemma-4-26b-a4b-it:free', name: 'Gemma 4 26B A4B (OpenRouter)', provider: 'OpenRouter', badge: 'Free Open-Weights', is_configured: true },
+  { id: 'nemotron', model_id: 'nvidia/nemotron-3.5-lightning-30b-a3b', name: 'NVIDIA Nemotron 3.5 Lightning 30B A3B', provider: 'NVIDIA NIM', badge: 'MoE Hybrid', is_configured: true },
 ]
 
 // Formatting helpers for Evaluation telemetry
@@ -331,13 +331,17 @@ function MainApp() {
                 id = 'qwen'
                 badge = 'High Accuracy'
               } else if (
+                lowerName.includes('nemotron') ||
+                lowerId.includes('nemotron') ||
+                lowerName.includes('nvidia') ||
+                lowerId.includes('nvidia') ||
                 lowerName.includes('gemma') ||
                 lowerId.includes('gemma') ||
                 lowerName.includes('gpt') ||
                 lowerId.includes('gpt')
               ) {
-                id = 'gemma'
-                badge = 'Free Open-Weights'
+                id = 'nemotron'
+                badge = 'MoE Hybrid'
               }
               return {
                 id,
@@ -654,13 +658,13 @@ function MainApp() {
           <div className="rag-logo-badge">⚡ AgentForge</div>
           <h1>Medical Document Analyzer & Model Comparison</h1>
           <p className="rag-subtitle">
-            RAG Ingestion Pipeline ➔ 3-LLM Integration (Gemini 3.5 Flash-Lite, Qwen 3.6 27B, Gemma 4 26B A4B) ➔ AgentEvo Foundation
+            RAG Ingestion Pipeline ➔ 3-LLM Integration (Gemini 3.5 Flash-Lite, Qwen 3.6 27B, NVIDIA Nemotron 3.5 Lightning 30B A3B) ➔ AgentEvo Foundation
           </p>
         </div>
         <div className="rag-header-right">
           <span className="rag-tag">Gemini 3.5 Flash-Lite</span>
           <span className="rag-tag">Qwen 3.6 27B</span>
-          <span className="rag-tag">Gemma 4 26B A4B (OpenRouter)</span>
+          <span className="rag-tag">NVIDIA Nemotron 3.5 Lightning 30B A3B</span>
           {isLoggedIn ? (
             <div className="rag-user-controls">
               <span className="rag-user-badge">🟢 {currentUser || 'Authenticated'}</span>
@@ -1484,7 +1488,7 @@ function MainApp() {
                   {generating && (
                     <div className="rag-placeholder">
                       <div className="rag-spinner"></div>
-                      <p>Executing RAG retrieval once & querying Gemini 3.5 Flash-Lite, Qwen 3.6 27B, and Gemma 4 26B A4B (OpenRouter) concurrently with AgentEvo evaluation...</p>
+                      <p>Executing RAG retrieval once & querying Gemini 3.5 Flash-Lite, Qwen 3.6 27B, and NVIDIA Nemotron 3.5 Lightning 30B A3B concurrently with AgentEvo evaluation...</p>
                     </div>
                   )}
 

@@ -31,7 +31,12 @@ class Settings(BaseSettings):
     QWEN_API_BASE_URL: str = "https://openrouter.ai/api/v1"
     QWEN_MODEL_NAME: str = "qwen/qwen3.6-27b"
 
-    # LLM Settings: OpenRouter Free Model (Default: Google Gemma 4 26B A4B)
+    # LLM Settings: NVIDIA Nemotron 3.5 Lightning 30B A3B (via NVIDIA NIM)
+    NVIDIA_API_KEY: str | None = None
+    NVIDIA_API_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
+    NVIDIA_MODEL_ID: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
+
+    # Legacy LLM Settings: OpenRouter Free Model (Gemma 4 26B A4B)
     OPENROUTER_API_KEY: str | None = None
     OPENROUTER_API_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_MODEL_ID: str = "google/gemma-4-26b-a4b-it:free"

@@ -7,6 +7,7 @@ from app.services.llm.base import LLMResponse
 from app.services.llm.gemini import GeminiAdapter
 from app.services.llm.gemma import GemmaAdapter
 from app.services.llm.gpt_oss import GPTOSSAdapter
+from app.services.llm.nemotron import NemotronAdapter
 from app.services.llm.qwen import QwenAdapter
 from app.services.llm.router import LLMRouter, get_llm_router
 from app.services.evaluation.evaluator import EvaluationEngine, EvaluationInput
@@ -158,13 +159,13 @@ async def test_single_model_qwen_routing(client: TestClient, mock_auth_user, moc
 
 
 @pytest.mark.asyncio
-async def test_single_model_gemma_routing(client: TestClient, mock_auth_user, mock_rag_retrieval):
-    """Selecting Gemma routes to Gemma adapter only without Gemini or Qwen fallback."""
-    mock_gemma_resp = LLMResponse(
+async def test_single_model_nemotron_routing(client: TestClient, mock_auth_user, mock_rag_retrieval):
+    """Selecting Nemotron routes to Nemotron adapter only without Gemini or Qwen fallback."""
+    mock_nemotron_resp = LLMResponse(
         answer="The clinical diagnosis is stable angina pectoris.",
-        model="Gemma 4 26B A4B (OpenRouter)",
-        model_id="google/gemma-4-26b-a4b-it:free",
-        provider="OpenRouter",
+        model="NVIDIA Nemotron 3.5 Lightning 30B A3B",
+        model_id="nvidia/nemotron-3.5-lightning-30b-a3b",
+        provider="NVIDIA NIM",
         latency_ms=350.0,
         success=True,
         raw_usage={"input_tokens": 50, "output_tokens": 20, "total_tokens": 70},
@@ -173,11 +174,54 @@ async def test_single_model_gemma_routing(client: TestClient, mock_auth_user, mo
     with patch("app.api.query.execute_rag_retrieval", return_value=mock_rag_retrieval), \
          patch.object(GeminiAdapter, "generate", new_callable=AsyncMock) as mock_gemini_gen, \
          patch.object(QwenAdapter, "generate", new_callable=AsyncMock) as mock_qwen_gen, \
-         patch.object(GemmaAdapter, "generate", new_callable=AsyncMock) as mock_gemma_gen:
+         patch.object(NemotronAdapter, "generate", new_callable=AsyncMock) as mock_nemotron_gen:
 
-        mock_gemma_gen.return_value = mock_gemma_resp
+        mock_nemotron_gen.return_value = mock_nemotron_resp
 
         resp = client.post(
+            "/api/query/answer",
+            json={
+                "query": "What is the diagnosis?",
+                "model": "nemotron",
+                "top_k": 3,
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["model"] == "NVIDIA Nemotron 3.5 Lightning 30B A3B"
+        assert data["model_id"] == "nvidia/nemotron-3.5-lightning-30b-a3b"
+        assert data["provider"] == "NVIDIA NIM"
+        assert data["success"] is True
+        assert data["status"] == "success"
+        assert "stable angina" in data["answer"]
+
+        # Verify ONLY Nemotron was called
+        mock_nemotron_gen.assert_called_once()
+        mock_gemini_gen.assert_not_called()
+        mock_qwen_gen.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_single_model_legacy_gpt_oss_alias_routing(client: TestClient, mock_auth_user, mock_rag_retrieval):
+    """Selecting legacy 'gpt_oss' or 'gemma' model alias routes seamlessly to Nemotron adapter."""
+    mock_nemotron_resp = LLMResponse(
+        answer="The clinical diagnosis is stable angina pectoris.",
+        model="NVIDIA Nemotron 3.5 Lightning 30B A3B",
+        model_id="nvidia/nemotron-3.5-lightning-30b-a3b",
+        provider="NVIDIA NIM",
+        latency_ms=350.0,
+        success=True,
+        raw_usage={"input_tokens": 50, "output_tokens": 20, "total_tokens": 70},
+    )
+
+    with patch("app.api.query.execute_rag_retrieval", return_value=mock_rag_retrieval), \
+         patch.object(NemotronAdapter, "generate", new_callable=AsyncMock) as mock_nemotron_gen:
+
+        mock_nemotron_gen.return_value = mock_nemotron_resp
+
+        # Test legacy gemma alias
+        resp_gemma = client.post(
             "/api/query/answer",
             json={
                 "query": "What is the diagnosis?",
@@ -185,41 +229,14 @@ async def test_single_model_gemma_routing(client: TestClient, mock_auth_user, mo
                 "top_k": 3,
             },
         )
+        assert resp_gemma.status_code == 200
+        data_gemma = resp_gemma.json()
+        assert data_gemma["model"] == "NVIDIA Nemotron 3.5 Lightning 30B A3B"
+        assert data_gemma["provider"] == "NVIDIA NIM"
+        assert data_gemma["success"] is True
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["model"] == "Gemma 4 26B A4B (OpenRouter)"
-        assert data["model_id"] == "google/gemma-4-26b-a4b-it:free"
-        assert data["provider"] == "OpenRouter"
-        assert data["success"] is True
-        assert data["status"] == "success"
-        assert "stable angina" in data["answer"]
-
-        # Verify ONLY Gemma was called
-        mock_gemma_gen.assert_called_once()
-        mock_gemini_gen.assert_not_called()
-        mock_qwen_gen.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_single_model_legacy_gpt_oss_alias_routing(client: TestClient, mock_auth_user, mock_rag_retrieval):
-    """Selecting legacy 'gpt_oss' model alias routes seamlessly to Gemma adapter."""
-    mock_gemma_resp = LLMResponse(
-        answer="The clinical diagnosis is stable angina pectoris.",
-        model="Gemma 4 26B A4B (OpenRouter)",
-        model_id="google/gemma-4-26b-a4b-it:free",
-        provider="OpenRouter",
-        latency_ms=350.0,
-        success=True,
-        raw_usage={"input_tokens": 50, "output_tokens": 20, "total_tokens": 70},
-    )
-
-    with patch("app.api.query.execute_rag_retrieval", return_value=mock_rag_retrieval), \
-         patch.object(GemmaAdapter, "generate", new_callable=AsyncMock) as mock_gemma_gen:
-
-        mock_gemma_gen.return_value = mock_gemma_resp
-
-        resp = client.post(
+        # Test legacy gpt_oss alias
+        resp_gpt = client.post(
             "/api/query/answer",
             json={
                 "query": "What is the diagnosis?",
@@ -227,22 +244,21 @@ async def test_single_model_legacy_gpt_oss_alias_routing(client: TestClient, moc
                 "top_k": 3,
             },
         )
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["model"] == "Gemma 4 26B A4B (OpenRouter)"
-        assert data["provider"] == "OpenRouter"
-        assert data["success"] is True
+        assert resp_gpt.status_code == 200
+        data_gpt = resp_gpt.json()
+        assert data_gpt["model"] == "NVIDIA Nemotron 3.5 Lightning 30B A3B"
+        assert data_gpt["provider"] == "NVIDIA NIM"
+        assert data_gpt["success"] is True
 
 
 @pytest.mark.asyncio
-async def test_gemma_insufficient_credits_handling(client: TestClient, mock_auth_user, mock_rag_retrieval):
+async def test_nemotron_insufficient_credits_handling(client: TestClient, mock_auth_user, mock_rag_retrieval):
     """HTTP 402 or credit error produces insufficient_credits status and N/A (None) tokens and cost."""
     mock_failed_resp = LLMResponse(
-        answer="Insufficient provider credits: OpenRouter requires credits or free-tier quota is exhausted.",
-        model="Gemma 4 26B A4B (OpenRouter)",
-        model_id="google/gemma-4-26b-a4b-it:free",
-        provider="OpenRouter",
+        answer="Insufficient provider credits: NVIDIA API quota exhausted.",
+        model="NVIDIA Nemotron 3.5 Lightning 30B A3B",
+        model_id="nvidia/nemotron-3.5-lightning-30b-a3b",
+        provider="NVIDIA NIM",
         latency_ms=180.0,
         success=False,
         error="Insufficient provider credits: HTTP 402 Payment Required",
@@ -250,24 +266,24 @@ async def test_gemma_insufficient_credits_handling(client: TestClient, mock_auth
     )
 
     with patch("app.api.query.execute_rag_retrieval", return_value=mock_rag_retrieval), \
-         patch.object(GemmaAdapter, "generate", new_callable=AsyncMock) as mock_gemma_gen:
+         patch.object(NemotronAdapter, "generate", new_callable=AsyncMock) as mock_nemotron_gen:
 
-        mock_gemma_gen.return_value = mock_failed_resp
+        mock_nemotron_gen.return_value = mock_failed_resp
 
         resp = client.post(
             "/api/query/answer",
             json={
                 "query": "What is the diagnosis?",
-                "model": "gemma",
+                "model": "nemotron",
                 "top_k": 3,
             },
         )
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["model"] == "Gemma 4 26B A4B (OpenRouter)"
-        assert data["model_id"] == "google/gemma-4-26b-a4b-it:free"
-        assert data["provider"] == "OpenRouter"
+        assert data["model"] == "NVIDIA Nemotron 3.5 Lightning 30B A3B"
+        assert data["model_id"] == "nvidia/nemotron-3.5-lightning-30b-a3b"
+        assert data["provider"] == "NVIDIA NIM"
         assert data["success"] is False
         assert data["status"] == "insufficient_credits"
         assert "Insufficient provider credits" in data["answer"]
@@ -288,7 +304,7 @@ async def test_gemma_insufficient_credits_handling(client: TestClient, mock_auth
 
 @pytest.mark.asyncio
 async def test_multi_model_comparison_with_one_failed_provider(client: TestClient, mock_auth_user, mock_rag_retrieval):
-    """In 3-model comparison, if Gemma fails with 402/429, Gemini and Qwen succeed and Gemma shows failure."""
+    """In 3-model comparison, if Nemotron fails with 402/429, Gemini and Qwen succeed and Nemotron shows failure."""
     gemini_resp = LLMResponse(
         answer="Gemini answer: Stable angina pectoris.",
         model="Gemini 3.5 Flash-Lite",
@@ -307,11 +323,11 @@ async def test_multi_model_comparison_with_one_failed_provider(client: TestClien
         success=True,
         raw_usage={"input_tokens": 42, "output_tokens": 16, "total_tokens": 58},
     )
-    gemma_resp = LLMResponse(
-        answer="Insufficient provider credits: OpenRouter free tier limit reached.",
-        model="Gemma 4 26B A4B (OpenRouter)",
-        model_id="google/gemma-4-26b-a4b-it:free",
-        provider="OpenRouter",
+    nemotron_resp = LLMResponse(
+        answer="Insufficient provider credits: NVIDIA API quota reached.",
+        model="NVIDIA Nemotron 3.5 Lightning 30B A3B",
+        model_id="nvidia/nemotron-3.5-lightning-30b-a3b",
+        provider="NVIDIA NIM",
         latency_ms=85.0,
         success=False,
         error="Insufficient provider credits: HTTP 402",
@@ -321,7 +337,7 @@ async def test_multi_model_comparison_with_one_failed_provider(client: TestClien
     with patch("app.api.query.execute_rag_retrieval", return_value=mock_rag_retrieval), \
          patch.object(GeminiAdapter, "generate", new_callable=AsyncMock, return_value=gemini_resp), \
          patch.object(QwenAdapter, "generate", new_callable=AsyncMock, return_value=qwen_resp), \
-         patch.object(GemmaAdapter, "generate", new_callable=AsyncMock, return_value=gemma_resp):
+         patch.object(NemotronAdapter, "generate", new_callable=AsyncMock, return_value=nemotron_resp):
 
         resp = client.post(
             "/api/query/compare",
@@ -339,7 +355,7 @@ async def test_multi_model_comparison_with_one_failed_provider(client: TestClien
 
         gemini_res = next(r for r in results if r["model_id"] == "gemini-3.5-flash-lite")
         qwen_res = next(r for r in results if r["model_id"] == "qwen/qwen3.6-27b")
-        gemma_res = next(r for r in results if r["model_id"] == "google/gemma-4-26b-a4b-it:free")
+        nemotron_res = next(r for r in results if r["model_id"] == "nvidia/nemotron-3.5-lightning-30b-a3b")
 
         # Gemini and Qwen must be successful
         assert gemini_res["success"] is True
@@ -350,13 +366,13 @@ async def test_multi_model_comparison_with_one_failed_provider(client: TestClien
         assert qwen_res["evaluation"]["groundedness"] is not None
         assert qwen_res["evaluation"]["total_cost"] is not None
 
-        # Gemma must be failed with credit notice and None metrics
-        assert gemma_res["success"] is False
-        assert "Insufficient provider credits" in gemma_res["answer"]
-        assert gemma_res["evaluation"]["groundedness"] is None
-        assert gemma_res["evaluation"]["total_tokens"] is None
-        assert gemma_res["evaluation"]["total_cost"] is None
-        assert gemma_res["evaluation"]["details"]["status"] == "insufficient_credits"
+        # Nemotron must be failed with credit notice and None metrics
+        assert nemotron_res["success"] is False
+        assert "Insufficient provider credits" in nemotron_res["answer"]
+        assert nemotron_res["evaluation"]["groundedness"] is None
+        assert nemotron_res["evaluation"]["total_tokens"] is None
+        assert nemotron_res["evaluation"]["total_cost"] is None
+        assert nemotron_res["evaluation"]["details"]["status"] == "insufficient_credits"
 
 
 def test_evaluator_engine_handles_all_error_types():

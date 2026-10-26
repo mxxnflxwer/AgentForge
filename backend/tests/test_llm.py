@@ -12,6 +12,7 @@ from app.services.llm.base import (
 from app.services.llm.gemini import GeminiAdapter
 from app.services.llm.gemma import GemmaAdapter
 from app.services.llm.gpt_oss import GPTOSSAdapter
+from app.services.llm.nemotron import NemotronAdapter
 from app.services.llm.qwen import QwenAdapter
 from app.services.llm.router import LLMRouter, get_llm_router
 from app.schemas.rag import RAGSearchResponse, RetrievedChunk
@@ -66,6 +67,9 @@ def test_missing_api_key_configuration():
 
     gemma = GemmaAdapter(api_key="")
     assert gemma.is_configured() is False
+
+    nemotron = NemotronAdapter(api_key="")
+    assert nemotron.is_configured() is False
 
     gpt_oss = GPTOSSAdapter(api_key="")
     assert gpt_oss.is_configured() is False
@@ -248,13 +252,84 @@ async def test_gemma_adapter_rate_limit_and_error_handling():
 
 
 @pytest.mark.asyncio
+async def test_nemotron_adapter_mock_success():
+    adapter = NemotronAdapter(
+        api_key="mock_nvidia_key",
+        base_url="https://integrate.api.nvidia.com/v1",
+        model_id="nvidia/nemotron-3.5-lightning-30b-a3b",
+    )
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": "Blood pressure was recorded as 130/85 mmHg."
+                }
+            }
+        ],
+        "usage": {"prompt_tokens": 45, "completion_tokens": 20, "total_tokens": 65},
+    }
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+        result = await adapter.generate(
+            query="What is the blood pressure?",
+            context="Physical Exam: BP 130/85 mmHg.",
+        )
+        assert result.success is True
+        assert result.model == "NVIDIA Nemotron 3.5 Lightning 30B A3B"
+        assert result.provider == "NVIDIA NIM"
+        assert result.model_id == "nvidia/nemotron-3.5-lightning-30b-a3b"
+        assert "130/85" in result.answer
+        assert result.raw_usage["total_tokens"] == 65
+
+        called_url, called_kwargs = mock_post.call_args
+        assert "https://integrate.api.nvidia.com/v1/chat/completions" == called_url[0]
+        assert called_kwargs["headers"].get("Authorization") == "Bearer mock_nvidia_key"
+
+
+@pytest.mark.asyncio
+async def test_nemotron_adapter_rate_limit_and_error_handling():
+    adapter = NemotronAdapter(api_key="test_key", model_id="nvidia/nemotron-3.5-lightning-30b-a3b")
+
+    # 1. Rate Limit (HTTP 429)
+    resp_429 = MagicMock()
+    resp_429.status_code = 429
+    resp_429.text = "Rate limit exceeded"
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=resp_429):
+        res = await adapter.generate(query="Q", context="C")
+        assert res.success is False
+        assert "rate limit" in res.error.lower()
+        assert "429" in res.error
+
+    # 2. Unauthorized (HTTP 401)
+    resp_401 = MagicMock()
+    resp_401.status_code = 401
+    resp_401.text = "Invalid API Key"
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=resp_401):
+        res = await adapter.generate(query="Q", context="C")
+        assert res.success is False
+        assert "401" in res.error or "unauthorized" in res.error.lower()
+
+    # 3. Timeout
+    import httpx
+    with patch("httpx.AsyncClient.post", side_effect=httpx.TimeoutException("Timed out")):
+        res = await adapter.generate(query="Q", context="C")
+        assert res.success is False
+        assert "timed out" in res.error.lower()
+
+
+@pytest.mark.asyncio
 async def test_llm_router_compare_all():
     router = LLMRouter()
     
     # Mock all generate calls
     with patch.object(GeminiAdapter, "generate", new_callable=AsyncMock) as mock_gemini, \
          patch.object(QwenAdapter, "generate", new_callable=AsyncMock) as mock_qwen, \
-         patch.object(GemmaAdapter, "generate", new_callable=AsyncMock) as mock_gemma:
+         patch.object(NemotronAdapter, "generate", new_callable=AsyncMock) as mock_nemotron:
         
         mock_gemini.return_value = LLMResponse(
             model="Gemini 3.5 Flash-Lite",
@@ -270,12 +345,12 @@ async def test_llm_router_compare_all():
             latency_ms=150.8,
             success=True,
         )
-        mock_gemma.return_value = LLMResponse(
-            model="Gemma 4 26B A4B (OpenRouter)",
-            provider="OpenRouter",
-            model_id="google/gemma-4-26b-a4b-it:free",
-            answer="Gemma answer.",
-            latency_ms=210.4,
+        mock_nemotron.return_value = LLMResponse(
+            model="NVIDIA Nemotron 3.5 Lightning 30B A3B",
+            provider="NVIDIA NIM",
+            model_id="nvidia/nemotron-3.5-lightning-30b-a3b",
+            answer="Nemotron answer.",
+            latency_ms=180.4,
             success=True,
         )
 
@@ -288,7 +363,7 @@ async def test_llm_router_compare_all():
         model_names = [r.model for r in results]
         assert "Gemini 3.5 Flash-Lite" in model_names
         assert "Qwen 3.6 27B" in model_names
-        assert "Gemma 4 26B A4B (OpenRouter)" in model_names
+        assert "NVIDIA Nemotron 3.5 Lightning 30B A3B" in model_names
         assert all(r.success for r in results)
 
 
@@ -300,7 +375,7 @@ def test_api_models_endpoint(client: TestClient):
     names = [m["name"] for m in data["models"]]
     assert "Gemini 3.5 Flash-Lite" in names
     assert "Qwen 3.6 27B" in names
-    assert "Gemma 4 26B A4B (OpenRouter)" in names
+    assert "NVIDIA Nemotron 3.5 Lightning 30B A3B" in names
 
 
 def test_api_query_answer_not_found_safety(client: TestClient, mock_auth_user):
@@ -539,6 +614,36 @@ async def test_gemma_adapter_respects_custom_temperature_and_max_tokens():
         mock_resp.text = "{}"
         mock_resp.json.return_value = {
             "choices": [{"message": {"content": "Gemma custom response."}}],
+            "usage": {"prompt_tokens": 40, "completion_tokens": 15, "total_tokens": 55},
+        }
+        return mock_resp
+
+    with patch("httpx.AsyncClient.post", side_effect=mock_post):
+        resp = await adapter.generate(
+            query="Clinical query",
+            context="Clinical context",
+            temperature=0.25,
+            max_tokens=512,
+        )
+        assert resp.success is True
+        assert captured_payload is not None
+        assert captured_payload["temperature"] == 0.25
+        assert captured_payload["max_tokens"] == 512
+
+
+@pytest.mark.asyncio
+async def test_nemotron_adapter_respects_custom_temperature_and_max_tokens():
+    adapter = NemotronAdapter(api_key="test_key_nemotron")
+    captured_payload = None
+
+    async def mock_post(url, json=None, headers=None):
+        nonlocal captured_payload
+        captured_payload = json
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "{}"
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "Nemotron custom response."}}],
             "usage": {"prompt_tokens": 40, "completion_tokens": 15, "total_tokens": 55},
         }
         return mock_resp

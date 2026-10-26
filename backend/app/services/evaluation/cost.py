@@ -37,7 +37,20 @@ DEFAULT_MODEL_PRICING: Dict[str, ModelPricing] = {
     "qwen/qwen-2.5-72b-instruct": ModelPricing(input_price_per_1m=0.35, output_price_per_1m=0.40, is_free=False, pricing_verified=True),
     "qwen": ModelPricing(input_price_per_1m=0.20, output_price_per_1m=0.30, is_free=False, pricing_verified=True),
 
-    # Google Gemma 4 26B A4B via OpenRouter (Verified Free Model Endpoint)
+    # NVIDIA Nemotron 3.5 Lightning 30B A3B via NVIDIA NIM
+    "nvidia/nemotron-3.5-lightning-30b-a3b": ModelPricing(input_price_per_1m=0.05, output_price_per_1m=0.20, is_free=False, pricing_verified=True),
+    "nemotron-3.5-lightning-30b-a3b": ModelPricing(input_price_per_1m=0.05, output_price_per_1m=0.20, is_free=False, pricing_verified=True),
+    "nvidia nemotron 3.5 lightning 30b a3b": ModelPricing(input_price_per_1m=0.05, output_price_per_1m=0.20, is_free=False, pricing_verified=True),
+    "nemotron-3.5-lightning": ModelPricing(input_price_per_1m=0.05, output_price_per_1m=0.20, is_free=False, pricing_verified=True),
+    "nvidia nim": ModelPricing(input_price_per_1m=0.05, output_price_per_1m=0.20, is_free=False, pricing_verified=True),
+    "nemotron": ModelPricing(input_price_per_1m=0.05, output_price_per_1m=0.20, is_free=False, pricing_verified=True),
+    "nvidia": ModelPricing(input_price_per_1m=0.05, output_price_per_1m=0.20, is_free=False, pricing_verified=True),
+    # Retired Nemotron nano aliases preserved for historical evaluations
+    "nvidia/nemotron-3-nano-30b-a3b": ModelPricing(input_price_per_1m=0.06, output_price_per_1m=0.24, is_free=False, pricing_verified=True),
+    "nemotron-3-nano-30b-a3b": ModelPricing(input_price_per_1m=0.06, output_price_per_1m=0.24, is_free=False, pricing_verified=True),
+    "nvidia nemotron-3-nano-30b-a3b": ModelPricing(input_price_per_1m=0.06, output_price_per_1m=0.24, is_free=False, pricing_verified=True),
+
+    # Google Gemma 4 26B A4B via OpenRouter (Preserved for historical evaluations)
     "google/gemma-4-26b-a4b-it:free": ModelPricing(input_price_per_1m=0.0, output_price_per_1m=0.0, is_free=True, pricing_verified=True),
     "gemma-4-26b-a4b-it:free": ModelPricing(input_price_per_1m=0.0, output_price_per_1m=0.0, is_free=True, pricing_verified=True),
     "gemma 4 26b a4b (openrouter)": ModelPricing(input_price_per_1m=0.0, output_price_per_1m=0.0, is_free=True, pricing_verified=True),

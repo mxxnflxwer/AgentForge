@@ -6,6 +6,7 @@ from app.services.llm.base import BaseLLMAdapter, LLMResponse
 from app.services.llm.gemini import GeminiAdapter
 from app.services.llm.gemma import GemmaAdapter
 from app.services.llm.gpt_oss import GPTOSSAdapter
+from app.services.llm.nemotron import NemotronAdapter
 from app.services.llm.qwen import QwenAdapter
 
 logger = logging.getLogger("agentforge.services.llm.router")
@@ -17,7 +18,7 @@ class LLMRouter:
     Enforces unified interfaces and concurrent multi-model comparisons across:
     1. Gemini 3.5 Flash-Lite (Google)
     2. Qwen 3.6 27B (OpenRouter)
-    3. Gemma 4 26B A4B (OpenRouter Free Tier)
+    3. NVIDIA Nemotron-3-Nano-30B-A3B (NVIDIA Hosted API)
     """
 
     def __init__(self):
@@ -27,7 +28,7 @@ class LLMRouter:
     def _initialize_adapters(self):
         gemini = GeminiAdapter()
         qwen = QwenAdapter()
-        gemma = GemmaAdapter()
+        nemotron = NemotronAdapter()
 
         self.register_adapter("gemini", gemini)
         self.register_adapter("gemini-3.5-flash-lite", gemini)
@@ -39,19 +40,30 @@ class LLMRouter:
         self.register_adapter("qwen-2.5-72b", qwen)
         self.register_adapter("qwen/qwen-2.5-72b-instruct", qwen)
 
-        # Gemma 4 26B A4B (OpenRouter Free Model)
-        self.register_adapter("gemma", gemma)
-        self.register_adapter("gemma-4-26b", gemma)
-        self.register_adapter("gemma-4-26b-a4b-it:free", gemma)
-        self.register_adapter("google/gemma-4-26b-a4b-it:free", gemma)
-        self.register_adapter("openrouter_gemma", gemma)
-        self.register_adapter("openrouter", gemma)
+        # NVIDIA Nemotron 3.5 Lightning 30B A3B (NVIDIA NIM)
+        self.register_adapter("nemotron", nemotron)
+        self.register_adapter("nvidia", nemotron)
+        self.register_adapter("nvidia nim", nemotron)
+        self.register_adapter("nvidia-nim", nemotron)
+        self.register_adapter("nemotron-3.5-lightning", nemotron)
+        self.register_adapter("nemotron-3.5-lightning-30b-a3b", nemotron)
+        self.register_adapter("nvidia/nemotron-3.5-lightning-30b-a3b", nemotron)
+        # Retired Nemotron nano aliases for backward compatibility
+        self.register_adapter("nemotron-3-nano-30b-a3b", nemotron)
+        self.register_adapter("nvidia/nemotron-3-nano-30b-a3b", nemotron)
+        self.register_adapter("nemotron-3-nano", nemotron)
 
-        # Legacy aliases mapped to Gemma for backward compatibility
-        self.register_adapter("gpt_oss", gemma)
-        self.register_adapter("gpt-oss", gemma)
-        self.register_adapter("gpt-oss-120b", gemma)
-        self.register_adapter("openai/gpt-oss-120b", gemma)
+        # Legacy aliases mapped to Nemotron for backward compatibility
+        self.register_adapter("gemma", nemotron)
+        self.register_adapter("gemma-4-26b", nemotron)
+        self.register_adapter("gemma-4-26b-a4b-it:free", nemotron)
+        self.register_adapter("google/gemma-4-26b-a4b-it:free", nemotron)
+        self.register_adapter("openrouter_gemma", nemotron)
+        self.register_adapter("openrouter", nemotron)
+        self.register_adapter("gpt_oss", nemotron)
+        self.register_adapter("gpt-oss", nemotron)
+        self.register_adapter("gpt-oss-120b", nemotron)
+        self.register_adapter("openai/gpt-oss-120b", nemotron)
 
     def register_adapter(self, key: str, adapter: BaseLLMAdapter):
         normalized_key = key.lower().strip()

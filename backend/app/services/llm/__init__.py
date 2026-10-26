@@ -8,6 +8,7 @@ from app.services.llm.base import (
 from app.services.llm.gemini import GeminiAdapter
 from app.services.llm.gemma import GemmaAdapter
 from app.services.llm.gpt_oss import GPTOSSAdapter
+from app.services.llm.nemotron import NemotronAdapter
 from app.services.llm.qwen import QwenAdapter
 from app.services.llm.router import LLMRouter, get_llm_router
 
@@ -19,6 +20,7 @@ __all__ = [
     "build_medical_prompt",
     "GeminiAdapter",
     "QwenAdapter",
+    "NemotronAdapter",
     "GemmaAdapter",
     "GPTOSSAdapter",
     "LLMRouter",

@@ -209,31 +209,36 @@ class CandidateGenerator:
         return cand
 
     @classmethod
-    def _mutate_model_gemma(cls, base: AgentWorkflow, rand: random.Random) -> Optional[AgentWorkflow]:
+    def _mutate_model_nemotron(cls, base: AgentWorkflow, rand: random.Random) -> Optional[AgentWorkflow]:
         cand = base.clone(
-            new_id=f"cand_model_gemma_{rand.randint(100, 999)}",
-            new_name="Gemma 4 26B A4B Synthesis",
-            new_description="Evaluates Google Gemma 4 26B A4B open-weights model hosted via OpenRouter free tier.",
+            new_id=f"cand_model_nemotron_{rand.randint(100, 999)}",
+            new_name="NVIDIA Nemotron 3.5 Lightning 30B A3B Synthesis",
+            new_description="Evaluates NVIDIA Nemotron 3.5 Lightning 30B A3B open-weights MoE model hosted via NVIDIA NIM.",
             mutation_metadata=MutationMetadata(
                 mutation_type=MutationType.MODEL,
                 parent_workflow_id=base.workflow_id,
-                mutation_description="Evaluates Google Gemma 4 26B A4B open-weights model hosted via OpenRouter free tier.",
+                mutation_description="Evaluates NVIDIA Nemotron 3.5 Lightning 30B A3B open-weights MoE model hosted via NVIDIA NIM.",
                 generation_metadata={
-                    "provider": "OpenRouter",
-                    "model_id": "google/gemma-4-26b-a4b-it:free",
+                    "provider": "NVIDIA NIM",
+                    "model_id": "nvidia/nemotron-3.5-lightning-30b-a3b",
                     "temperature": 0.1,
                 },
             ),
         )
-        cand.model.provider = "OpenRouter"
-        cand.model.model_id = "google/gemma-4-26b-a4b-it:free"
+        cand.model.provider = "NVIDIA NIM"
+        cand.model.model_id = "nvidia/nemotron-3.5-lightning-30b-a3b"
         cand.model.temperature = 0.1
         return cand
 
     @classmethod
+    def _mutate_model_gemma(cls, base: AgentWorkflow, rand: random.Random) -> Optional[AgentWorkflow]:
+        """Legacy mutation method pointing to Nemotron for backward compatibility."""
+        return cls._mutate_model_nemotron(base, rand)
+
+    @classmethod
     def _mutate_model_gpt_oss(cls, base: AgentWorkflow, rand: random.Random) -> Optional[AgentWorkflow]:
-        """Legacy mutation method pointing to Gemma 4 26B A4B for backward compatibility."""
-        return cls._mutate_model_gemma(base, rand)
+        """Legacy mutation method pointing to Nemotron for backward compatibility."""
+        return cls._mutate_model_nemotron(base, rand)
 
     @classmethod
     def _mutate_model_gemini_low_temp(cls, base: AgentWorkflow, rand: random.Random) -> Optional[AgentWorkflow]:
@@ -605,7 +610,7 @@ class CandidateGenerator:
                 ],
                 MutationType.MODEL: [
                     cls._mutate_model_qwen,
-                    cls._mutate_model_gemma,
+                    cls._mutate_model_nemotron,
                     cls._mutate_model_gemini_low_temp,
                 ],
                 MutationType.OPERATOR: [

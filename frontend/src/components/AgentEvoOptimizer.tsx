@@ -1304,8 +1304,8 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                 {isVerifiedBenchmark
                   ? `Head-to-head verified on "${benchmarkReport?.preset_name || 'Clinical Suite'}"`
                   : activeGroundedness !== null
-                  ? 'Recorded during initial approval evaluation snapshot'
-                  : 'Run benchmark to record verified measurement'}
+                    ? 'Recorded during initial approval evaluation snapshot'
+                    : 'Run benchmark to record verified measurement'}
               </span>
             </div>
 
@@ -1656,366 +1656,366 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
               {/* Expandable Advanced Strategy Details */}
               {showAdvancedStrategyDetails && (
                 <>
-              {/* STRATEGY 0: ADAPTIVE SCHEDULER CONFIGURATION */}
-              {candidateStrategy === 'adaptive' && (
-                <div className="evo-strategy-config-box">
-                  <div className="evo-form-row">
-                    <div className="evo-form-group evo-col-half">
-                      <label htmlFor="evo-adaptive-parent" className="evo-label">Initial Parent Workflow</label>
-                      <select
-                        id="evo-adaptive-parent"
-                        className="evo-select"
-                        value={selectedParentWorkflowId}
-                        onChange={(e) => setSelectedParentWorkflowId(e.target.value)}
-                        disabled={running}
-                      >
-                        <option value="baseline">Production Baseline (Default Reference)</option>
-                        {workflowVersions.map((v) => (
-                          <option key={v.version_id} value={v.version_id}>
-                            v{v.version_number}: {v.name} ({v.model_id}) [{v.status}]
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="evo-form-group evo-col-half">
-                      <label htmlFor="evo-adaptive-count" className="evo-label">Candidates per Iteration ({generatedCandidateCount})</label>
-                      <input
-                        id="evo-adaptive-count"
-                        type="range"
-                        min={2}
-                        max={6}
-                        value={generatedCandidateCount}
-                        onChange={(e) => setGeneratedCandidateCount(Number(e.target.value))}
-                        className="evo-slider"
-                        disabled={running}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="evo-summary-box" style={{ marginTop: 10, background: 'rgba(59, 130, 246, 0.06)', borderLeft: '3px solid #3b82f6' }}>
-                    <div style={{ fontWeight: 600, color: '#93c5fd', marginBottom: 4 }}>
-                      🤖 AgentEvo Adapter Scheduler (Deterministic Policy)
-                    </div>
-                    <p style={{ margin: 0, fontSize: '0.84rem', color: '#cbd5e1', lineHeight: 1.5 }}>
-                      The adaptive scheduler analyzes optimization history, Pareto frontier progress, groundedness retention, and stagnation to select the optimal evolutionary mechanism (Mutation, Refinement, or Crossover).
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* STRATEGY 1: MUTATION / EXPLORATION CONFIGURATION */}
-              {candidateStrategy === 'mutation' && (
-                <div className="evo-strategy-config-box">
-                  <div className="evo-form-row">
-                    <div className="evo-form-group evo-col-half">
-                      <label htmlFor="evo-parent-select" className="evo-label">Parent Workflow</label>
-                      <select
-                        id="evo-parent-select"
-                        className="evo-select"
-                        value={selectedParentWorkflowId}
-                        onChange={(e) => setSelectedParentWorkflowId(e.target.value)}
-                        disabled={running}
-                      >
-                        <option value="baseline">Production Baseline (Default Reference)</option>
-                        {workflowVersions.map((v) => (
-                          <option key={v.version_id} value={v.version_id}>
-                            v{v.version_number}: {v.name} ({v.model_id}) [{v.status}]
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="evo-form-group evo-col-half">
-                      <label htmlFor="evo-count-input" className="evo-label">Candidate Count ({generatedCandidateCount})</label>
-                      <input
-                        id="evo-count-input"
-                        type="range"
-                        min={2}
-                        max={8}
-                        value={generatedCandidateCount}
-                        onChange={(e) => setGeneratedCandidateCount(Number(e.target.value))}
-                        className="evo-slider"
-                        disabled={running}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="evo-form-group">
-                    <label className="evo-label">Mutation Dimension</label>
-                    <div className="evo-strategy-pills-wrap">
-                      {[
-                        { id: 'all', label: 'All Dimensions', desc: 'Broad parameter & prompt exploration' },
-                        { id: 'prompt', label: 'Prompt Only', desc: 'Template & disclaimer tuning' },
-                        { id: 'retrieval', label: 'Retrieval Only', desc: 'Top-K & similarity variations' },
-                        { id: 'model', label: 'Model Only', desc: 'Provider & temperature exploration' },
-                        { id: 'operator', label: 'Operators Only', desc: 'Context compression toggle' },
-                        { id: 'composite', label: 'Composite Mutation', desc: 'Multi-parameter exploration' },
-                      ].map((s) => (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => setSelectedMutationType(s.id)}
-                          className={`evo-strat-btn ${selectedMutationType === s.id ? 'active' : ''}`}
-                          disabled={running}
-                        >
-                          <span className="evo-strat-btn-title">{s.label}</span>
-                          <span className="evo-strat-btn-desc">{s.desc}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* STRATEGY 2: REFINEMENT CONFIGURATION */}
-              {candidateStrategy === 'refinement' && (
-                <div className="evo-strategy-config-box">
-                  <div className="evo-form-row">
-                    <div className="evo-form-group evo-col-half">
-                      <label className="evo-label">Parent Workflow</label>
-                      <select
-                        className="evo-select"
-                        value={selectedParentWorkflowId}
-                        onChange={(e) => setSelectedParentWorkflowId(e.target.value)}
-                        disabled={running}
-                      >
-                        <option value="baseline">Production Baseline (Default Reference)</option>
-                        {workflowVersions.map((v) => (
-                          <option key={v.version_id} value={v.version_id}>
-                            v{v.version_number}: {v.name} ({v.model_id}) [{v.status}]
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="evo-form-group evo-col-half">
-                      <label className="evo-label">Candidate Count ({generatedCandidateCount})</label>
-                      <input
-                        type="range"
-                        min={2}
-                        max={6}
-                        value={generatedCandidateCount}
-                        onChange={(e) => setGeneratedCandidateCount(Number(e.target.value))}
-                        className="evo-slider"
-                        disabled={running}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="evo-form-group">
-                    <label className="evo-label">Refinement Operation</label>
-                    <div className="evo-strategy-pills-wrap">
-                      {[
-                        { id: 'all', label: 'All Refinements', desc: 'Comprehensive targeted simplification' },
-                        { id: 'simplify', label: 'Top-K Simplification', desc: 'Reduce retrieval overhead' },
-                        { id: 'context_compress', label: 'Context Compression', desc: 'Enable semantic token compression' },
-                        { id: 'rerank_disable', label: 'Disable Rerank', desc: 'Latency and compute reduction' },
-                        { id: 'composite_refine', label: 'Composite Refinement', desc: 'Multi-aspect cost & latency reduction' },
-                      ].map((s) => (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => setSelectedRefinementType(s.id)}
-                          className={`evo-strat-btn ${selectedRefinementType === s.id ? 'active' : ''}`}
-                          disabled={running}
-                        >
-                          <span className="evo-strat-btn-title">{s.label}</span>
-                          <span className="evo-strat-btn-desc">{s.desc}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* STRATEGY 3: CROSSOVER / RECOMBINATION CONFIGURATION */}
-              {candidateStrategy === 'crossover' && (() => {
-                const parentAOptions = [
-                  { value: 'baseline', label: 'Production Baseline (Gemini 3.5 Flash-Lite, k=5)' },
-                  ...workflowVersions.map((v) => ({
-                    value: v.version_id,
-                    label: `v${v.version_number}: ${v.name} (${v.model_id}) [${v.status}]`,
-                  })),
-                ]
-                const parentBOptions = parentAOptions.filter((opt) => opt.value !== crossoverParentA)
-
-                return (
-                  <div className="evo-strategy-config-box">
-                    <div className="evo-form-row">
-                      <div className="evo-form-group evo-col-half">
-                        <label className="evo-label" style={{ color: '#60a5fa' }}>Parent A (Primary / Scaffold)</label>
-                        <select
-                          value={crossoverParentA}
-                          onChange={(e) => {
-                            const newA = e.target.value
-                            setCrossoverParentA(newA)
-                            if (crossoverParentB === newA) {
-                              const remaining = parentAOptions.filter((opt) => opt.value !== newA)
-                              if (remaining.length > 0) {
-                                setCrossoverParentB(remaining[0].value)
-                              }
-                            }
-                          }}
-                          className="evo-select"
-                          disabled={running}
-                        >
-                          {parentAOptions.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="evo-form-group evo-col-half">
-                        <label className="evo-label" style={{ color: '#a78bfa' }}>Parent B (Secondary / Donor)</label>
-                        <select
-                          value={crossoverParentB}
-                          onChange={(e) => setCrossoverParentB(e.target.value)}
-                          className="evo-select"
-                          disabled={running}
-                        >
-                          {parentBOptions.length === 0 ? (
-                            <option value="">No other approved versions available</option>
-                          ) : (
-                            parentBOptions.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
+                  {/* STRATEGY 0: ADAPTIVE SCHEDULER CONFIGURATION */}
+                  {candidateStrategy === 'adaptive' && (
+                    <div className="evo-strategy-config-box">
+                      <div className="evo-form-row">
+                        <div className="evo-form-group evo-col-half">
+                          <label htmlFor="evo-adaptive-parent" className="evo-label">Initial Parent Workflow</label>
+                          <select
+                            id="evo-adaptive-parent"
+                            className="evo-select"
+                            value={selectedParentWorkflowId}
+                            onChange={(e) => setSelectedParentWorkflowId(e.target.value)}
+                            disabled={running}
+                          >
+                            <option value="baseline">Production Baseline (Default Reference)</option>
+                            {workflowVersions.map((v) => (
+                              <option key={v.version_id} value={v.version_id}>
+                                v{v.version_number}: {v.name} ({v.model_id}) [{v.status}]
                               </option>
-                            ))
-                          )}
-                        </select>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="evo-form-group evo-col-half">
+                          <label htmlFor="evo-adaptive-count" className="evo-label">Candidates per Iteration ({generatedCandidateCount})</label>
+                          <input
+                            id="evo-adaptive-count"
+                            type="range"
+                            min={2}
+                            max={6}
+                            value={generatedCandidateCount}
+                            onChange={(e) => setGeneratedCandidateCount(Number(e.target.value))}
+                            className="evo-slider"
+                            disabled={running}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="evo-summary-box" style={{ marginTop: 10, background: 'rgba(59, 130, 246, 0.06)', borderLeft: '3px solid #3b82f6' }}>
+                        <div style={{ fontWeight: 600, color: '#93c5fd', marginBottom: 4 }}>
+                          🤖 AgentEvo Adapter Scheduler (Deterministic Policy)
+                        </div>
+                        <p style={{ margin: 0, fontSize: '0.84rem', color: '#cbd5e1', lineHeight: 1.5 }}>
+                          The adaptive scheduler analyzes optimization history, Pareto frontier progress, groundedness retention, and stagnation to select the optimal evolutionary mechanism (Mutation, Refinement, or Crossover).
+                        </p>
                       </div>
                     </div>
+                  )}
 
-                    {crossoverParentA === crossoverParentB && (
-                      <div className="evo-error-banner" style={{ marginTop: 8, marginBottom: 12 }}>
-                        <span>⚠️ Parent A and Parent B must be distinct workflow versions.</span>
-                      </div>
-                    )}
+                  {/* STRATEGY 1: MUTATION / EXPLORATION CONFIGURATION */}
+                  {candidateStrategy === 'mutation' && (
+                    <div className="evo-strategy-config-box">
+                      <div className="evo-form-row">
+                        <div className="evo-form-group evo-col-half">
+                          <label htmlFor="evo-parent-select" className="evo-label">Parent Workflow</label>
+                          <select
+                            id="evo-parent-select"
+                            className="evo-select"
+                            value={selectedParentWorkflowId}
+                            onChange={(e) => setSelectedParentWorkflowId(e.target.value)}
+                            disabled={running}
+                          >
+                            <option value="baseline">Production Baseline (Default Reference)</option>
+                            {workflowVersions.map((v) => (
+                              <option key={v.version_id} value={v.version_id}>
+                                v{v.version_number}: {v.name} ({v.model_id}) [{v.status}]
+                              </option>
+                            ))}
+                          </select>
+                        </div>
 
-                    {/* Component-Level Inheritance Table */}
-                    <div className="evo-table-container" style={{ marginTop: 16 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                        <label className="evo-label" style={{ margin: 0 }}>Component-Level Inheritance Map</label>
-                        <span className="evo-cell-sub">Select inheritance source for each workflow module</span>
+                        <div className="evo-form-group evo-col-half">
+                          <label htmlFor="evo-count-input" className="evo-label">Candidate Count ({generatedCandidateCount})</label>
+                          <input
+                            id="evo-count-input"
+                            type="range"
+                            min={2}
+                            max={8}
+                            value={generatedCandidateCount}
+                            onChange={(e) => setGeneratedCandidateCount(Number(e.target.value))}
+                            className="evo-slider"
+                            disabled={running}
+                          />
+                        </div>
                       </div>
-                      <table className="evo-table">
-                        <thead>
-                          <tr>
-                            <th>Workflow Module</th>
-                            <th>Parent A Source</th>
-                            <th>Inherit From</th>
-                            <th>Parent B Source</th>
-                          </tr>
-                        </thead>
-                        <tbody>
+
+                      <div className="evo-form-group">
+                        <label className="evo-label">Mutation Dimension</label>
+                        <div className="evo-strategy-pills-wrap">
                           {[
-                            { key: 'retrieval', label: 'Retrieval Configuration', desc: 'Chunk size, overlap, top-K, similarity threshold, rerank' },
-                            { key: 'prompt', label: 'Prompt Template', desc: 'Prompt template, grounding instructions, custom guidance' },
-                            { key: 'model', label: 'LLM Model Spec', desc: 'Provider, Model ID' },
-                            { key: 'generation', label: 'Generation Parameters', desc: 'Temperature, max token limits' },
-                            { key: 'operators', label: 'Operators / Execution', desc: 'Context compression, timeout, max retries' },
-                          ].map(({ key, label, desc }) => (
-                            <tr key={key} className="evo-table-row">
-                              <td>
-                                <strong>{label}</strong>
-                                <div className="evo-cell-sub">{desc}</div>
-                              </td>
-                              <td>
-                                <span className="evo-version-tag" style={{ background: '#3b82f6' }}>Parent A</span>
-                              </td>
-                              <td>
-                                <select
-                                  value={crossoverMap[key] || 'parent_a'}
-                                  onChange={(e) => setCrossoverMap((prev) => ({ ...prev, [key]: e.target.value as 'parent_a' | 'parent_b' }))}
-                                  className="evo-select evo-select-sm"
-                                  disabled={running}
-                                  style={{ minWidth: '120px', fontWeight: 600 }}
-                                >
-                                  <option value="parent_a">Parent A</option>
-                                  <option value="parent_b">Parent B</option>
-                                </select>
-                              </td>
-                              <td>
-                                <span className="evo-version-tag" style={{ background: '#8b5cf6' }}>Parent B</span>
-                              </td>
-                            </tr>
+                            { id: 'all', label: 'All Dimensions', desc: 'Broad parameter & prompt exploration' },
+                            { id: 'prompt', label: 'Prompt Only', desc: 'Template & disclaimer tuning' },
+                            { id: 'retrieval', label: 'Retrieval Only', desc: 'Top-K & similarity variations' },
+                            { id: 'model', label: 'Model Only', desc: 'Provider & temperature exploration' },
+                            { id: 'operator', label: 'Operators Only', desc: 'Context compression toggle' },
+                            { id: 'composite', label: 'Composite Mutation', desc: 'Multi-parameter exploration' },
+                          ].map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => setSelectedMutationType(s.id)}
+                              className={`evo-strat-btn ${selectedMutationType === s.id ? 'active' : ''}`}
+                              disabled={running}
+                            >
+                              <span className="evo-strat-btn-title">{s.label}</span>
+                              <span className="evo-strat-btn-desc">{s.desc}</span>
+                            </button>
                           ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* Post-Crossover Mutation Selection */}
-                    <div className="evo-form-row" style={{ marginTop: 16 }}>
-                      <div className="evo-form-group evo-col-half">
-                        <label className="evo-label">Optional Post-Crossover Mutation</label>
-                        <select
-                          value={postCrossoverMutation}
-                          onChange={(e) => setPostCrossoverMutation(e.target.value)}
-                          className="evo-select"
-                          disabled={running}
-                        >
-                          <option value="none">None / Pure Crossover (No Mutation)</option>
-                          <option value="prompt">Prompt Variation (Stochastic Template Mutation)</option>
-                          <option value="retrieval">Retrieval Tuning (Top-K / Similarity Adjust)</option>
-                          <option value="model">Deterministic Model (Low-Temperature Calibration)</option>
-                          <option value="operator">Toggle Compression (Invert Context Compression)</option>
-                          <option value="composite">Composite Mutation (Multi-Component Refinement)</option>
-                        </select>
-                      </div>
-                      <div className="evo-form-group evo-col-half" style={{ display: 'flex', alignItems: 'flex-end' }}>
-                        <button
-                          type="button"
-                          onClick={handlePreviewCrossover}
-                          className="evo-btn-secondary"
-                          disabled={isPreviewLoading || running || crossoverParentA === crossoverParentB}
-                          style={{ width: '100%', height: '38px' }}
-                        >
-                          {isPreviewLoading ? 'Assembling Preview...' : '🔍 Preview Child Workflow Genome'}
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Crossover Genome Preview Card */}
-                    {crossoverPreview && (
-                      <div className="evo-summary-box" style={{ marginTop: 12 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                          <strong>🧬 Child Workflow Genome Preview:</strong>
-                          <span className="evo-status-tag tag-pareto">Valid Complete Configuration</span>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-                          <div className="evo-metric-cell">
-                            <span className="evo-metric-label">Model</span>
-                            <span className="evo-metric-val" style={{ fontSize: '0.9rem' }}>{crossoverPreview.resulting_configuration.model?.model_id}</span>
-                            <span className="evo-cell-sub">Source: {crossoverPreview.crossover_map.model === 'parent_a' ? 'Parent A' : 'Parent B'}</span>
-                          </div>
-                          <div className="evo-metric-cell">
-                            <span className="evo-metric-label">Retrieval (top_k / sim)</span>
-                            <span className="evo-metric-val" style={{ fontSize: '0.9rem' }}>
-                              k={crossoverPreview.resulting_configuration.retrieval?.top_k}, sim={crossoverPreview.resulting_configuration.retrieval?.similarity_threshold}
-                            </span>
-                            <span className="evo-cell-sub">Source: {crossoverPreview.crossover_map.retrieval === 'parent_a' ? 'Parent A' : 'Parent B'}</span>
-                          </div>
-                          <div className="evo-metric-cell">
-                            <span className="evo-metric-label">Prompt Template</span>
-                            <span className="evo-metric-val" style={{ fontSize: '0.9rem' }}>{crossoverPreview.resulting_configuration.prompt?.template_name}</span>
-                            <span className="evo-cell-sub">Source: {crossoverPreview.crossover_map.prompt === 'parent_a' ? 'Parent A' : 'Parent B'}</span>
-                          </div>
-                          <div className="evo-metric-cell">
-                            <span className="evo-metric-label">Compression</span>
-                            <span className="evo-metric-val" style={{ fontSize: '0.9rem' }}>
-                              {crossoverPreview.resulting_configuration.execution?.context_compression ? 'Enabled' : 'Disabled'}
-                            </span>
-                            <span className="evo-cell-sub">Source: {crossoverPreview.crossover_map.operators === 'parent_a' ? 'Parent A' : 'Parent B'}</span>
-                          </div>
                         </div>
                       </div>
-                    )}
-                  </div>
-                )
-              })()}
+                    </div>
+                  )}
+
+                  {/* STRATEGY 2: REFINEMENT CONFIGURATION */}
+                  {candidateStrategy === 'refinement' && (
+                    <div className="evo-strategy-config-box">
+                      <div className="evo-form-row">
+                        <div className="evo-form-group evo-col-half">
+                          <label className="evo-label">Parent Workflow</label>
+                          <select
+                            className="evo-select"
+                            value={selectedParentWorkflowId}
+                            onChange={(e) => setSelectedParentWorkflowId(e.target.value)}
+                            disabled={running}
+                          >
+                            <option value="baseline">Production Baseline (Default Reference)</option>
+                            {workflowVersions.map((v) => (
+                              <option key={v.version_id} value={v.version_id}>
+                                v{v.version_number}: {v.name} ({v.model_id}) [{v.status}]
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="evo-form-group evo-col-half">
+                          <label className="evo-label">Candidate Count ({generatedCandidateCount})</label>
+                          <input
+                            type="range"
+                            min={2}
+                            max={6}
+                            value={generatedCandidateCount}
+                            onChange={(e) => setGeneratedCandidateCount(Number(e.target.value))}
+                            className="evo-slider"
+                            disabled={running}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="evo-form-group">
+                        <label className="evo-label">Refinement Operation</label>
+                        <div className="evo-strategy-pills-wrap">
+                          {[
+                            { id: 'all', label: 'All Refinements', desc: 'Comprehensive targeted simplification' },
+                            { id: 'simplify', label: 'Top-K Simplification', desc: 'Reduce retrieval overhead' },
+                            { id: 'context_compress', label: 'Context Compression', desc: 'Enable semantic token compression' },
+                            { id: 'rerank_disable', label: 'Disable Rerank', desc: 'Latency and compute reduction' },
+                            { id: 'composite_refine', label: 'Composite Refinement', desc: 'Multi-aspect cost & latency reduction' },
+                          ].map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => setSelectedRefinementType(s.id)}
+                              className={`evo-strat-btn ${selectedRefinementType === s.id ? 'active' : ''}`}
+                              disabled={running}
+                            >
+                              <span className="evo-strat-btn-title">{s.label}</span>
+                              <span className="evo-strat-btn-desc">{s.desc}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* STRATEGY 3: CROSSOVER / RECOMBINATION CONFIGURATION */}
+                  {candidateStrategy === 'crossover' && (() => {
+                    const parentAOptions = [
+                      { value: 'baseline', label: 'Production Baseline (Gemini 3.5 Flash-Lite, k=5)' },
+                      ...workflowVersions.map((v) => ({
+                        value: v.version_id,
+                        label: `v${v.version_number}: ${v.name} (${v.model_id}) [${v.status}]`,
+                      })),
+                    ]
+                    const parentBOptions = parentAOptions.filter((opt) => opt.value !== crossoverParentA)
+
+                    return (
+                      <div className="evo-strategy-config-box">
+                        <div className="evo-form-row">
+                          <div className="evo-form-group evo-col-half">
+                            <label className="evo-label" style={{ color: '#60a5fa' }}>Parent A (Primary / Scaffold)</label>
+                            <select
+                              value={crossoverParentA}
+                              onChange={(e) => {
+                                const newA = e.target.value
+                                setCrossoverParentA(newA)
+                                if (crossoverParentB === newA) {
+                                  const remaining = parentAOptions.filter((opt) => opt.value !== newA)
+                                  if (remaining.length > 0) {
+                                    setCrossoverParentB(remaining[0].value)
+                                  }
+                                }
+                              }}
+                              className="evo-select"
+                              disabled={running}
+                            >
+                              {parentAOptions.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="evo-form-group evo-col-half">
+                            <label className="evo-label" style={{ color: '#a78bfa' }}>Parent B (Secondary / Donor)</label>
+                            <select
+                              value={crossoverParentB}
+                              onChange={(e) => setCrossoverParentB(e.target.value)}
+                              className="evo-select"
+                              disabled={running}
+                            >
+                              {parentBOptions.length === 0 ? (
+                                <option value="">No other approved versions available</option>
+                              ) : (
+                                parentBOptions.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </option>
+                                ))
+                              )}
+                            </select>
+                          </div>
+                        </div>
+
+                        {crossoverParentA === crossoverParentB && (
+                          <div className="evo-error-banner" style={{ marginTop: 8, marginBottom: 12 }}>
+                            <span>⚠️ Parent A and Parent B must be distinct workflow versions.</span>
+                          </div>
+                        )}
+
+                        {/* Component-Level Inheritance Table */}
+                        <div className="evo-table-container" style={{ marginTop: 16 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                            <label className="evo-label" style={{ margin: 0 }}>Component-Level Inheritance Map</label>
+                            <span className="evo-cell-sub">Select inheritance source for each workflow module</span>
+                          </div>
+                          <table className="evo-table">
+                            <thead>
+                              <tr>
+                                <th>Workflow Module</th>
+                                <th>Parent A Source</th>
+                                <th>Inherit From</th>
+                                <th>Parent B Source</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[
+                                { key: 'retrieval', label: 'Retrieval Configuration', desc: 'Chunk size, overlap, top-K, similarity threshold, rerank' },
+                                { key: 'prompt', label: 'Prompt Template', desc: 'Prompt template, grounding instructions, custom guidance' },
+                                { key: 'model', label: 'LLM Model Spec', desc: 'Provider, Model ID' },
+                                { key: 'generation', label: 'Generation Parameters', desc: 'Temperature, max token limits' },
+                                { key: 'operators', label: 'Operators / Execution', desc: 'Context compression, timeout, max retries' },
+                              ].map(({ key, label, desc }) => (
+                                <tr key={key} className="evo-table-row">
+                                  <td>
+                                    <strong>{label}</strong>
+                                    <div className="evo-cell-sub">{desc}</div>
+                                  </td>
+                                  <td>
+                                    <span className="evo-version-tag" style={{ background: '#3b82f6' }}>Parent A</span>
+                                  </td>
+                                  <td>
+                                    <select
+                                      value={crossoverMap[key] || 'parent_a'}
+                                      onChange={(e) => setCrossoverMap((prev) => ({ ...prev, [key]: e.target.value as 'parent_a' | 'parent_b' }))}
+                                      className="evo-select evo-select-sm"
+                                      disabled={running}
+                                      style={{ minWidth: '120px', fontWeight: 600 }}
+                                    >
+                                      <option value="parent_a">Parent A</option>
+                                      <option value="parent_b">Parent B</option>
+                                    </select>
+                                  </td>
+                                  <td>
+                                    <span className="evo-version-tag" style={{ background: '#8b5cf6' }}>Parent B</span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Post-Crossover Mutation Selection */}
+                        <div className="evo-form-row" style={{ marginTop: 16 }}>
+                          <div className="evo-form-group evo-col-half">
+                            <label className="evo-label">Optional Post-Crossover Mutation</label>
+                            <select
+                              value={postCrossoverMutation}
+                              onChange={(e) => setPostCrossoverMutation(e.target.value)}
+                              className="evo-select"
+                              disabled={running}
+                            >
+                              <option value="none">None / Pure Crossover (No Mutation)</option>
+                              <option value="prompt">Prompt Variation (Stochastic Template Mutation)</option>
+                              <option value="retrieval">Retrieval Tuning (Top-K / Similarity Adjust)</option>
+                              <option value="model">Deterministic Model (Low-Temperature Calibration)</option>
+                              <option value="operator">Toggle Compression (Invert Context Compression)</option>
+                              <option value="composite">Composite Mutation (Multi-Component Refinement)</option>
+                            </select>
+                          </div>
+                          <div className="evo-form-group evo-col-half" style={{ display: 'flex', alignItems: 'flex-end' }}>
+                            <button
+                              type="button"
+                              onClick={handlePreviewCrossover}
+                              className="evo-btn-secondary"
+                              disabled={isPreviewLoading || running || crossoverParentA === crossoverParentB}
+                              style={{ width: '100%', height: '38px' }}
+                            >
+                              {isPreviewLoading ? 'Assembling Preview...' : '🔍 Preview Child Workflow Genome'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Crossover Genome Preview Card */}
+                        {crossoverPreview && (
+                          <div className="evo-summary-box" style={{ marginTop: 12 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                              <strong>🧬 Child Workflow Genome Preview:</strong>
+                              <span className="evo-status-tag tag-pareto">Valid Complete Configuration</span>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+                              <div className="evo-metric-cell">
+                                <span className="evo-metric-label">Model</span>
+                                <span className="evo-metric-val" style={{ fontSize: '0.9rem' }}>{crossoverPreview.resulting_configuration.model?.model_id}</span>
+                                <span className="evo-cell-sub">Source: {crossoverPreview.crossover_map.model === 'parent_a' ? 'Parent A' : 'Parent B'}</span>
+                              </div>
+                              <div className="evo-metric-cell">
+                                <span className="evo-metric-label">Retrieval (top_k / sim)</span>
+                                <span className="evo-metric-val" style={{ fontSize: '0.9rem' }}>
+                                  k={crossoverPreview.resulting_configuration.retrieval?.top_k}, sim={crossoverPreview.resulting_configuration.retrieval?.similarity_threshold}
+                                </span>
+                                <span className="evo-cell-sub">Source: {crossoverPreview.crossover_map.retrieval === 'parent_a' ? 'Parent A' : 'Parent B'}</span>
+                              </div>
+                              <div className="evo-metric-cell">
+                                <span className="evo-metric-label">Prompt Template</span>
+                                <span className="evo-metric-val" style={{ fontSize: '0.9rem' }}>{crossoverPreview.resulting_configuration.prompt?.template_name}</span>
+                                <span className="evo-cell-sub">Source: {crossoverPreview.crossover_map.prompt === 'parent_a' ? 'Parent A' : 'Parent B'}</span>
+                              </div>
+                              <div className="evo-metric-cell">
+                                <span className="evo-metric-label">Compression</span>
+                                <span className="evo-metric-val" style={{ fontSize: '0.9rem' }}>
+                                  {crossoverPreview.resulting_configuration.execution?.context_compression ? 'Enabled' : 'Disabled'}
+                                </span>
+                                <span className="evo-cell-sub">Source: {crossoverPreview.crossover_map.operators === 'parent_a' ? 'Parent A' : 'Parent B'}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </>
               )}
 
@@ -2181,7 +2181,16 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
                             {report.is_workload ? 'Avg Baseline Cost / Query' : 'Baseline Cost / Query'}
                           </span>
                           <span className="evo-metric-value">
-                            ${baselineCandidate ? (baselineCandidate.metrics.avg_cost_per_query ?? baselineCandidate.metrics.cost).toFixed(6) : '0.000057'}
+                            {(() => {
+                              const cost =
+                                baselineCandidate?.metrics?.avg_cost_per_query ??
+                                baselineCandidate?.metrics?.cost;
+
+                              return cost != null && Number.isFinite(Number(cost))
+                                ? `$${Number(cost).toFixed(6)}`
+                                : 'N/A';
+                            })()}
+
                           </span>
                           <span className="evo-metric-delta">{baselineCandidate?.workflow?.model?.model_id || 'gemini-3.5-flash-lite'}</span>
                         </div>
@@ -2584,8 +2593,8 @@ export const AgentEvoOptimizer: React.FC<AgentEvoOptimizerProps> = ({
 
                 {/* Workload Per-Query Evaluation Evidence (if multi-query workload) */}
                 {selectedCandidate.metrics.raw_details?.per_query_evaluations &&
-                Array.isArray(selectedCandidate.metrics.raw_details.per_query_evaluations) &&
-                selectedCandidate.metrics.raw_details.per_query_evaluations.length > 0 ? (
+                  Array.isArray(selectedCandidate.metrics.raw_details.per_query_evaluations) &&
+                  selectedCandidate.metrics.raw_details.per_query_evaluations.length > 0 ? (
                   <div className="evo-table-container">
                     <table className="evo-table" style={{ fontSize: '0.84rem' }}>
                       <thead>
